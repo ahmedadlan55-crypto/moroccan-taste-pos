@@ -390,6 +390,35 @@ export interface BulkPriceResult extends MutationAck {
   items: Array<{ id: string; name: string; oldPrice: number; newPrice: number; cost: number; marginPct: number }>;
 }
 
+// ── Whole-riyal price sweep — POST /menu/round-to-whole-riyal ───────────────
+// Tunes stored prices so the VAT-INCLUSIVE amount on the cashier's card lands
+// on a whole riyal (34.99 → 35). `apply` defaults to FALSE: the same call
+// returns the plan without writing, which is what the preview dialog shows —
+// this moves real selling prices by up to 0.50 SAR per unit, so a human
+// approves the list first. `showsNow`/`shows` are the customer-facing amounts
+// before and after; `oldPrice`/`newPrice` are the stored (net) ones.
+export interface WholeRiyalChange {
+  id: string;
+  name: string;
+  source: "menu" | "price_list_items" | "channel_menu_items";
+  oldPrice: number;
+  newPrice: number;
+  showsNow: number;
+  shows: number;
+}
+export interface WholeRiyalResult extends MutationAck {
+  /** false = this was a preview and nothing was written. */
+  applied: boolean;
+  affected: number;
+  pending: number;
+  ratePct: number;
+  /** menu.price decimal scale; < 4 means migration 0023 has not landed yet. */
+  columnScale: number | null;
+  items: WholeRiyalChange[];
+  /** Rows the sweep refused to touch — a human has to decide on these. */
+  review: Array<{ id: string; name: string; source: string; oldPrice: number; reason: string }>;
+}
+
 // ── close/d-images bulk manager (ImageManager) ──────────────────────────────
 // GET/POST/PUT/DELETE /api/product-images* — routes/product-images.js (Owner
 // C), confirmed against the ACTUAL router source in this worktree on
@@ -738,6 +767,26 @@ export function useBulkPriceUpdate() {
     mutationFn: (input: BulkPriceInput) =>
       apiClient.post<BulkPriceResult>("/menu/bulk-price-update", input).then(ensureOk),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...KEY, "items"] });
+      qc.invalidateQueries({ queryKey: [...KEY, "list"] });
+    },
+  });
+}
+
+/**
+ * Preview or apply the whole-riyal sweep. `apply` omitted/false = preview, and
+ * the server writes nothing — so the preview call is safe to fire on a button
+ * press with no confirmation.
+ */
+export function useRoundToWholeRiyal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { apply?: boolean } = {}) =>
+      apiClient.post<WholeRiyalResult>("/menu/round-to-whole-riyal", input).then(ensureOk),
+    onSuccess: (res) => {
+      // A preview changed nothing — invalidating would refetch the whole menu
+      // for no reason every time the dialog is opened.
+      if (!res.applied) return;
       qc.invalidateQueries({ queryKey: [...KEY, "items"] });
       qc.invalidateQueries({ queryKey: [...KEY, "list"] });
     },

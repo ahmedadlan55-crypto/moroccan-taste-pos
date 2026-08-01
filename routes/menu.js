@@ -31,6 +31,9 @@ const PRICING = verifyToken.requireRole('admin', 'manager', 'accountant');
 // yet widened to DECIMAL(10,4), an exotic VAT rate) the ORIGINAL price is kept
 // rather than a near-miss written: a wrong price is worse than a fractional one.
 const { snapToWholeRiyal, getVatRateFromDb } = require('../lib/pricing');
+// Shared with scripts/round-prices-to-whole-riyal.js — see the sweep endpoint
+// below. One implementation, so a preview and a write can never disagree.
+const sweep = require('../lib/wholeRiyalSweep');
 
 async function _vatRate() {
   try { return await getVatRateFromDb(db, 15); } catch (_) { return 15; }
@@ -686,6 +689,79 @@ router.post('/bulk-price-update', verifyToken, PRICING, async (req, res) => {
     } catch(_) {}
     res.json({ success: true, affected, mode, value, items: beforeAfter });
   } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Whole-riyal price sweep ────────────────────────────────────────────────
+// POST /api/menu/round-to-whole-riyal  { apply?: boolean }
+//
+// Tunes stored prices so the VAT-INCLUSIVE amount the cashier's card shows
+// lands on a whole riyal. Exists as an ENDPOINT (not only as
+// scripts/round-prices-to-whole-riyal.js) because the owner asked to run it
+// without a terminal — the ERP price screen previews it and applies it.
+//
+// PREVIEW IS THE DEFAULT. Anything other than an explicit `apply: true` reads
+// and returns the plan without writing a single row: this changes real selling
+// prices by up to 0.50 SAR per unit, so a human sees the before/after list
+// first. Both callers share lib/wholeRiyalSweep so the preview a human approved
+// is byte-for-byte what gets written.
+router.post('/round-to-whole-riyal', verifyToken, PRICING, async (req, res) => {
+  try {
+    const apply = req.body && (req.body.apply === true || req.body.apply === 1 || req.body.apply === '1');
+    const username = (req.user && req.user.username) || 'system';
+    const plan = await sweep.planSweep(db);
+    const writes = sweep.allWrites(plan);
+    const review = sweep.allReview(plan);
+
+    // Shaped to mirror /bulk-price-update so the ERP can reuse its result view.
+    const items = writes.map((w) => ({
+      id: w.key,
+      name: w.label,
+      source: w.source,
+      oldPrice: w.before,
+      newPrice: w.after,
+      showsNow: w.inclusiveBefore,
+      shows: w.target,
+    }));
+    const payload = {
+      success: true,
+      applied: false,
+      affected: 0,
+      pending: writes.length,
+      ratePct: plan.ratePct,
+      columnScale: plan.columnScale,
+      items,
+      review: review.map((r) => ({ id: r.key, name: r.label, source: r.source, oldPrice: r.before, reason: r.reason })),
+    };
+
+    if (!apply) return res.json(payload);
+
+    // The widen (db/migrations/0023) must have landed first: at DECIMAL(_,2)
+    // hundreds of whole-riyal targets are unreachable, and applying anyway
+    // would write near-misses that put the card and the invoice back out of
+    // step. Refuse loudly rather than half-succeed.
+    if (plan.columnScale != null && plan.columnScale < 4) {
+      return res.status(409).json({
+        success: false,
+        code: 'PRICE_COLUMN_TOO_NARROW',
+        error: 'عمود السعر لا يزال بمنزلتين عشريتين. أعد تشغيل الخادم مرة واحدة ليُطبَّق الترحيل، ثم أعد المحاولة.'
+      });
+    }
+
+    const written = await sweep.applySweep(db, plan);
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'menu_price_whole_riyal_sweep', 'menu', '*', ?, NOW())`,
+        [username, JSON.stringify({
+          ratePct: plan.ratePct,
+          affected: written,
+          needsReview: review.length,
+          changes: items.map((i) => ({ source: i.source, id: i.id, before: i.oldPrice, after: i.newPrice, shows: i.shows })),
+        })]);
+    } catch (_) { /* audit is best-effort; the prices WERE applied */ }
+
+    res.json({ ...payload, applied: true, affected: written, pending: 0 });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 // V5.7.4 — Price history for a single menu item (last N changes).

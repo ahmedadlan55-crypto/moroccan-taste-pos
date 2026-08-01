@@ -125,6 +125,31 @@ export const menuRest = {
     noChanges: "No prices changed (values already match).",
   },
 
+  // Whole-riyal sweep — adjusts the STORED price so the customer-facing
+  // (VAT-inclusive) figure is a whole number. Preview writes nothing.
+  wholeRiyal: {
+    title: "Round prices to whole riyals",
+    subtitle: "Tunes stored prices so the VAT-inclusive figure on the cashier's screen is a whole number with no halalas (34.99 → 35).",
+    previewButton: "Preview changes",
+    previewing: "Calculating…",
+    dialogTitle: "Whole-riyal preview",
+    dialogDesc: "{count} price(s) will change. Nothing has been written yet.",
+    dialogDescEmpty: "Every price already shows as a whole number — nothing to change.",
+    colItem: "Item",
+    colShowsNow: "Shows now",
+    colWillShow: "Will show",
+    revenueWarning: "Changes per-unit revenue by up to 0.50 SAR. Review the list before applying.",
+    reviewTitle: "Needs manual review ({count}) — left untouched",
+    applyButton: "Apply changes",
+    applying: "Applying…",
+    appliedToast: "{count} price(s) rounded",
+    noChangesToast: "All prices are already whole",
+    failed: "Could not round prices",
+    sourceMenu: "Menu",
+    sourcePriceList: "Price list",
+    sourceChannel: "Channel price",
+  },
+
   combos: {
     title: "Combos",
     subtitle: "Offers and combos made of several items (e.g. any sandwich with a juice). They expand into their components at sale time.",

@@ -104,4 +104,64 @@ it('DOCUMENTS why the column had to widen: 2 decimals cannot hit every target', 
   assert.notStrictEqual(r2(r2dp(11 / 1.15) * 1.15), 11, '11.00 SAR must be unreachable at 2dp');
 });
 
+// ── planRows — the sweep planner shared by the CLI tool and the ERP button ──
+// Both scripts/round-prices-to-whole-riyal.js and
+// POST /api/menu/round-to-whole-riyal go through this, so a preview a human
+// approved is byte-for-byte what gets written. These are the two rows from the
+// owner's own screenshot.
+const { planRows } = require('../lib/wholeRiyalSweep');
+
+const row = (over) => Object.assign(
+  { key: 'K', label: 'row', price: 0, taxCategory: 'S', isInclusive: false }, over);
+
+it('plans the real "Thermal Bottle Green" row: 34.99 on screen becomes 35', () => {
+  const plan = planRows([row({ key: 'A', label: 'Thermal Bottle Green', price: 30.4261 })], 15);
+  assert.strictEqual(plan.writes.length, 1);
+  assert.strictEqual(plan.writes[0].target, 35);
+  assert.strictEqual(r2(plan.writes[0].inclusiveBefore), 34.99, 'what the till shows today');
+  assert.strictEqual(r2(plan.writes[0].after * 1.15), 35, 'what it will show after');
+});
+
+it('plans the real "Blueberry Cheesecake" row: 11.01 becomes 11', () => {
+  const plan = planRows([row({ key: 'B', label: 'Blueberry Cheesecake', price: 9.5739 })], 15);
+  assert.strictEqual(plan.writes.length, 1);
+  assert.strictEqual(plan.writes[0].target, 11);
+  assert.strictEqual(r2(plan.writes[0].after * 1.15), 11);
+});
+
+it('leaves an already-tuned row OUT of writes — re-running the sweep is a no-op', () => {
+  const plan = planRows([row({ price: 15.6522 })], 15);
+  assert.strictEqual(plan.writes.length, 0);
+  assert.strictEqual(plan.unchanged, 1);
+});
+
+it('a row that would round to zero goes to review and is NEVER written', () => {
+  // 0.40 net → 0.46 inclusive → would round to 0 and make the item free.
+  const plan = planRows([row({ key: 'FREE', price: 0.4 })], 15);
+  assert.strictEqual(plan.writes.length, 0, 'must not be written');
+  assert.strictEqual(plan.review.length, 1);
+  assert.match(plan.review[0].reason, /round to 0/);
+});
+
+it('separates mixed rows without ever double-counting one', () => {
+  const plan = planRows([
+    row({ key: 'A', price: 30.4261 }),   // → write
+    row({ key: 'B', price: 15.6522 }),   // → unchanged
+    row({ key: 'C', price: 0.4 }),       // → review
+    row({ key: 'D', price: 18, taxCategory: 'Z' }), // zero-rated, already whole
+  ], 15);
+  assert.strictEqual(plan.writes.length, 1);
+  assert.strictEqual(plan.review.length, 1);
+  assert.strictEqual(plan.unchanged, 2);
+  const total = plan.writes.length + plan.review.length + plan.unchanged;
+  assert.strictEqual(total, 4, 'every row lands in exactly one bucket');
+});
+
+it('is PURE — planning mutates nothing and writes nothing', () => {
+  const input = row({ price: 30.4261 });
+  const snapshot = JSON.stringify(input);
+  planRows([input], 15);
+  assert.strictEqual(JSON.stringify(input), snapshot, 'the input row must be untouched');
+});
+
 console.log('wholeRiyalPricing: ' + passed + ' passed');

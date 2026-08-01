@@ -43,6 +43,7 @@ import { PivotTable, type PivotMeasure } from "../components/PivotTable";
 import { GroupByControl } from "../components/GroupByControl";
 import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
 import { useListSeparator } from "../lib/listSeparator";
+import { useReportRailControls } from "../lib/reportRail";
 
 const SEGMENT = "builder";
 
@@ -241,6 +242,126 @@ export default function Builder() {
     </div>
   );
 
+  // Published into the hub's filters-and-settings rail (lib/reportRail) so
+  // the analyst sees ONE control surface instead of the shared filter card
+  // and this one stacked as if they were unrelated features. The .surface
+  // class is dropped: the rail already IS the card, and no nested cards.
+  const configPanel = (
+    <div className="space-y-4" data-testid="builder-config">
+      {/* Names this card "Configuration" so it reads as distinct from the
+          AnalyticsTopBar filter card above it — that card carries no header
+          of its own, so the two used to blend into one long stack of fields. */}
+      <header className="flex items-center gap-2">
+        <SlidersHorizontal className="h-4 w-4 text-teal-700" aria-hidden="true" />
+        <div>
+          <h3 className="text-sm font-extrabold text-slate-900">{t("salesReports.builder.configTitle")}</h3>
+          <p className="mt-0.5 text-xs font-bold text-slate-500">{t("salesReports.builder.configSubtitle")}</p>
+        </div>
+      </header>
+  
+      {/* Row A — what to measure: the two controls that decide the report's
+          shape. items-start (not items-end): GroupByControl now carries its
+          own padded box below, so bottom-aligning it against a plain field
+          would misalign the two label rows above them. */}
+      <div className="flex flex-wrap items-start gap-3">
+        {field(
+          `${t("salesReports.builder.metrics")} (${metricIds.length}/${MAX_METRICS})`,
+          <MultiSelectCombobox
+            options={metricOptions}
+            values={metricIds}
+            // Slice defensively: a URL can carry more than the ceiling.
+            onChange={(values) => patchParam(P_METRICS, values.slice(0, MAX_METRICS).join(","))}
+            ariaLabel={t("salesReports.builder.metrics")}
+          />,
+        )}
+        {/* The same control the Explorer uses: every groupable dimension,
+            up to the planner's three levels, illegal ones disabled with the
+            metric that blocks them named. It replaces two native <select>s
+            that offered a curated pair and could not say why anything was
+            unavailable. Boxed (not `.surface` — no nested cards) so it reads
+            as its own multi-slot unit instead of merging into the plain
+            fields beside it. */}
+        <GroupByControl
+          registry={registry.data}
+          metricIds={metricIds}
+          value={dimensions}
+          className="rounded-xl border border-slate-200 bg-slate-50/60 p-3"
+          // ONE navigation for all three levels. Three separate patchParam
+          // calls would each be computed from the pre-patch params, so only
+          // the last would survive — see patchParams above.
+          onChange={(next) =>
+            patchParams({
+              [P_DIM1]: next[0] ?? DEFAULT_DIM,
+              [P_DIM2]: next[1] ?? null,
+              [P_DIM3]: next[2] ?? null,
+            })
+          }
+        />
+      </div>
+  
+      {/* Row B — how to shape it: page size and ordering, separate from
+          what to measure so the two questions don't compete in one row. */}
+      <div className="flex flex-wrap items-end gap-3">
+        {field(
+          "N",
+          <NumberInput
+            aria-label="N"
+            value={topN}
+            min={1}
+            max={500}
+            step={1}
+            onChange={(v) => patchParam(P_N, v == null ? null : String(Math.max(1, Math.floor(v))))}
+          />,
+        )}
+        {field(
+          t("salesReports.builder.sort"),
+          <div className="flex items-center gap-2">
+            <SegmentedControl
+              size="sm"
+              aria-label={t("salesReports.builder.sort")}
+              value={direction}
+              onChange={setDirection}
+              options={[
+                { value: "top", label: "↑" },
+                { value: "bottom", label: "↓" },
+              ]}
+            />
+            <Select
+              aria-label={t("salesReports.builder.sort")}
+              value={effectiveSort}
+              onChange={(e) => setSortMetric(e.target.value)}
+              options={metricIds.map((id) => ({ value: id, label: t(`salesReports.metrics.${id}`) }))}
+            />
+          </div>,
+        )}
+      </div>
+  
+      {/* Row C — actions. A thin top rule separates "configuring" from
+          "acting", the same divider convention CardHeader uses (border-b),
+          flipped to border-t since this sits at the bottom of the card. */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <Button onClick={() => setRanSig(configSig)} disabled={!canRun} data-testid="builder-run">
+          <Play className="h-4 w-4" /> {t("salesReports.builder.runQuery")}
+        </Button>
+        {/* Save-view / schedule: wiring lands next wave (TODO above). */}
+        <Tooltip content={t("salesReports.builder.comingSoon")}>
+          <Button variant="secondary" disabled data-testid="builder-save">
+            <Save className="h-4 w-4" /> {t("salesReports.builder.saveReport")}
+          </Button>
+        </Tooltip>
+        <Tooltip content={t("salesReports.builder.comingSoon")}>
+          <Button variant="secondary" disabled data-testid="builder-schedule">
+            <CalendarClock className="h-4 w-4" /> {t("salesReports.builder.schedule")}
+          </Button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+
+  // TRUE when the hub rail is showing it; false (page rendered standalone)
+  // means this page must render its own controls — see reportRail.tsx.
+  const configInRail = useReportRailControls(configPanel, [configSig, registry.data, metricIds.join("|"), dimensions.join("|"), topN, direction, effectiveSort, dropped.join("|"), Object.keys(contaminated).join("|"), requestedMetricCount]);
+
   return (
     <section aria-labelledby="sales-hub-page-builder" className="space-y-4">
       <div>
@@ -281,115 +402,8 @@ export default function Builder() {
         </div>
       )}
 
-      <div className="surface space-y-4 p-4" data-testid="builder-config">
-        {/* Names this card "Configuration" so it reads as distinct from the
-            AnalyticsTopBar filter card above it — that card carries no header
-            of its own, so the two used to blend into one long stack of fields. */}
-        <header className="flex items-center gap-2">
-          <SlidersHorizontal className="h-4 w-4 text-teal-700" aria-hidden="true" />
-          <div>
-            <h3 className="text-sm font-extrabold text-slate-900">{t("salesReports.builder.configTitle")}</h3>
-            <p className="mt-0.5 text-xs font-bold text-slate-500">{t("salesReports.builder.configSubtitle")}</p>
-          </div>
-        </header>
 
-        {/* Row A — what to measure: the two controls that decide the report's
-            shape. items-start (not items-end): GroupByControl now carries its
-            own padded box below, so bottom-aligning it against a plain field
-            would misalign the two label rows above them. */}
-        <div className="flex flex-wrap items-start gap-3">
-          {field(
-            `${t("salesReports.builder.metrics")} (${metricIds.length}/${MAX_METRICS})`,
-            <MultiSelectCombobox
-              options={metricOptions}
-              values={metricIds}
-              // Slice defensively: a URL can carry more than the ceiling.
-              onChange={(values) => patchParam(P_METRICS, values.slice(0, MAX_METRICS).join(","))}
-              ariaLabel={t("salesReports.builder.metrics")}
-            />,
-          )}
-          {/* The same control the Explorer uses: every groupable dimension,
-              up to the planner's three levels, illegal ones disabled with the
-              metric that blocks them named. It replaces two native <select>s
-              that offered a curated pair and could not say why anything was
-              unavailable. Boxed (not `.surface` — no nested cards) so it reads
-              as its own multi-slot unit instead of merging into the plain
-              fields beside it. */}
-          <GroupByControl
-            registry={registry.data}
-            metricIds={metricIds}
-            value={dimensions}
-            className="rounded-xl border border-slate-200 bg-slate-50/60 p-3"
-            // ONE navigation for all three levels. Three separate patchParam
-            // calls would each be computed from the pre-patch params, so only
-            // the last would survive — see patchParams above.
-            onChange={(next) =>
-              patchParams({
-                [P_DIM1]: next[0] ?? DEFAULT_DIM,
-                [P_DIM2]: next[1] ?? null,
-                [P_DIM3]: next[2] ?? null,
-              })
-            }
-          />
-        </div>
-
-        {/* Row B — how to shape it: page size and ordering, separate from
-            what to measure so the two questions don't compete in one row. */}
-        <div className="flex flex-wrap items-end gap-3">
-          {field(
-            "N",
-            <NumberInput
-              aria-label="N"
-              value={topN}
-              min={1}
-              max={500}
-              step={1}
-              onChange={(v) => patchParam(P_N, v == null ? null : String(Math.max(1, Math.floor(v))))}
-            />,
-          )}
-          {field(
-            t("salesReports.builder.sort"),
-            <div className="flex items-center gap-2">
-              <SegmentedControl
-                size="sm"
-                aria-label={t("salesReports.builder.sort")}
-                value={direction}
-                onChange={setDirection}
-                options={[
-                  { value: "top", label: "↑" },
-                  { value: "bottom", label: "↓" },
-                ]}
-              />
-              <Select
-                aria-label={t("salesReports.builder.sort")}
-                value={effectiveSort}
-                onChange={(e) => setSortMetric(e.target.value)}
-                options={metricIds.map((id) => ({ value: id, label: t(`salesReports.metrics.${id}`) }))}
-              />
-            </div>,
-          )}
-        </div>
-
-        {/* Row C — actions. A thin top rule separates "configuring" from
-            "acting", the same divider convention CardHeader uses (border-b),
-            flipped to border-t since this sits at the bottom of the card. */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-          <Button onClick={() => setRanSig(configSig)} disabled={!canRun} data-testid="builder-run">
-            <Play className="h-4 w-4" /> {t("salesReports.builder.runQuery")}
-          </Button>
-          {/* Save-view / schedule: wiring lands next wave (TODO above). */}
-          <Tooltip content={t("salesReports.builder.comingSoon")}>
-            <Button variant="secondary" disabled data-testid="builder-save">
-              <Save className="h-4 w-4" /> {t("salesReports.builder.saveReport")}
-            </Button>
-          </Tooltip>
-          <Tooltip content={t("salesReports.builder.comingSoon")}>
-            <Button variant="secondary" disabled data-testid="builder-schedule">
-              <CalendarClock className="h-4 w-4" /> {t("salesReports.builder.schedule")}
-            </Button>
-          </Tooltip>
-        </div>
-      </div>
+      {!configInRail && configPanel}
 
       {/* ── result — its own titled zone, plain (no .surface: PivotTable is
           already one, and a card nested in a card is the one thing this

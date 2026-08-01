@@ -23,6 +23,8 @@ export const salesReports = {
     subtitle: "مركز تحليلات المبيعات الموحّد — المقاييس والأبعاد من سجل الحقائق المعتمد",
     tabsAria: "أقسام تحليلات المبيعات",
     pickerLabel: "التقرير",
+    filtersTitle: "الفلاتر والإعدادات",
+    filtersAria: "فلاتر وإعدادات التقرير",
   },
 
   report: {

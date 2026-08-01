@@ -9,6 +9,8 @@ export const salesReports = {
     subtitle: "The unified sales analytics center — metrics and dimensions from the certified fact store",
     tabsAria: "Sales analytics sections",
     pickerLabel: "Report",
+    filtersTitle: "Filters & settings",
+    filtersAria: "Report filters and settings",
   },
 
   report: {

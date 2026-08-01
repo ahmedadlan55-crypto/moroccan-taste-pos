@@ -135,6 +135,19 @@
   body {
     background: theme(colors.white);
   }
+  /* The sales hub's two-column work area collapses to one column on paper.
+     Belt-and-braces, deliberately: the filter rail is `.no-print` (so the grid
+     ITEM is removed, not merely blanked) and the tracks are `xl:`-gated while
+     the print viewport is ~700px — but `display:none` does NOT remove a
+     declared grid TRACK. If either guard were ever lost, the report would be
+     placed in the 17rem track and print as a 300px-wide column. A grid
+     container must also never sit between <main> and .print-document while a
+     long report paginates — see the position:static note below for what that
+     class of failure looks like (a plausible page 1, everything after it
+     silently gone). */
+  [data-analytics-split] {
+    display: block !important;
+  }
   /* the shell reserves a right margin for the (hidden) sidebar — reclaim it */
   main {
     margin: 0 !important;

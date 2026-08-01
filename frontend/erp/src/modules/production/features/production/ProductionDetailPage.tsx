@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowRight, CheckCircle2, CircleDot, FileText, Layers, ListTree,
   Lock, PackageMinus, PackagePlus, Printer, Trash2, Undo2, XCircle,
@@ -33,11 +33,15 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
-export function ProductionDetailPage() {
+/**
+ * Single production-order detail. The id arrives as a ROUTE param
+ * (`/inventory/production/:id`); the retired `?doc=<id>` form redirects onto it
+ * from the module router.
+ */
+export function ProductionDetailPage({ orderId }: { orderId: string }) {
   const t = useT();
   const lang = useLang();
-  const [dsp] = useSearchParams();
-  const id = dsp.get("doc") ?? "";
+  const id = orderId;
   const navigate = useNavigate();
   const { data, isLoading, isError, error, refetch } = useProductionDetail(id);
   const m = useProductionMutations();
@@ -128,7 +132,7 @@ export function ProductionDetailPage() {
             <StatusBadge>{productionStatusToLabel(o.status)}</StatusBadge>
             {o.partiallyCompleted && <StatusBadge>{t("production.status.partial")}</StatusBadge>}
             {o.source === "legacy" && <StatusBadge>{t("production.detail.legacyDocBadge")}</StatusBadge>}
-            <Button variant="ghost" onClick={() => navigate("/inventory/production")}><ArrowRight className="h-4 w-4" /> {t("production.detail.backToList")}</Button>
+            <Button variant="ghost" onClick={() => navigate("/inventory/production")}><ArrowRight className="h-4 w-4 rotate-180 rtl:rotate-0" aria-hidden="true" /> {t("production.detail.backToList")}</Button>
           </div>
         }
       />
@@ -142,7 +146,7 @@ export function ProductionDetailPage() {
           {active.approveBlockedSelf && <span className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">{t("production.detail.actions.makerCheckerWarn")}</span>}
           {active.complete && <Button variant="secondary" onClick={() => setDialog("complete")}><CheckCircle2 className="h-4 w-4" /> {t("production.detail.actions.complete")}</Button>}
           {active.close && <Button variant="secondary" onClick={() => setDialog("close")}><Lock className="h-4 w-4" /> {t("production.detail.actions.close")}</Button>}
-          {active.edit && <Button variant="secondary" onClick={() => navigate(`/inventory/production?new=1&edit=${o.id}`)}>{t("production.detail.actions.editDraft")}</Button>}
+          {active.edit && <Button variant="secondary" onClick={() => navigate(`/inventory/production/${o.id}/edit`)}>{t("production.detail.actions.editDraft")}</Button>}
           <span className="flex-1" />
           <Button variant="ghost" onClick={() => printProduction(data, t, lang)}><Printer className="h-4 w-4" /> {t("production.detail.actions.print")}</Button>
           {active.cancel && <Button variant="ghost" onClick={() => setDialog("cancel")}><XCircle className="h-4 w-4" /> {t("production.detail.actions.cancel")}</Button>}
@@ -185,7 +189,7 @@ export function ProductionDetailPage() {
                       <div>
                         <div className="text-sm font-bold text-slate-800">
                           {ACTION_LABEL[ev.action] ?? ev.action}
-                          {ev.toStatus && <span className="mr-2 text-xs font-medium text-slate-400">← {productionStatusLabel(t, ev.toStatus)}</span>}
+                          {ev.toStatus && <span className="ms-2 text-xs font-medium text-slate-400">← {productionStatusLabel(t, ev.toStatus)}</span>}
                         </div>
                         <div className="text-xs text-slate-500">{ev.actor || "—"} · {formatDateTime(ev.at)}{ev.note ? ` · ${ev.note}` : ""}</div>
                       </div>
@@ -219,23 +223,23 @@ export function ProductionDetailPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 text-right">{t("production.detail.materials.col.material")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.materials.col.planned")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.materials.col.issued")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.materials.col.remaining")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.materials.col.availableNow")}</th>
-                      <th className="px-3 py-2 text-left">{t("production.detail.materials.col.issuedValue")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.materials.col.material")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.materials.col.planned")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.materials.col.issued")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.materials.col.remaining")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.materials.col.availableNow")}</th>
+                      <th className="px-3 py-2 text-end">{t("production.detail.materials.col.issuedValue")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.plan.map((p) => (
                       <tr key={p.itemId}>
-                        <td className="px-3 py-2 font-bold text-slate-800">{p.itemName}{p.trackingMode !== "none" && <span className="mr-2 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{t("production.detail.materials.trackedBadge")}</span>}</td>
+                        <td className="px-3 py-2 font-bold text-slate-800">{p.itemName}{p.trackingMode !== "none" && <span className="ms-2 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">{t("production.detail.materials.trackedBadge")}</span>}</td>
                         <td className="px-3 py-2 tabular-nums">{formatQty(p.qtyPlanned, p.itemUnit)}</td>
                         <td className="px-3 py-2 tabular-nums">{formatQty(p.qtyIssued)}</td>
                         <td className={`px-3 py-2 font-bold tabular-nums ${p.remaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>{formatQty(Math.max(p.remaining, 0))}</td>
                         <td className="px-3 py-2 tabular-nums text-slate-500">{formatQty(p.available)}</td>
-                        <td className="px-3 py-2 text-left tabular-nums">{formatCurrency(p.totalCost)}</td>
+                        <td className="px-3 py-2 text-end tabular-nums">{formatCurrency(p.totalCost)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -261,7 +265,7 @@ export function ProductionDetailPage() {
                           <td className="px-4 py-1.5 font-bold text-slate-700">{l.itemName}</td>
                           <td className="px-4 py-1.5 tabular-nums">{formatQty(l.qty, l.itemUnit)}</td>
                           <td className="px-4 py-1.5 tabular-nums text-slate-500">@ {formatCurrency(l.unitCost)}</td>
-                          <td className="px-4 py-1.5 text-left tabular-nums font-bold">{formatCurrency(l.lineTotal)}</td>
+                          <td className="px-4 py-1.5 text-end tabular-nums font-bold">{formatCurrency(l.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -278,13 +282,13 @@ export function ProductionDetailPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.date")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.good")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.waste")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.unitCost")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.batch")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.detail.outputs.col.expiry")}</th>
-                    <th className="px-3 py-2 text-left">{t("production.detail.outputs.col.value")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.date")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.good")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.waste")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.unitCost")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.batch")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.detail.outputs.col.expiry")}</th>
+                    <th className="px-3 py-2 text-end">{t("production.detail.outputs.col.value")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -296,7 +300,7 @@ export function ProductionDetailPage() {
                       <td className="px-3 py-2 tabular-nums">{formatCurrency(ev.unitCost)}</td>
                       <td className="px-3 py-2">{ev.batchNumber ?? "—"}</td>
                       <td className="px-3 py-2">{formatDate(ev.expiryDate)}</td>
-                      <td className="px-3 py-2 text-left tabular-nums font-bold">{formatCurrency(ev.totalCost + ev.wasteCost)}</td>
+                      <td className="px-3 py-2 text-end tabular-nums font-bold">{formatCurrency(ev.totalCost + ev.wasteCost)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -320,8 +324,8 @@ export function ProductionDetailPage() {
                         <tr key={i}>
                           <td className="px-4 py-1.5 font-mono text-slate-500" dir="ltr">{e.accountCode}</td>
                           <td className="px-4 py-1.5 font-bold text-slate-700">{e.accountName}</td>
-                          <td className="px-4 py-1.5 text-left tabular-nums">{e.debit > 0 ? formatCurrency(e.debit) : ""}</td>
-                          <td className="px-4 py-1.5 text-left tabular-nums text-slate-500">{e.credit > 0 ? formatCurrency(e.credit) : ""}</td>
+                          <td className="px-4 py-1.5 text-end tabular-nums">{e.debit > 0 ? formatCurrency(e.debit) : ""}</td>
+                          <td className="px-4 py-1.5 text-end tabular-nums text-slate-500">{e.credit > 0 ? formatCurrency(e.credit) : ""}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -340,7 +344,7 @@ export function ProductionDetailPage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500">
-                      <tr><th className="px-3 py-2 text-right">{t("production.detail.trace.col.lot")}</th><th className="px-3 py-2 text-right">{t("production.detail.trace.col.expiry")}</th><th className="px-3 py-2 text-right">{t("production.detail.trace.col.movement")}</th><th className="px-3 py-2 text-left">{t("production.detail.trace.col.qty")}</th></tr>
+                      <tr><th className="px-3 py-2 text-start">{t("production.detail.trace.col.lot")}</th><th className="px-3 py-2 text-start">{t("production.detail.trace.col.expiry")}</th><th className="px-3 py-2 text-start">{t("production.detail.trace.col.movement")}</th><th className="px-3 py-2 text-end">{t("production.detail.trace.col.qty")}</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {data.lotMovements.map((lm) => (
@@ -348,7 +352,7 @@ export function ProductionDetailPage() {
                           <td className="px-3 py-2 font-bold text-slate-800">{lm.lotNumber || lm.lotId}</td>
                           <td className="px-3 py-2 text-slate-500">{formatDate(lm.expiryDate)}</td>
                           <td className="px-3 py-2 text-xs text-slate-500">{LOT_REF[lm.referenceType] ?? lm.referenceType}</td>
-                          <td className={`px-3 py-2 text-left font-bold tabular-nums ${lm.signedQty < 0 ? "text-rose-600" : "text-emerald-700"}`}>{lm.signedQty > 0 ? "+" : ""}{formatQty(lm.signedQty)}</td>
+                          <td className={`px-3 py-2 text-end font-bold tabular-nums ${lm.signedQty < 0 ? "text-rose-600" : "text-emerald-700"}`}>{lm.signedQty > 0 ? "+" : ""}{formatQty(lm.signedQty)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -365,7 +369,7 @@ export function ProductionDetailPage() {
                       <span className="font-bold text-slate-700">{g.componentLotNumber ?? "—"}</span>
                       <span className="mx-2 text-slate-400">←</span>
                       <span className="font-bold text-teal-700">{g.outputLotNumber}</span>
-                      <span className="mr-2 text-xs tabular-nums text-slate-500">({formatQty(g.qty)})</span>
+                      <span className="ms-2 text-xs tabular-nums text-slate-500">({formatQty(g.qty)})</span>
                     </li>
                   ))}
                 </ul>
@@ -387,11 +391,11 @@ export function ProductionDetailPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 text-right">{t("production.detail.variance.col.component")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.variance.col.planned")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.variance.col.actual")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.detail.variance.col.qtyVariance")}</th>
-                      <th className="px-3 py-2 text-left">{t("production.detail.variance.col.valueVariance")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.variance.col.component")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.variance.col.planned")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.variance.col.actual")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.detail.variance.col.qtyVariance")}</th>
+                      <th className="px-3 py-2 text-end">{t("production.detail.variance.col.valueVariance")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -401,7 +405,7 @@ export function ProductionDetailPage() {
                         <td className="px-3 py-2 tabular-nums">{formatQty(c.qtyPlanned, c.itemUnit)}</td>
                         <td className="px-3 py-2 tabular-nums">{formatQty(c.qtyActual)}</td>
                         <td className={`px-3 py-2 font-bold tabular-nums ${c.qtyVariance > 0 ? "text-rose-600" : c.qtyVariance < 0 ? "text-emerald-600" : "text-slate-400"}`}>{c.qtyVariance > 0 ? "+" : ""}{formatQty(c.qtyVariance)}</td>
-                        <td className={`px-3 py-2 text-left font-bold tabular-nums ${c.valueVariance > 0 ? "text-rose-600" : "text-slate-600"}`}>{formatCurrency(c.valueVariance)}</td>
+                        <td className={`px-3 py-2 text-end font-bold tabular-nums ${c.valueVariance > 0 ? "text-rose-600" : "text-slate-600"}`}>{formatCurrency(c.valueVariance)}</td>
                       </tr>
                     ))}
                   </tbody>

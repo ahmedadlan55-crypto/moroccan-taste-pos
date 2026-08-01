@@ -70,6 +70,7 @@ export const operations = {
     back: "العودة إلى مركز العمليات",
     eyebrow: "مستند مخزني",
     fallbackTitle: "مستند",
+    print: "طباعة",
     notFoundTitle: "مسار مستند غير صالح",
     notFoundBody: "الرابط لا يحتوي على نوع المستند ورقمه معًا.",
     signedValueNote: "قيمة هذا المستند مُوجَّهة بإشارة: السالب يعني انخفاض قيمة المخزون.",

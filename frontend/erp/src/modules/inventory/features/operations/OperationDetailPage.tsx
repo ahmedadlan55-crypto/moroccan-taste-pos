@@ -21,8 +21,8 @@
  */
 import { Link } from "react-router-dom";
 import type { ComponentType, ReactNode } from "react";
-import { ArrowRight, Boxes, FileText, History, Layers, Package, Paperclip, Receipt, Scale } from "lucide-react";
-import { Badge, ErrorState, LoadingState, PanelTitle, StatusBadge } from "@/shared/ui";
+import { ArrowRight, Boxes, FileText, History, Layers, Package, Paperclip, Printer, Receipt, Scale } from "lucide-react";
+import { Badge, Button, ErrorState, LoadingState, PanelTitle, StatusBadge } from "@/shared/ui";
 import { Can } from "@/shared/permissions";
 import { formatCurrency, formatDate, formatDateTime, formatNumber, formatQty } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
@@ -71,7 +71,7 @@ export function OperationDetailPage({ documentType, documentId }: { documentType
   const attachments = extractAttachments(d.header);
 
   return (
-    <div className="grid gap-6">
+    <div className="print-document grid gap-6">
       {back}
 
       {/* ── header ── */}
@@ -94,7 +94,12 @@ export function OperationDetailPage({ documentType, documentId }: { documentType
             )}
           </div>
         </div>
-        <StatusBadge>{statusLabel(t, h.status)}</StatusBadge>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" className="no-print" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" aria-hidden="true" /> {t("operations.detail.print")}
+          </Button>
+          <StatusBadge>{statusLabel(t, h.status)}</StatusBadge>
+        </div>
       </div>
 
       {/* ── workflow actions ──

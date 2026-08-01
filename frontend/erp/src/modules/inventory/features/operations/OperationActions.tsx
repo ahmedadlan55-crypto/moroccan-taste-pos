@@ -87,7 +87,6 @@ function TransferActions({ id }: { id: string }) {
   return (
     <>
       <div className="no-print flex w-full flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-4">
-        <Button variant="ghost" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
         <div className="flex flex-wrap gap-2">{actions}</div>
       </div>
 

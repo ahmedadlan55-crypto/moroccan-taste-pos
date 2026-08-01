@@ -65,6 +65,7 @@ export const operations = {
     back: "Back to the operations centre",
     eyebrow: "Inventory document",
     fallbackTitle: "Document",
+    print: "Print",
     notFoundTitle: "Invalid document path",
     notFoundBody: "The link does not carry both a document type and a document id.",
     signedValueNote: "This document's value is signed: a negative amount means inventory value went down.",

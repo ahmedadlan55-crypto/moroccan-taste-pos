@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Check, Factory, Search, TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -21,11 +21,14 @@ const STEP_KEYS = [
   "production.wizard.steps.review",
 ] as const;
 
-export function ProductionCreateWizard() {
+/**
+ * Single-order draft wizard. The order id now arrives as a ROUTE param
+ * (`/inventory/production/:id/edit`) rather than `?new=1&edit=<id>` — the module
+ * router redirects the retired query form onto it.
+ */
+export function ProductionCreateWizard({ editId }: { editId?: string }) {
   const t = useT();
   const navigate = useNavigate();
-  const [psp] = useSearchParams();
-  const editId = psp.get("edit") ?? undefined;
   const { accessibleWarehouses, allWarehousesAccess } = useWarehouseScope();
   const allWh = useWarehouses();
   const { create, update } = useProductionMutations();
@@ -103,10 +106,10 @@ export function ProductionCreateWizard() {
     };
     if (editId && existing.data) {
       await update.mutateAsync({ id: editId, input: { ...input, expectedVersion: existing.data.order.version } });
-      navigate(`/inventory/production?doc=${editId}`, { replace: true });
+      navigate(`/inventory/production/${editId}`, { replace: true });
     } else {
       const r = await create.mutateAsync(input);
-      navigate(`/inventory/production?doc=${r.id}`, { replace: true });
+      navigate(`/inventory/production/${r.id}`, { replace: true });
     }
   }
 
@@ -122,7 +125,7 @@ export function ProductionCreateWizard() {
       <ol className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label={t("production.wizard.stepsAria")}>
         {STEP_KEYS.map((s, i) => (
           <li key={s} className={`rounded-xl border px-3 py-2 text-xs font-extrabold ${i === step ? "border-teal-600 bg-teal-50 text-teal-800" : i < step ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-400"}`}>
-            <span className="ml-1 tabular-nums">{i + 1}.</span> {t(s)} {i < step && <Check className="mr-1 inline h-3.5 w-3.5" />}
+            <span className="me-1 tabular-nums">{i + 1}.</span> {t(s)} {i < step && <Check className="ms-1 inline h-3.5 w-3.5" />}
           </li>
         ))}
       </ol>
@@ -131,8 +134,8 @@ export function ProductionCreateWizard() {
         {step === 0 && (
           <div>
             <label className="relative mb-4 block">
-              <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input className="field w-full pr-10" placeholder={t("production.wizard.searchPlaceholder")} value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} aria-label={t("production.wizard.searchAria")} />
+              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input className="field w-full ps-10" placeholder={t("production.wizard.searchPlaceholder")} value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} aria-label={t("production.wizard.searchAria")} />
             </label>
             {boms.isLoading ? <LoadingState rows={2} /> : boms.isError ? <ErrorState error={boms.error} onRetry={() => boms.refetch()} /> : !boms.data || boms.data.length === 0 ? (
               <EmptyState title={t("production.wizard.emptyTitle")} body={t("production.wizard.emptyBody")} />
@@ -141,7 +144,7 @@ export function ProductionCreateWizard() {
                 {boms.data.map((b) => (
                   <li key={b.id}>
                     <button type="button" onClick={() => setBom(b)}
-                      className={`w-full rounded-xl border p-4 text-right transition ${bom?.id === b.id ? "border-teal-600 bg-teal-50 ring-2 ring-teal-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                      className={`w-full rounded-xl border p-4 text-start transition ${bom?.id === b.id ? "border-teal-600 bg-teal-50 ring-2 ring-teal-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-extrabold text-slate-900">{b.productName}</span>
                         {b.trackingMode !== "none" && <StatusBadge>{b.trackingMode === "expiry" ? t("production.wizard.trackExpiry") : t("production.wizard.trackLot")}</StatusBadge>}
@@ -219,12 +222,12 @@ export function ProductionCreateWizard() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.material")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.required")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.available")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.fefo")}</th>
-                      <th className="px-3 py-2 text-right">{t("production.wizard.preview.col.delta")}</th>
-                      <th className="px-3 py-2 text-left">{t("production.wizard.preview.col.cost")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.wizard.preview.col.material")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.wizard.preview.col.required")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.wizard.preview.col.available")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.wizard.preview.col.fefo")}</th>
+                      <th className="px-3 py-2 text-start">{t("production.wizard.preview.col.delta")}</th>
+                      <th className="px-3 py-2 text-end">{t("production.wizard.preview.col.cost")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -235,7 +238,7 @@ export function ProductionCreateWizard() {
                         <td className="px-3 py-2 tabular-nums">{formatQty(i.available)}</td>
                         <td className="px-3 py-2 tabular-nums">{i.fefoAvailable != null ? formatQty(i.fefoAvailable) : "—"}</td>
                         <td className={`px-3 py-2 font-bold tabular-nums ${i.delta < 0 ? "text-rose-600" : "text-emerald-600"}`}>{i.delta > 0 ? "+" : ""}{formatQty(i.delta)}</td>
-                        <td className="px-3 py-2 text-left tabular-nums text-slate-600">{formatCurrency(i.lineCost ?? 0)}</td>
+                        <td className="px-3 py-2 text-end tabular-nums text-slate-600">{formatCurrency(i.lineCost ?? 0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -257,7 +260,7 @@ export function ProductionCreateWizard() {
             {batchNumber && <ReviewCell label={t("production.wizard.review.batch")} value={batchNumber} />}
             {notes && <ReviewCell label={t("production.wizard.review.notes")} value={notes} />}
             <div className="md:col-span-2 rounded-xl border border-teal-200 bg-teal-50 p-3 text-xs font-bold text-teal-800">
-              <Factory className="ml-1 inline h-4 w-4" />
+              <Factory className="me-1 inline h-4 w-4" />
               {t("production.wizard.review.draftNote")}
             </div>
             {err && <p className="md:col-span-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{err}</p>}
@@ -267,11 +270,11 @@ export function ProductionCreateWizard() {
 
       <div className="mt-4 flex items-center justify-between">
         <Button variant="secondary" disabled={step === 0 || create.isPending} onClick={() => setStep((s) => s - 1)}>
-          <ArrowRight className="h-4 w-4" /> {t("production.wizard.prev")}
+          <ArrowRight className="h-4 w-4 rotate-180 rtl:rotate-0" aria-hidden="true" /> {t("production.wizard.prev")}
         </Button>
         {step < STEP_KEYS.length - 1 ? (
           <Button variant="primary" disabled={!canNext} onClick={() => setStep((s) => s + 1)}>
-            {t("common.next")} <ArrowLeft className="h-4 w-4" />
+            {t("common.next")} <ArrowLeft className="h-4 w-4 rotate-180 rtl:rotate-0" aria-hidden="true" />
           </Button>
         ) : (
           <Button variant="primary" disabled={create.isPending} onClick={() => void submit()}>

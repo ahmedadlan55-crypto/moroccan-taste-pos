@@ -97,6 +97,25 @@ const STEPS = [
   // Mutation harness (W5a): each seeded math mutant must be KILLED by the
   // analytics unit suites — proves the equations tests bite, not just pass.
   { id: 'audit:mutation-sales-math',  cmd: process.execPath, args: ['scripts/audit/mutation-sales-math.js'] },
+  // Analytics perf, measured end to end over POST /api/analytics/query at real
+  // volume (~530k orders / 1.6M lines): cold budgets, the warm-memo budget, and
+  // the "no unjustified full scan of a fact table" EXPLAIN assertion.
+  //
+  // It runs against an EXISTING sandbox and NEVER provisions one. Seeding
+  // 530k orders + draining every rollup pair is minutes of work; doing it on
+  // each gate run would make the gate too slow to run, and a gate nobody runs
+  // is worth nothing. Provision it once:
+  //     node scripts/analytics/seed-perf.js --db=mt_perf_sales_hub
+  //
+  // ABSENT SANDBOX IS A FAILURE, NOT A SKIP. perf-check.js exits 2 when the
+  // database is missing or empty, and that exit code lands here unchanged —
+  // there is no `|| true` and no conditional skip, because a step that quietly
+  // passes when its fixture is gone is a step that has stopped testing anything
+  // while still printing a tick. Override the sandbox name with
+  // ANALYTICS_PERF_DB=<name>.
+  { id: 'perf:analytics',     cmd: process.execPath,
+    args: ['scripts/analytics/perf-check.js',
+      '--db=' + (process.env.ANALYTICS_PERF_DB || 'mt_perf_sales_hub')] },
   { id: 'schema:release-chain', cmd: NPM, args: ['run', 'test:release-chain'] },
   { id: 'schema:release-sequence', cmd: NPM, args: ['run', 'test:release-sequence'] },
   { id: 'schema:migration-concurrency', cmd: NPM, args: ['run', 'test:migration-concurrency'] },

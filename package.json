@@ -183,7 +183,8 @@
     "inv:names:preview": "node scripts/inventory/fix-bilingual-names.js",
     "inv:names:apply": "node scripts/inventory/fix-bilingual-names.js --apply",
     "test:recipes-api": "node tests/integration/recipes.api.test.js",
-    "test:operations-api": "node tests/integration/inventoryOperations.api.test.js"
+    "test:operations-api": "node tests/integration/inventoryOperations.api.test.js",
+    "test:production-integrity": "node tests/integration/productionIntegrity.api.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

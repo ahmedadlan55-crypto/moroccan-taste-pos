@@ -749,6 +749,13 @@ app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes')
 // completed→closed, +cancel/reverse/delete). Path-scoped mount so it inherits
 // scope/canary/metrics; claimed BEFORE the sibling v2 routers.
 app.use('/api/inventory/v2/production-orders', require('./routes/inventory-production'));
+// ONE production document covering SEVERAL INDEPENDENT products, atomic across
+// its children. Replaces the `items` array branch of the legacy
+// POST /api/erp/production-orders, which looped unwrapped INSERTs with no
+// transaction and reported success after silently dropping bad lines (that
+// branch now returns 410 pointing here). Mounted BEFORE the sibling v2 routers
+// so /production-batches is claimed here.
+app.use('/api/inventory/v2/production-batches', require('./routes/production-batches'));
 // Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
 // /negative-policy is claimed here; sibling scoped router, canary-gated above).
 app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));

@@ -24,6 +24,97 @@ export function marginPct(price: number, cost: number): number {
   return price > 0 ? Math.round(((price - cost) / price) * 10000) / 100 : 0;
 }
 
+// ── VAT breakdown — net / tax / gross ───────────────────────────────────────
+// The owner reads prices as what the CUSTOMER PAYS, but menu rows are stored
+// NET (is_tax_inclusive=0 on every current row). A screen that shows only the
+// stored figure hides the number he actually cares about, and the register was
+// showing 34.99 for an item whose ERP row said 30.4261 — the same product,
+// two numbers, no way to connect them.
+//
+// THE ARITHMETIC IS A MIRROR, NOT A SECOND OPINION. These two branches are the
+// same ones frontend/pos/src/lib/cartMath.ts uses (lineTotals → displayUnitPrice)
+// for the cashier card. A separate formula here would drift from the till the
+// first time the owner changed the VAT rate in settings — which is precisely
+// the class of bug this work exists to remove.
+
+const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+const round4 = (n: number) => Math.round((Number(n) || 0) * 10000) / 10000;
+
+/** Tax categories that actually carry VAT. Z (zero-rated), E (exempt) and
+ *  O (out-of-scope) are always 0%, so their stored price IS the final one. */
+const TAXED: Record<string, boolean> = { S: true, Z: false, E: false, O: false };
+
+export interface PriceBreakdown {
+  /** Price before VAT. */
+  net: number;
+  /** The VAT amount itself. 0 for Z/E/O. */
+  tax: number;
+  /** What the customer pays — the number on the cashier card. */
+  gross: number;
+  /** Whether `gross` is a whole riyal (no halalas). */
+  grossIsWhole: boolean;
+  /** The nearest whole riyal — what `gross` WOULD be after the rounding sweep. */
+  wholeTarget: number;
+  /** Effective VAT fraction used (0 for Z/E/O). */
+  rate: number;
+}
+
+export function priceBreakdown(
+  price: number,
+  taxCategory: string | null | undefined,
+  isTaxInclusive: boolean | null | undefined,
+  vatRatePct: number,
+): PriceBreakdown {
+  const p = Number(price) || 0;
+  const pct = Number(vatRatePct);
+  const rate = TAXED[String(taxCategory ?? "S")] === false
+    ? 0
+    : (Number.isFinite(pct) && pct >= 0 ? pct : 15) / 100;
+
+  let net: number, tax: number, gross: number;
+  if (isTaxInclusive === true) {
+    gross = round2(p);
+    net = round4(gross / (1 + rate));
+    tax = round2(gross - net);
+  } else {
+    net = round4(p);
+    tax = round2(net * rate);
+    gross = round2(net + tax);
+  }
+
+  return {
+    net,
+    tax,
+    gross,
+    grossIsWhole: Number.isInteger(gross),
+    // Never propose 0 for a priced item — that would make it free.
+    wholeTarget: Math.max(p > 0 ? 1 : 0, Math.round(gross)),
+    rate,
+  };
+}
+
+/** The stored (net) price that makes `gross` come out exactly, for a row with
+ *  this tax treatment. The inverse of priceBreakdown — used by the price dialog
+ *  so the owner can type what the customer pays and have the right net stored.
+ *
+ *  4 decimals is not cosmetic: at 2 decimals many whole-riyal targets are
+ *  unreachable (11.00 @15% needs 9.5652 — 9.57 gives 11.01, 9.56 gives 10.99),
+ *  which is why menu.price was widened in db/migrations/0023. */
+export function netForGross(
+  gross: number,
+  taxCategory: string | null | undefined,
+  isTaxInclusive: boolean | null | undefined,
+  vatRatePct: number,
+): number {
+  const g = Number(gross) || 0;
+  if (isTaxInclusive === true) return round2(g); // stored price IS the gross
+  const pct = Number(vatRatePct);
+  const rate = TAXED[String(taxCategory ?? "S")] === false
+    ? 0
+    : (Number.isFinite(pct) && pct >= 0 ? pct : 15) / 100;
+  return round4(g / (1 + rate));
+}
+
 // ── Bilingual helpers (Sprint 3 · D2) ────────────────────────────────────────
 
 /** Business-data name policy: render the English name when the UI language is

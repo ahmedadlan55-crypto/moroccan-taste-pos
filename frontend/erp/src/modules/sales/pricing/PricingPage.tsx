@@ -22,6 +22,10 @@ import { Field } from "@/shared/forms";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can, useCan } from "@/shared/permissions";
 import { formatNumber, formatDateTime } from "@/shared/lib";
+// Shared with the menu module so both price dialogs convert gross↔net the
+// same way — two formulas would drift the first time the VAT rate changed.
+import { priceBreakdown, netForGross } from "@/modules/menu/lib";
+import { useVatRate } from "@/modules/menu/api";
 import {
   useMenuItems,
   useUpdatePrice,
@@ -223,19 +227,32 @@ function PriceEditDialog({
   const lang = useLang();
   const displayName = lang === "en" && item.nameEn ? item.nameEn : item.name;
   const update = useUpdatePrice();
-  const [price, setPrice] = useState<number | null>(item.price);
+  const vatRateQ = useVatRate();
+  const vatRatePct = vatRateQ.data ?? 15;
+
+  // IN THE AMOUNT THE CUSTOMER PAYS. This field used to be the STORED price,
+  // which is net of VAT for every menu row — so typing 35 stored 35 net and the
+  // till rang up 40.25. The net is derived on save, so the server contract and
+  // every downstream calculation are untouched; only the number a human types
+  // and reads is now the one they were already thinking in. Mirrors the menu
+  // module's PriceEditDialog so the two screens cannot disagree.
+  const current = priceBreakdown(item.price, item.taxCategory, item.isTaxInclusive, vatRatePct);
+  const [gross, setGross] = useState<number | null>(current.gross);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const priceOk = price != null && price >= 0;
+  const priceOk = gross != null && gross >= 0;
   const reasonOk = reason.trim().length >= 3;
-  const newMargin = price != null ? marginPct(price, item.cost) : 0;
+  const netToStore = priceOk ? netForGross(gross as number, item.taxCategory, item.isTaxInclusive, vatRatePct) : 0;
+  const next = priceBreakdown(netToStore, item.taxCategory, item.isTaxInclusive, vatRatePct);
+  const newMargin = priceOk ? marginPct(next.net, item.cost) : 0;
 
   function submit() {
     if (!priceOk || !reasonOk) return;
     setError(null);
     update.mutate(
-      { id: item.id, price: price as number, reason: reason.trim() },
+      // The NET goes to the server — unchanged contract.
+      { id: item.id, price: netToStore, reason: reason.trim() },
       {
         onSuccess: (res) => {
           if (res && res.success === false) return setError(pricingError(new Error(res.error), t));
@@ -266,7 +283,7 @@ function PriceEditDialog({
     >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-3">
-          <DetailStat label={t("sales.pricing.currentPrice")} value={<Money value={item.price} />} />
+          <DetailStat label={t("sales.pricing.currentPrice")} value={<Money value={current.gross} />} />
           <DetailStat label={t("sales.pricing.col.cost")} value={<Money value={item.cost} tone="text-slate-500" />} />
           <DetailStat
             label={t("sales.pricing.newMargin")}
@@ -278,9 +295,20 @@ function PriceEditDialog({
           />
         </div>
 
-        <Field label={t("sales.pricing.newPrice")} required>
-          <CurrencyInput value={price} onChange={setPrice} invalid={!priceOk} min={0} />
+        <Field label={t("menu.price.grossLabel")} hint={t("menu.price.grossHint")} required>
+          <CurrencyInput value={gross} onChange={setGross} invalid={!priceOk} min={0} />
         </Field>
+        {priceOk && (
+          <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm">
+            <span className="font-bold text-slate-400">{t("menu.price.showsAtTill")}</span>
+            <Money value={next.gross} tone={next.grossIsWhole ? "text-emerald-700" : "text-amber-700"} />
+          </div>
+        )}
+        {priceOk && !next.grossIsWhole && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+            {t("menu.price.notWholeWarn", { target: String(next.wholeTarget) })}
+          </p>
+        )}
         <Field label={t("sales.pricing.reason")} required error={reason.length > 0 && !reasonOk ? t("sales.pricing.reasonMin") : undefined}>
           <Input
             value={reason}

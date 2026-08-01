@@ -13,6 +13,9 @@ export const menu = {
     subtitle: "Product catalog per brand — cost, margin and availability across branches and channels. Price edits are recorded in the price history.",
     newItem: "New product",
     searchPlaceholder: "Search by code, barcode or name…",
+    roundPrices: "Make them whole",
+    // Shown on hover over any non-whole gross price in the column.
+    notWholeHint: "Shows with halalas at the till — rounding makes it {target} SAR",
   },
   col: {
     code: "Code",
@@ -23,8 +26,17 @@ export const menu = {
     brand: "Brand",
     cost: "Cost",
     price: "Sale price",
+    // The three columns: what is stored, the VAT amount, and what the customer
+    // actually pays at the till. The last one is the number the owner cares about.
+    priceNet: "Excl. VAT",
+    priceTax: "VAT",
+    priceGross: "Incl. VAT",
     margin: "Margin",
+    // "Tax" used to label two different columns — the category (S/Z/E/O) and
+    // the amount. The category gets its own explicit name so they cannot be
+    // confused inside one table.
     tax: "Tax",
+    taxCategory: "Tax category",
     branches: "Branches",
     channels: "Channels",
     status: "Status",
@@ -70,8 +82,15 @@ export const menu = {
   // ── Price edit + history (kept as focused dialogs) ────────────────────────
   price: {
     editTitle: "Edit price",
-    current: "Current price",
+    current: "Current price (incl. VAT)",
     newPrice: "New price",
+    // The field works in what the customer pays; the net is derived on save —
+    // so typing 35 shows 35 at the till, instead of the 40 it used to give.
+    grossLabel: "Price incl. VAT",
+    grossHint: "Type what the customer pays — this is exactly what the cashier screen will show.",
+    storedNet: "Stored excl. VAT",
+    showsAtTill: "Shows at the till",
+    notWholeWarn: "This amount has halalas. Type {target} for a whole number at the till.",
     expectedMargin: "Expected margin",
     reason: "Reason for change",
     reasonPlaceholder: "Write the reason for the price change…",

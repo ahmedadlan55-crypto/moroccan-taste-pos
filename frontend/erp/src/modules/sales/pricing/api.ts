@@ -24,6 +24,11 @@ export interface MenuItem {
   computedCost: number;
   pricingMode: string;
   isCombo: boolean;
+  /** ZATCA tax category (S/Z/E/O). Shipped by _mapMenu; needed to convert the
+   *  stored net price to what the customer actually pays. */
+  taxCategory?: string;
+  /** Whether `price` already contains VAT. Also from _mapMenu. */
+  isTaxInclusive?: boolean;
 }
 
 // GET /menu/all — admin list (active + inactive). Default hides semi-finished

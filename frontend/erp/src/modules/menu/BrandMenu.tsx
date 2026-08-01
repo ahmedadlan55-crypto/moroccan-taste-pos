@@ -31,12 +31,14 @@ import {
   useMenuList,
   useCategoryList,
   useDeleteMenuItem,
+  useVatRate,
   type MenuListRow,
   type MenuListParams,
 } from "./api";
-import { MoneyI18n, Num, pickName, useBrandScope, BrandSelect } from "./lib";
+import { MoneyI18n, Num, pickName, priceBreakdown, useBrandScope, BrandSelect } from "./lib";
 import { MenuItemThumb } from "./MenuItemThumb";
 import { PriceEditDialog, PriceHistoryDrawer } from "./PriceDialogs";
+import { WholeRiyalButton } from "./WholeRiyalSweep";
 
 interface TableState {
   page: number;
@@ -76,6 +78,7 @@ export function BrandMenu() {
 
   const brandsQ = useBrands();
   const categoriesQ = useCategoryList();
+  const vatRateQ = useVatRate();
   const channelsQ = useChannels();
 
   const [ts, setTs] = useState<TableState>({ page: 1, pageSize: 25, search: "", sort: "", dir: "asc" });
@@ -135,6 +138,14 @@ export function BrandMenu() {
   const goEdit = useCallback((id: string) => navigate(`/menu/brand/${encodeURIComponent(id)}/edit${brandQuery}`), [navigate, brandQuery]);
   const goNew = useCallback(() => navigate(`/menu/brand/new${brandQuery}`), [navigate, brandQuery]);
 
+  // settings.VATRate — the SAME rate the register reads, so the gross shown
+  // here is the gross printed there. Falls back to 15 only until it loads.
+  const vatRatePct = vatRateQ.data ?? 15;
+  const breakdownOf = useCallback(
+    (r: MenuListRow) => priceBreakdown(r.price, r.taxCategory, r.isTaxInclusive, vatRatePct),
+    [vatRatePct],
+  );
+
   const columns = useMemo<ColumnDef<MenuListRow>[]>(() => [
     { id: "code", header: t("menu.col.code"), accessor: (r) => r.id, width: "8rem", mobileHidden: true, cell: (r) => <span dir="ltr" className="font-mono text-xs text-slate-500">{r.id}</span> },
     { id: "image", header: t("menu.col.image"), width: "4rem", hideable: false, noExport: true, mobileHidden: true, cell: (r) => <MenuItemThumb id={r.id} imageVer={r.imageVer} hasImage={r.hasImage} alt={pickName(r.name, r.nameEn, lang)} /> },
@@ -162,7 +173,52 @@ export function BrandMenu() {
         </span>
       ),
     },
-    { id: "price", header: t("menu.col.price"), numeric: true, sortable: true, accessor: (r) => r.price, priority: 2, cell: (r) => <MoneyI18n value={r.price} className="font-bold" /> },
+    // ── The three price columns ──────────────────────────────────────────────
+    // The stored figure alone was never the number the owner needed: a row
+    // stored at 30.4261 rings up at 34.99, and nothing on this screen connected
+    // the two. Net / VAT / gross are shown side by side, and the gross column
+    // is the one the cashier card prints.
+    //
+    // `priceNet` keeps the server sort key `price` — the backend whitelists
+    // that id and sorts on the stored column, which IS the net for every
+    // tax-exclusive row. The other two are derived, so they do not sort.
+    {
+      id: "price", header: t("menu.col.priceNet"), numeric: true, sortable: true,
+      accessor: (r) => r.price, priority: 4,
+      cell: (r) => <MoneyI18n value={breakdownOf(r).net} className="text-slate-600" />,
+    },
+    {
+      id: "priceTax", header: t("menu.col.priceTax"), numeric: true,
+      accessor: (r) => breakdownOf(r).tax, label: t("menu.col.priceTax"),
+      cell: (r) => {
+        const b = breakdownOf(r);
+        // Z/E/O carry no VAT — an explicit dash, never a misleading 0.00.
+        return b.rate === 0
+          ? <span className="text-slate-300">—</span>
+          : <MoneyI18n value={b.tax} className="text-slate-400" />;
+      },
+    },
+    {
+      id: "priceGross", header: t("menu.col.priceGross"), numeric: true,
+      accessor: (r) => breakdownOf(r).gross, priority: 2, label: t("menu.col.priceGross"),
+      cell: (r) => {
+        const b = breakdownOf(r);
+        // WHOLE → the goal state, stated plainly in green.
+        if (b.grossIsWhole) return <MoneyI18n value={b.gross} className="font-extrabold text-emerald-700" />;
+        // NOT WHOLE → amber, with the target it would become. This is what makes
+        // every row needing a sweep visible at a glance instead of hunted for.
+        return (
+          <span
+            className="inline-flex items-center justify-end gap-1"
+            title={t("menu.list.notWholeHint", { target: String(b.wholeTarget) })}
+          >
+            <MoneyI18n value={b.gross} className="font-bold text-amber-700" />
+            <span className="text-amber-400">←</span>
+            <span dir="ltr" className="tabular-nums text-xs font-extrabold text-amber-700">{b.wholeTarget}</span>
+          </span>
+        );
+      },
+    },
     {
       id: "marginPct", header: t("menu.col.margin"), numeric: true, sortable: true, requireCap: "menu.cost.view", accessor: (r) => r.marginPct, label: t("menu.col.margin"),
       cell: (r) => (
@@ -172,11 +228,14 @@ export function BrandMenu() {
         </span>
       ),
     },
-    { id: "tax", header: t("menu.col.tax"), accessor: (r) => r.taxCategory, cell: (r) => <span className="chip border-slate-200 bg-slate-50 text-[11px] text-slate-600">{t(`menu.tax.${r.taxCategory}`)}</span> },
+    // Renamed from «الضريبة» — this is the CATEGORY (S/Z/E/O), and the amount
+    // now has a column of its own. Two columns with one label is a table that
+    // teaches nobody anything.
+    { id: "tax", header: t("menu.col.taxCategory"), accessor: (r) => r.taxCategory, cell: (r) => <span className="chip border-slate-200 bg-slate-50 text-[11px] text-slate-600">{t(`menu.tax.${r.taxCategory}`)}</span> },
     { id: "branchCount", header: t("menu.col.branches"), numeric: true, sortable: true, accessor: (r) => r.branchCount, cell: (r) => <Num value={r.branchCount} /> },
     { id: "channelCount", header: t("menu.col.channels"), numeric: true, sortable: true, accessor: (r) => r.channelCount, cell: (r) => <Num value={r.channelCount} /> },
     { id: "active", header: t("menu.col.status"), accessor: (r) => (r.active ? "active" : "disabled"), sortable: true, priority: 3, cell: (r) => <StatusBadge>{r.active ? "active" : "disabled"}</StatusBadge> },
-  ], [t, lang, catEn]);
+  ], [t, lang, catEn, breakdownOf]);
 
   return (
     <div>
@@ -185,11 +244,17 @@ export function BrandMenu() {
         title={t("menu.list.title")}
         subtitle={t("menu.list.subtitle")}
         action={
-          <Can cap="menu.catalog.manage">
-            <Button onClick={goNew}>
-              <Plus className="h-4 w-4" /> {t("menu.list.newItem")}
-            </Button>
-          </Can>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Sits next to «New item» because the «شامل الضريبة» column right
+                below is where the halalas become visible — the fix belongs on
+                the same screen as the problem, not two menus away. */}
+            <WholeRiyalButton />
+            <Can cap="menu.catalog.manage">
+              <Button onClick={goNew}>
+                <Plus className="h-4 w-4" /> {t("menu.list.newItem")}
+              </Button>
+            </Can>
+          </div>
         }
       />
 

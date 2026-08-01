@@ -197,8 +197,8 @@ test.describe("recipes / production / operations — deep links", () => {
     let deep: string | null = null;
     if (await row.isVisible().catch(() => false)) {
       await row.click();
-      await page.waitForURL(//app/menu/recipes/(menu|inv)//, { timeout: 15_000 }).catch(() => {});
-      if (//app/menu/recipes/(menu|inv)//.test(page.url())) deep = page.url();
+      await page.waitForURL(/\/app\/menu\/recipes\/(menu|inv)\//, { timeout: 15_000 }).catch(() => {});
+      if (/\/app\/menu\/recipes\/(menu|inv)\//.test(page.url())) deep = page.url();
     }
     if (!deep) {
       const first = await page.evaluate(async () => {
@@ -228,8 +228,8 @@ test.describe("recipes / production / operations — deep links", () => {
     let deep: string | null = null;
     if (await row.isVisible().catch(() => false)) {
       await row.click();
-      await page.waitForURL(//app/inventory/operations/[^/]+/[^/]+/, { timeout: 15_000 }).catch(() => {});
-      if (//app/inventory/operations/[^/]+/[^/]+/.test(page.url())) deep = page.url();
+      await page.waitForURL(/\/app\/inventory\/operations\/[^/]+\/[^/]+/, { timeout: 15_000 }).catch(() => {});
+      if (/\/app\/inventory\/operations\/[^/]+\/[^/]+/.test(page.url())) deep = page.url();
     }
     if (!deep) {
       const first = await page.evaluate(async () => {

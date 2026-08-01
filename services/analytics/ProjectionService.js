@@ -351,6 +351,20 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
   });
   if (!agg.size) return;
 
+  // WHY A BACKFILL MUST NOT READ `menu.cost`
+  //   `menu.computed_cost` / `menu.cost` are TODAY's figures. On the live path
+  //   that is exactly right — "today" IS the sale date, so the read is a real
+  //   at-sale snapshot. On the backfill path the sale may be a year old, and
+  //   stamping today's cost into a column named `cost_snapshot` produces a
+  //   number that is confidently wrong and indistinguishable from a true one.
+  //
+  //   There is no historical component cost to recover: `ar_document_lines`
+  //   snapshots the cost of the WHOLE line (the combo), and splitting that
+  //   across its chosen components needs the very per-component costs we are
+  //   missing. So the honest value is NULL — the same call this function
+  //   already makes for `price_delta` ("the historical price split is
+  //   unknowable"). A margin report shows "unknown" instead of a fabrication.
+  const historical = provenance !== 'live';
   const compIds = [...new Set([...agg.values()].map((a) => a.componentMenuId))];
   const nameById = {}, costById = {}, qtyByGroupComp = {};
   try {
@@ -360,7 +374,10 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
          FROM menu WHERE id IN (${ph})`, compIds);
     names.forEach((r) => {
       nameById[r.id] = r.name || null;
-      costById[r.id] = Number(r.cc) > 0 ? Number(r.cc) : (Number(r.c) || 0);
+      // The name is still today's, and deliberately so: it is a LABEL, and
+      // today's label is the best one available for a row nobody can re-price.
+      // The cost is a FIGURE that feeds arithmetic — a different obligation.
+      costById[r.id] = historical ? null : (Number(r.cc) > 0 ? Number(r.cc) : (Number(r.c) || 0));
     });
   } catch (_) {}
   try {
@@ -378,6 +395,23 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
       if (q) { perPick = q; break; }
     }
     const qty = perPick * a.picks * a.lineQty;
+    // A SNAPSHOT IS WRITE-ONCE — hence the COALESCE below.
+    //
+    // The clause used to be a plain `cost_snapshot = VALUES(cost_snapshot)`,
+    // which made every re-run DESTRUCTIVE: a fact captured live at sale time,
+    // carrying a correct at-sale cost, was overwritten with TODAY's cost the
+    // next time the backfill touched it. And `provenance` is not in this UPDATE
+    // list, so the row kept reporting 'live' while its number no longer was.
+    // The row then lied twice: a wrong figure, and a provenance vouching for it.
+    //
+    // Not hypothetical: _projectO2cReturn re-projects the ORIGINAL sale with
+    // the RETURN's provenance, so backfilling one return silently rewrote the
+    // costs of a sale that had been captured correctly months earlier.
+    //
+    // COALESCE keeps the first non-NULL capture, and still lets a NULL (what a
+    // backfill now writes) be filled in later by a real at-sale value.
+    // `qty` is deliberately NOT preserved — it is a recomputation, not a
+    // snapshot, and a corrected combo definition should propagate.
     await db.query(
       `INSERT INTO analytics_modifier_facts
          (document_id, source_line_id, parent_menu_id, component_menu_id,
@@ -385,7 +419,7 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
        VALUES (?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE
          qty = VALUES(qty), component_name_snapshot = VALUES(component_name_snapshot),
-         cost_snapshot = VALUES(cost_snapshot)`,
+         cost_snapshot = COALESCE(analytics_modifier_facts.cost_snapshot, VALUES(cost_snapshot))`,
       [documentId, 'L' + a.lineIdx, a.parent, a.componentMenuId,
        nameById[a.componentMenuId] || null, qty,
        null /* POS combos carry no per-choice price delta */,
@@ -744,4 +778,5 @@ module.exports = {
   normalizeMethod,
   _resolvePaymentLegs,
   _enqueueDirty,
+  _projectComboChoices,
 };

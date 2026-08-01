@@ -84,6 +84,14 @@ export const REDIRECTS: readonly RedirectSpec[] = [
     to: "/reports/sales/shifts",
     params: { from: "from", to: "to" },
   },
+  // The recipe screen became a real catalog at /menu/recipes with deep-linkable
+  // detail pages. Old links keep working; ?item= carried the selected product
+  // and becomes ?productId= on the new surface.
+  {
+    from: "/menu/recipes-bom",
+    to: "/menu/recipes",
+    params: { item: "productId", brandId: "brandId" },
+  },
 ];
 
 /** Query-preserving redirect: maps params per the spec, passes the rest through.

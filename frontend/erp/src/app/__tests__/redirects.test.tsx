@@ -10,7 +10,8 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { REDIRECTS, REDIRECT_PATHS, RedirectWithParams } from "@/app/router";
+import { REDIRECTS, REDIRECT_PATHS, SUBROUTE_BASE_PATHS, RedirectWithParams } from "@/app/router";
+import { NAV_ITEMS } from "@/app/navigation/manifest";
 
 function LocationProbe() {
   const loc = useLocation();
@@ -46,9 +47,20 @@ describe("retired-surface redirects (REDIRECTS table)", () => {
     }
   });
 
-  it("every redirect targets the sales hub subtree", () => {
+  // Was "every redirect targets the sales hub subtree" — true only because the
+  // table happened to hold nothing but retired REPORT surfaces. The table is
+  // now the one home for ANY retired path (the recipe screen moved to
+  // /menu/recipes), so the meaningful contract is stronger and more general:
+  // a redirect must land somewhere that actually exists. A redirect to a dead
+  // path is worse than no redirect — it turns a 404 into a silent 404.
+  it("every redirect targets a LIVE route (a nav path, or under a subtree owner)", () => {
+    const navPaths = new Set(NAV_ITEMS.map((i) => i.path));
     for (const spec of REDIRECTS) {
-      expect(spec.to.startsWith("/reports/sales/")).toBe(true);
+      const isExact = navPaths.has(spec.to);
+      const isUnderSubtree = [...SUBROUTE_BASE_PATHS].some(
+        (base) => spec.to === base || spec.to.startsWith(base + "/"),
+      );
+      expect(isExact || isUnderSubtree).toBe(true);
     }
   });
 

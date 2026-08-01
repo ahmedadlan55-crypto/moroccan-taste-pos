@@ -331,6 +331,7 @@ export const salesReports = {
   builder: {
     metrics: "Metrics",
     atCap: "At the ceiling of {max} metrics per request — remove one to add another",
+    truncated: "The link carries {count} metrics and the request limit is {max}; the first twelve are shown.",
     dimensions: "Dimensions",
     runQuery: "Run query",
     saveReport: "Save report",

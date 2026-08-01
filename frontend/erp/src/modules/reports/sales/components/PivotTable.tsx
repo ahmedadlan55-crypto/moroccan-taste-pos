@@ -217,7 +217,7 @@ export function PivotTable({
           </thead>
           <tbody>
             {windowActive && padTop > 0 && (
-              <tr aria-hidden="true">
+              <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
                 <td colSpan={colSpan} style={{ height: padTop, padding: 0 }} />
               </tr>
             )}
@@ -264,7 +264,7 @@ export function PivotTable({
               </tr>
             ))}
             {windowActive && padBottom > 0 && (
-              <tr aria-hidden="true">
+              <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
                 <td colSpan={colSpan} style={{ height: padBottom, padding: 0 }} />
               </tr>
             )}

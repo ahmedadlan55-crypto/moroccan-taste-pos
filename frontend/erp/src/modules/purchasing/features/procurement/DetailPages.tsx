@@ -6,7 +6,7 @@ import { type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileText, PackageCheck, Receipt, Wallet, Undo2 } from "lucide-react";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
-import { Button } from "@/shared/ui";
+import { Button, PrintDocument } from "@/shared/ui";
 import { LoadingState, ErrorState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
@@ -57,7 +57,7 @@ export function OrderDetailPage() {
   const receipts = (o.receipts ?? []) as Record<string, unknown>[];
   const invoices = (o.invoices ?? []) as Record<string, unknown>[];
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={s(o.po_number)}>
       <BackLink to="/purchasing/orders" label={t("purchasing.tabs.orders")} />
       <DetailHeader eyebrow={t("purchasing.order.eyebrow")} title={s(o.po_number)} subtitle={s(o.supplier_name)} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
@@ -100,7 +100,7 @@ export function OrderDetailPage() {
         </Section>
       )}
       <TimelinePanel entity="orders" id={id} />
-    </div>
+    </PrintDocument>
   );
 }
 
@@ -119,7 +119,7 @@ export function ReceiptDetailPage() {
   const status = s(o.status, "draft");
   const lines = (o.lines ?? []) as Record<string, unknown>[];
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={s(o.receipt_number)}>
       <BackLink to="/purchasing/receiving" label={t("purchasing.tabs.receiving")} />
       <DetailHeader eyebrow={t("purchasing.receipt.eyebrow")} title={s(o.receipt_number)} subtitle={s(o.supplier_name_snapshot)} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
@@ -146,7 +146,7 @@ export function ReceiptDetailPage() {
       </Section>
       <GLPanel journalId={s(o.gl_journal_id, "") || null} />
       <TimelinePanel entity="receipts" id={id} />
-    </div>
+    </PrintDocument>
   );
 }
 
@@ -167,7 +167,7 @@ export function InvoiceDetailPage() {
   const matches = (o.matches ?? []) as Record<string, unknown>[];
   const matchStatus = s(o.matching_status, "unmatched");
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={s(o.invoice_no, s(o.code))}>
       <BackLink to="/purchasing/invoices" label={t("purchasing.tabs.invoices")} />
       <DetailHeader eyebrow={t("purchasing.invoice.eyebrow")} title={s(o.invoice_no, s(o.code))} subtitle={`${s(o.supplier_name)} · ${t("purchasing.invoice.matchingLabel")}: ${st(t, matchStatus)}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
@@ -204,7 +204,7 @@ export function InvoiceDetailPage() {
       <GLPanel journalId={s(o.gl_journal_id, "") || null} />
       <AttachmentsPanel attachments={o.attachments as string | null} />
       <TimelinePanel entity="invoices" id={id} />
-    </div>
+    </PrintDocument>
   );
 }
 
@@ -223,7 +223,7 @@ export function PaymentDetailPage() {
   const status = s(o.status, "requested");
   const allocations = (o.allocations ?? []) as Record<string, unknown>[];
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={s(o.payment_number)}>
       <BackLink to="/purchasing/payments" label={t("purchasing.tabs.payments")} />
       <DetailHeader eyebrow={t("purchasing.payment.eyebrow")} title={s(o.payment_number)} subtitle={`${s(o.payment_method)} · ${formatCurrency(n(o.amount))}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
@@ -250,7 +250,7 @@ export function PaymentDetailPage() {
       </Section>
       <GLPanel journalId={s(o.gl_journal_id, "") || null} />
       <TimelinePanel entity="payments" id={id} />
-    </div>
+    </PrintDocument>
   );
 }
 
@@ -269,7 +269,7 @@ export function ReturnDetailPage() {
   const status = s(o.status, "draft");
   const lines = (o.lines ?? []) as Record<string, unknown>[];
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={s(o.return_number)}>
       <BackLink to="/purchasing/returns" label={t("purchasing.tabs.returns")} />
       <DetailHeader eyebrow={t("purchasing.return.eyebrow")} title={s(o.return_number)} subtitle={`${st(t, s(o.phase))} · ${formatCurrency(n(o.total))}`} status={status}
         actions={<div className="flex flex-wrap gap-2 print:hidden">
@@ -292,6 +292,6 @@ export function ReturnDetailPage() {
       </Section>
       <GLPanel journalId={s(o.gl_journal_id, "") || null} />
       <TimelinePanel entity="returns" id={id} />
-    </div>
+    </PrintDocument>
   );
 }

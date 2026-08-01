@@ -6,7 +6,7 @@ import { useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileText, PackageCheck, Receipt, Wallet, Users, Pencil } from "lucide-react";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
-import { Button } from "@/shared/ui";
+import { Button, PrintDocument } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useT, useLang } from "@/i18n";
@@ -38,7 +38,7 @@ export function SupplierDetail() {
   const b = aging.data?.buckets ?? { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 };
   const displayName = lang === "en" && d.name_en ? String(d.name_en) : s(d.name);
   return (
-    <div className="grid gap-6 print:gap-4">
+    <PrintDocument className="grid gap-6 print:gap-4" title={displayName}>
       <BackLink to="/purchasing/suppliers" label={t("purchasing.tabs.suppliers")} />
       <DetailHeader
         eyebrow={t("purchasing.suppliers.detail.eyebrow")}
@@ -84,6 +84,6 @@ export function SupplierDetail() {
         )}
       </Section>
       {editing && <SupplierForm open onClose={() => setEditing(false)} supplierId={id} />}
-    </div>
+    </PrintDocument>
   );
 }

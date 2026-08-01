@@ -233,6 +233,7 @@ function StatementDialog({ customerId, customerName, onClose }: { customerId: st
         // everything else and gives the sheet its own head — a customer
         // statement handed over on paper has to name the customer.
         <PrintDocument
+          overlay
           title={t("misc.customers.statement.title", { name: customerName })}
         >
           <div className="mb-3 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2 text-sm">

@@ -12,7 +12,14 @@ export interface PageHeaderProps {
 export function PageHeader({ eyebrow, title, subtitle, action }: PageHeaderProps) {
   const t = useTx();
   return (
-    <div className="mb-7 flex min-w-0 flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+    // data-page-header: inside a printed document the masthead already states
+    // the title (and the period and basis besides), so this block would print
+    // the same name a second time — and LARGER than the masthead. The print
+    // stylesheet drops it; on screen nothing changes.
+    <div
+      data-page-header="true"
+      className="mb-7 flex min-w-0 flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
+    >
       <div className="min-w-0">
         {eyebrow && <div className="mb-1.5 text-xs font-semibold tracking-wide text-teal-700">{eyebrow}</div>}
         <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{title}</h1>

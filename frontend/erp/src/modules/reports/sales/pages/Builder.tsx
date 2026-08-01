@@ -50,6 +50,10 @@ const SEGMENT = "builder";
 const P_METRICS = "b_m";
 const P_DIM1 = "b_d1";
 const P_DIM2 = "b_d2";
+// The grouping control offers MAX_GROUP_DIMS levels. It only ever had two slots
+// to write into, so a third pick was accepted by the control, dropped on the
+// way to the URL, and reverted on the next render — a silent no-op.
+const P_DIM3 = "b_d3";
 const P_N = "b_n";
 
 /**
@@ -91,21 +95,45 @@ export default function Builder() {
         .slice(0, MAX_METRICS),
     [searchParams],
   );
+  // How many the URL ASKED for — a shared link or a pre-ceiling saved view can
+  // carry more, and dropping three columns without saying so leaves the reader
+  // comparing a 12-column report against a 15-column one and finding a gap.
+  const requestedMetricCount = (searchParams.get(P_METRICS) ?? "").split(",").filter((x) => x.trim()).length;
+
   const dim1 = searchParams.get(P_DIM1) || DEFAULT_DIM;
   const dim2 = searchParams.get(P_DIM2) || NONE;
+  const dim3 = searchParams.get(P_DIM3) || NONE;
   const topN = Math.max(1, Number(searchParams.get(P_N)) || DEFAULT_N);
 
-  const patchParam = (key: string, value: string | null) => {
+  /**
+   * Patch one or more page params in ONE navigation.
+   *
+   * Two back-to-back calls do NOT compose. react-router resolves each
+   * functional update against the location the calling render captured, so the
+   * second call is computed from the PRE-patch params and overwrites the first.
+   * The grouping control writes b_d1 and b_d2 together, so with two calls the
+   * primary level could never change: picking a new level 1 wrote it, then the
+   * level-2 write reinstated the old level 1 and the control snapped back.
+   *
+   * The identical defect was found and fixed in Explorer's drill (see
+   * Explorer.tsx segmentHref) — same cause, same symptom, in a page that had
+   * been converted from single-param writes without noticing the difference.
+   */
+  const patchParams = (patch: Record<string, string | null>) => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        if (value == null || value === "") next.delete(key);
-        else next.set(key, value);
+        for (const [key, value] of Object.entries(patch)) {
+          if (value == null || value === "") next.delete(key);
+          else next.set(key, value);
+        }
         return next;
       },
       { replace: true },
     );
   };
+
+  const patchParam = (key: string, value: string | null) => patchParams({ [key]: value });
 
   // ── config (local: sort) ──
   const [sortMetric, setSortMetric] = useState<string>(NONE);
@@ -115,7 +143,12 @@ export default function Builder() {
 
   const knownMetrics = registry.data?.metrics ?? [];
 
-  const requestedDims = useMemo(() => (dim2 && dim2 !== dim1 ? [dim1, dim2] : [dim1]), [dim1, dim2]);
+  // De-duplicated: the same dimension twice is a wasted GROUP BY level and a
+  // pivot nested inside itself (the defect fixed in Explorer's drill).
+  const requestedDims = useMemo(
+    () => [dim1, dim2, dim3].filter((d, i, a) => d && a.indexOf(d) === i),
+    [dim1, dim2, dim3],
+  );
 
   // Every illegal combination is refused HERE, not by a red box after Run.
   // Three rules, the same ones the Explorer enforces:
@@ -221,11 +254,14 @@ export default function Builder() {
       {/* Config arriving from a saved report or a shared link can be illegal
           against the CURRENT metric set. Say what was adjusted rather than
           running a request that 422s the whole screen. */}
-      {(dropped.length > 0 || Object.keys(contaminated).length > 0) && (
+      {(dropped.length > 0 || Object.keys(contaminated).length > 0 || requestedMetricCount > MAX_METRICS) && (
         <div
           data-testid="builder-adjusted-notice"
           className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
         >
+          {requestedMetricCount > MAX_METRICS && (
+            <span>{t("salesReports.builder.truncated", { count: requestedMetricCount, max: MAX_METRICS })}</span>
+          )}
           {dropped.length > 0 && (
             <span>
               {t("salesReports.groupBy.droppedNotice", {
@@ -266,10 +302,16 @@ export default function Builder() {
             registry={registry.data}
             metricIds={metricIds}
             value={dimensions}
-            onChange={(next) => {
-              patchParam(P_DIM1, next[0] ?? DEFAULT_DIM);
-              patchParam(P_DIM2, next[1] ?? null);
-            }}
+            // ONE navigation for all three levels. Three separate patchParam
+            // calls would each be computed from the pre-patch params, so only
+            // the last would survive — see patchParams above.
+            onChange={(next) =>
+              patchParams({
+                [P_DIM1]: next[0] ?? DEFAULT_DIM,
+                [P_DIM2]: next[1] ?? null,
+                [P_DIM3]: next[2] ?? null,
+              })
+            }
           />
           {field(
             "N",

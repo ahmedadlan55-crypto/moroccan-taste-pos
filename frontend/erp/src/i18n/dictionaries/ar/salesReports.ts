@@ -344,6 +344,7 @@ export const salesReports = {
   builder: {
     metrics: "المقاييس",
     atCap: "بلغتَ الحد الأقصى {max} مقاييس للطلب الواحد — أزل واحدًا لإضافة آخر",
+    truncated: "الرابط يحمل {count} مقياسًا وحدّ الطلب {max}؛ عُرضت الاثنا عشر الأولى.",
     dimensions: "الأبعاد",
     runQuery: "تشغيل الاستعلام",
     saveReport: "حفظ التقرير",

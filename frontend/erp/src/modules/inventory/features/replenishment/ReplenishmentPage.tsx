@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, Printer, Download, AlertTriangle, ClipboardList, Wallet, Info } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { PageHeader,
+  PrintDocument,
+} from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -66,7 +68,10 @@ export function ReplenishmentPage() {
   const pg = data?.pagination; const totalPages = pg?.totalPages ?? 1; const s = summary.data;
 
   return (
-    <div>
+    // Every report printed inside the system wears the same head and hides
+    // the app chrome. Before this, the page printed the sidebar and the
+    // buttons with it, and the sheet did not say what report it was.
+    <PrintDocument title={t("inventoryRest.replenishment.title")}>
       <PageHeader eyebrow={t("inventoryRest.replenishment.eyebrow")} title={t("inventoryRest.replenishment.title")} subtitle={t("inventoryRest.replenishment.subtitle")}
         action={<div className="no-print flex gap-2">
           <Button variant="secondary" onClick={() => setShowHow((v) => !v)}><Info className="h-4 w-4" /> {t("inventoryRest.replenishment.howBtn")}</Button>
@@ -153,6 +158,6 @@ export function ReplenishmentPage() {
           </>
         )}
       </section>
-    </div>
+    </PrintDocument>
   );
 }

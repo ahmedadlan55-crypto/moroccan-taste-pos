@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ArrowLeft, Printer, Wallet, CreditCard, Gauge, AlertTriangle, type LucideIcon } from "lucide-react";
 import {
   Button, Card, CardHeader, CardTitle, CardBody, Dialog, PageHeader, LoadingState, ErrorState,
+  PrintDocument,
 } from "@/shared/ui";
 import { cn, formatCurrency } from "@/shared/lib";
 import { useT, useLang } from "@/i18n";
@@ -227,7 +228,13 @@ function StatementDialog({ customerId, customerName, onClose }: { customerId: st
       }
     >
       {q.isLoading ? <LoadingState rows={4} /> : q.isError ? <ErrorState error={q.error} /> : (
-        <>
+        // The dialog CHROME (title bar, footer buttons) is not part of the
+        // statement. Wrapping the body makes the print stylesheet hide
+        // everything else and gives the sheet its own head — a customer
+        // statement handed over on paper has to name the customer.
+        <PrintDocument
+          title={t("misc.customers.statement.title", { name: customerName })}
+        >
           <div className="mb-3 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2 text-sm">
             <span className="font-bold text-slate-600">{t("misc.customers.statement.opening")}</span>
             <Money value={q.data!.opening} className="font-extrabold" />
@@ -260,7 +267,7 @@ function StatementDialog({ customerId, customerName, onClose }: { customerId: st
             <span className="font-bold text-teal-700">{t("misc.customers.statement.closing")}</span>
             <Money value={q.data!.closing} className="font-extrabold text-teal-800" />
           </div>
-        </>
+        </PrintDocument>
       )}
     </Dialog>
   );

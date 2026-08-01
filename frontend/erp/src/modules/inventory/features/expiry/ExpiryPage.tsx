@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, ShieldAlert, CheckCircle2, Printer, Download } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { PageHeader,
+  PrintDocument,
+} from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -54,7 +56,10 @@ export function ExpiryPage() {
   const s = summary.data; const rows = list.data?.rows ?? [];
 
   return (
-    <div>
+    // Every report printed inside the system wears the same head and hides
+    // the app chrome. Before this, the page printed the sidebar and the
+    // buttons with it, and the sheet did not say what report it was.
+    <PrintDocument title={t("inventoryRest.expiry.title")}>
       <PageHeader eyebrow={t("inventoryRest.expiry.eyebrow")} title={t("inventoryRest.expiry.title")} subtitle={t("inventoryRest.expiry.subtitle")}
         action={<div className="no-print flex gap-2">
           <Button variant="secondary" onClick={() => downloadCsv(rows, t)}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>
@@ -110,6 +115,6 @@ export function ExpiryPage() {
           </>
         )}
       </section>
-    </div>
+    </PrintDocument>
   );
 }

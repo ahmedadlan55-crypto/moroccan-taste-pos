@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Boxes, ShieldX, ShieldCheck, AlertOctagon } from "lucide-react";
-import { Drawer } from "@/shared/ui";
+import { Drawer, PrintDocument } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { StatusBadge } from "@/shared/ui";
 import { LoadingState, ErrorState } from "@/shared/ui";
@@ -64,7 +64,11 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
   return (
     <Drawer open={!!id} onClose={onClose} title={d ? t("inventoryRest.lots.detail.title", { lot: d.lotNumber }) : t("inventoryRest.lots.detail.fallbackTitle")} eyebrow={t("inventoryRest.lots.detail.eyebrow")} icon={Boxes}>
       {!d ? (q.isLoading ? <LoadingState rows={3} /> : q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : null) : (
-        <div className="space-y-4">
+        // The DRAWER chrome (title bar, close button, the page behind it) is
+        // not part of the lot card. Wrapping the body puts only the card on
+        // paper, with the lot number on it.
+        <PrintDocument title={t("inventoryRest.lots.detail.title", { lot: d.lotNumber })}>
+          <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge>{lotStatusToLabel(d.lifecycleStatus)}</StatusBadge>
             <StatusBadge>{expiryClassToLabel(d.expiryClass)}</StatusBadge>
@@ -158,6 +162,7 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
             onClose={() => setPendingAct(null)}
           />
         </div>
+        </PrintDocument>
       )}
     </Drawer>
   );

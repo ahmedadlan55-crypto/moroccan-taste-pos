@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, Boxes, AlertTriangle, CalendarClock, ShieldAlert, Printer, Download } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { PageHeader,
+  PrintDocument,
+} from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
 import { Button } from "@/shared/ui";
@@ -72,7 +74,10 @@ export function LotsPage() {
   const pg = list.data?.pagination; const totalPages = pg?.totalPages ?? 1; const s = summary.data; const drift = integrity.data?.summary.drifting ?? 0;
 
   return (
-    <div>
+    // Every report printed inside the system wears the same head and hides
+    // the app chrome. Before this, the page printed the sidebar and the
+    // buttons with it, and the sheet did not say what report it was.
+    <PrintDocument title={t("inventoryRest.lots.title")}>
       <PageHeader eyebrow={t("inventoryRest.lots.eyebrow")} title={t("inventoryRest.lots.title")} subtitle={t("inventoryRest.lots.subtitle")}
         action={<div className="no-print flex gap-2">
           {tab === "integrity" && <Button variant="secondary" onClick={() => exportIntegrityCsv(warehouseId).catch(() => setExpErr(t("inventoryRest.lots.exportFailed")))}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>}
@@ -180,6 +185,6 @@ export function LotsPage() {
       )}
 
       <LotDetailDrawer id={view} onClose={() => patch({ view: null }, false)} />
-    </div>
+    </PrintDocument>
   );
 }

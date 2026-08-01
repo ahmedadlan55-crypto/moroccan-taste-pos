@@ -2,6 +2,7 @@
  *  these in a module's own namespace. Other agents extend the module
  *  namespaces; this shared set is meant to stay stable. */
 export const common = {
+  printedAt: "Printed: {time}",
   save: "Save",
   cancel: "Cancel",
   confirm: "Confirm",

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { PageHeader,
+  PrintDocument,
+} from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
 import { useT, translateApiError } from "@/i18n";
@@ -140,7 +142,8 @@ export function ReportDetailPage() {
   );
 
   return (
-    <div>
+    // One head, one hidden-chrome rule, for every printed report.
+    <PrintDocument title={t(config.label)}>
       <PageHeader eyebrow={t("inventoryRest.reports.detailEyebrow")} title={t(config.label)} subtitle={t("inventoryRest.reports.scopeSubtitle", { scope: scopeLabel, count: formatNumber(total) })} action={actions} />
 
       {/* Filters */}
@@ -280,6 +283,6 @@ export function ReportDetailPage() {
           )}
         </article>
       )}
-    </div>
+    </PrintDocument>
   );
 }

@@ -13,16 +13,16 @@
 import { Suspense } from "react";
 import { Compass } from "lucide-react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
-import { LoadingState, PageHeader, PermissionDenied, StateShell } from "@/shared/ui";
+import { LoadingState, PageHeader, PermissionDenied, PrintDocument, StateShell } from "@/shared/ui";
 import { normalizeRoutePath } from "@/shared/lib";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { useCan, usePermissions, type Capability } from "@/shared/permissions";
-import { PrintArea } from "@/modules/accounting/components";
+
 import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "./lib/filters";
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
 import { BasisOfPreparation } from "./components/BasisOfPreparation";
-import { PrintMasthead } from "./components/PrintMasthead";
+
 import { SectionPicker } from "./components/SectionPicker";
 import { SEGMENT_PAGES } from "./pages/registry";
 
@@ -146,14 +146,17 @@ export default function SalesAnalyticsHub() {
       {segmentDenied ? (
         <PermissionDenied />
       ) : (
-        // PrintArea marks the routed report as THE printable document (see
-        // styles/index.css @media print): printing the hub then puts the
-        // report on paper, not the picker, the filter bar and the app shell.
-        <PrintArea>
-          {/* First thing on paper, nothing on screen: a printed sheet has to
-              say which report it is and for which period. On screen the page
-              header and the filter bar already do. */}
-          <PrintMasthead segment={segment.id} filters={filters} />
+        // Printing the hub puts the REPORT on paper — not the picker, the
+        // filter bar or the app shell (styles/index.css @media print).
+        // ONE house style, shared with every other printed report in the system
+        // (shared/ui/print-document). The hub used to import PrintArea from the
+        // accounting module and render its own masthead beside it — two copies
+        // of the same idea, free to drift apart.
+        <PrintDocument
+          title={t(`salesReports.pages.${segment.id}.title`)}
+          subtitle={`${filters.from} — ${filters.to}`}
+          meta={`${filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")} · ${filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}`}
+        >
           <Suspense fallback={<LoadingState />}>
             {(() => {
               const Page = SEGMENT_PAGES[segment.id];
@@ -169,7 +172,7 @@ export default function SalesAnalyticsHub() {
           <div className="mt-4">
             <BasisOfPreparation filters={filters} />
           </div>
-        </PrintArea>
+        </PrintDocument>
       )}
     </>
   );

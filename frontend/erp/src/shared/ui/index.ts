@@ -54,3 +54,6 @@ export * from "./metric-card";
 export * from "./date-range-picker";
 export * from "./multi-select-combobox";
 export * from "./explain-number";
+
+// ── the one printed-report house style (every module) ──
+export * from "./print-document";

@@ -34,6 +34,12 @@ const DOCID = 'VARCHAR(64)';         // ar_documents.id — see header note
 const ACTOR = 'VARCHAR(100)';        // users.username width
 const MONEY = 'DECIMAL(14,2)';
 const ROLLUP_MONEY = 'DECIMAL(16,2)';
+// analytics_order_facts.discount_reason — a LABEL copied from sales.discount_name,
+// which is VARCHAR(100). The width is deliberately IDENTICAL to the source column
+// so the projector's cap (ProjectionService DISCOUNT_REASON_MAX) can never be the
+// thing that shortens a real reason; if sales.discount_name is ever widened, that
+// becomes a visible schema decision here instead of silent truncation there.
+const DISCOUNT_REASON = 'VARCHAR(100)';
 
 async function apply(db, log = () => {}) {
   // ── 1. branch analytics attributes (additive on the legacy master) ────────
@@ -118,6 +124,7 @@ async function apply(db, log = () => {}) {
       business_day DATE NOT NULL,
       tz_snapshot VARCHAR(64) NULL,
       discount_total ${MONEY} NOT NULL DEFAULT 0,
+      discount_reason ${DISCOUNT_REASON} NULL,
       rounding_amount ${MONEY} NOT NULL DEFAULT 0,
       tips_amount ${MONEY} NOT NULL DEFAULT 0,
       fees_amount ${MONEY} NOT NULL DEFAULT 0,
@@ -128,6 +135,18 @@ async function apply(db, log = () => {}) {
       KEY ix_aof_shift (shift_id),
       KEY ix_aof_salesperson_day (salesperson, business_day)
     ) ${TBL}`, log);
+  // WHY A SEPARATE addColumn FOR A COLUMN ALREADY IN THE CREATE ABOVE
+  // createTable() is a no-op once the table exists, so every database that was
+  // provisioned before this column was declared would never receive it. The add
+  // is the ONLY path for those; the CREATE covers a fresh database. Same shape
+  // as export_jobs.columns_json below. addColumn is INFORMATION_SCHEMA-guarded,
+  // so the pair is idempotent and the second run is a no-op — and ADD COLUMN on
+  // InnoDB with an implicit NULL default is INSTANT (no table rewrite, no lock).
+  //
+  // `discount_by` (who granted it) and `discount_total` (how much) were already
+  // here; the reason (sales.discount_name) is the third leg and the only one a
+  // "discounts by reason" report can group by.
+  await H.addColumn(db, 'analytics_order_facts', 'discount_reason', `${DISCOUNT_REASON} NULL`, log);
 
   // ── 6. payment facts — one row per tender leg ─────────────────────────────
   await H.createTable(db, 'analytics_payment_facts', `

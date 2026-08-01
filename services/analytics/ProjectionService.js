@@ -90,6 +90,36 @@ function normalizeMethod(raw) {
 
 function _r2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
+// ── discount reason ─────────────────────────────────────────────────────────
+// Width of analytics_order_facts.discount_reason, which is deliberately the same
+// width as its source sales.discount_name (db/migrations/analytics/schema.js).
+// The cap below is therefore a guard against a widened source, never a routine
+// truncation.
+const DISCOUNT_REASON_MAX = 100;
+
+/**
+ * sales.discount_name → the order fact's `discount_reason` label.
+ *
+ * NULL, not '', when the sale carried no named discount. An empty string is a
+ * VALUE: it groups as its own bucket and prints as a blank row that looks like a
+ * reason nobody typed. NULL is the honest "no discount reason here", and every
+ * consumer already renders a NULL dimension key as unknown.
+ *
+ * ORDER GRAIN, HEADER NAME ONLY. `sales.line_discounts_json` can carry a reason
+ * per line, and one order can hold several different ones. There is no truthful
+ * way to collapse those into a single order-level label — picking the first, or
+ * the largest, invents a fact — so a line-discount reason is simply not an
+ * order-fact value. If it is ever needed it belongs on the LINE grain, beside
+ * the line it describes.
+ */
+function _discountReason(sale) {
+  const raw = sale && sale.discount_name;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  return s.slice(0, DISCOUNT_REASON_MAX);
+}
+
 /**
  * Resolve a sale's payment legs → [{ label, amount }], plus whether it was split.
  * Handles every persisted shape:
@@ -296,8 +326,8 @@ async function projectPosSale(db, saleId, opts = {}) {
         guests, customer_id, status, created_by, salesperson, closed_by, payment_collector,
         discount_by, void_by, approved_by, opened_at, closed_at, paid_at,
         occurred_at_local, business_day, tz_snapshot,
-        discount_total, rounding_amount, tips_amount, fees_amount, provenance)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        discount_total, discount_reason, rounding_amount, tips_amount, fees_amount, provenance)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
        sale_id = VALUES(sale_id), pos_order_id = VALUES(pos_order_id),
        brand_id = VALUES(brand_id), branch_id = VALUES(branch_id),
@@ -308,6 +338,22 @@ async function projectPosSale(db, saleId, opts = {}) {
        closed_at = VALUES(closed_at), paid_at = VALUES(paid_at),
        occurred_at_local = VALUES(occurred_at_local), business_day = VALUES(business_day),
        tz_snapshot = VALUES(tz_snapshot), discount_total = VALUES(discount_total),
+       -- discount_reason REFRESHES — it is NOT a write-once snapshot, and the
+       -- distinction is deliberate. Compare cost_snapshot in
+       -- _projectComboChoices: that column is COALESCE-preserved because its
+       -- source (menu.cost) is EXTERNAL to the sale and drifts, so re-reading it
+       -- a year later yields a DIFFERENT number and refreshing would rewrite
+       -- history. This column's source is the sale's OWN row — sales.discount_name
+       -- — so a replay re-reads the identical value; the only way it changes is
+       -- that the sale itself changed, and then the fact SHOULD follow.
+       --
+       -- The decisive reason is the line directly above: discount_total already
+       -- refreshes. The reason is the LABEL FOR that amount. Freeze one half of
+       -- the pair and they can contradict each other — a discount edited off a
+       -- sale would leave discount_total 0 next to a reason still naming it, and
+       -- a re-labelled discount would report last month's name against this
+       -- month's money. Both halves refresh together, or the row lies.
+       discount_reason = VALUES(discount_reason),
        fees_amount = VALUES(fees_amount)`,
     [documentId, saleId, po ? po.id : null, sale.brand_id || null, branchId,
      (po && po.warehouse_id) || null, sale.shift_id || null,
@@ -319,7 +365,8 @@ async function projectPosSale(db, saleId, opts = {}) {
      sale.username || null, null, null, sale.username || null, null, null, null,
      (po && po.created_at) || occurredAt, (po && po.completed_at) || occurredAt, occurredAt,
      loc.occurredAtLocal, loc.businessDay, loc.tz,
-     _r2(sale.discount_amount), 0, 0, _r2(sale.kita_service_fee), provenance]);
+     _r2(sale.discount_amount), _discountReason(sale), 0, 0,
+     _r2(sale.kita_service_fee), provenance]);
 
   // ── payment facts ──
   const { legs, split } = await _resolvePaymentLegs(db, sale, po);
@@ -830,4 +877,9 @@ module.exports = {
   _projectComboChoices,
   _upsertPaymentFact,
   _pruneStalePaymentLegs,
+  // _discountReason is deliberately NOT exported. Its only caller is the order-fact
+  // upsert, and a test that reached it directly could pass with hand-written
+  // arguments while the real call site bound something else entirely — the exact
+  // failure mode analyticsCostSnapshot and analyticsPaymentReplay were rewritten
+  // to escape. tests/analyticsDiscountReason.test.js drives projectPosSale instead.
 };

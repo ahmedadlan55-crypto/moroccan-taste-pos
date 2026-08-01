@@ -124,19 +124,31 @@ test('a derived metric needs EVERY input fact to support the dimension', () => {
   ok(!grouping.supports('margin_pct', 'payment_method'), 'margin_pct by payment_method must be illegal');
 });
 
-test('discount_reason is groupable in the contract but supported by no fact', () => {
-  // Not a defect to hide: the id is reserved, no projector fills it. Pinned so
-  // that the day a projector DOES land, this test fails and the note above it
-  // gets updated instead of quietly rotting.
-  ok(grouping.dimensionFacts('discount_reason').length === 0, 'discount_reason gained fact support');
+test('discount_reason is backed by the order fact — the reserved id was filled', () => {
+  // This test used to assert the OPPOSITE ("groupable in the contract but
+  // supported by no fact") and said so deliberately: the id was reserved with
+  // an empty `facts` map, and it was pinned so that the day a projector landed,
+  // the test would fail and force this note to be rewritten rather than rot.
+  // The projector landed — analytics_order_facts.discount_reason, written by
+  // ProjectionService.projectPosSale from sales.discount_name — so the pin is
+  // inverted and now guards the projection instead of its absence.
+  ok(
+    grouping.dimensionFacts('discount_reason').length > 0,
+    'discount_reason lost its fact support — the projector or the registry map was removed',
+  );
   const anyLegal = ALL_METRICS.some((m) => grouping.supports(m.id, 'discount_reason'));
-  ok(!anyLegal, 'a metric now claims discount_reason — update the projector note');
+  ok(anyLegal, 'no metric can group by discount_reason — the dimension is offered but unplannable');
+  // The full behaviour (projection, NULL-vs-empty, replay) lives in
+  // tests/analyticsDiscountReason.test.js; this file only owns the contract
+  // that the module and the planner agree, which the sweep above enforces.
 });
 
-test('every OTHER groupable dimension has at least one metric that can group by it', () => {
+test('every groupable dimension has at least one metric that can group by it', () => {
+  // discount_reason used to be exempted from this sweep by an explicit
+  // `continue` — the one dimension the UI could offer and never satisfy. The
+  // exemption is gone; a dimension nothing can group by now fails here.
   const dead = [];
   for (const d of GROUPABLE) {
-    if (d.id === 'discount_reason') continue;
     if (!ALL_METRICS.some((m) => grouping.supports(m.id, d.id))) dead.push(d.id);
   }
   ok(dead.length === 0, `groupable dimensions no metric can group by: ${dead.join(', ')}`);

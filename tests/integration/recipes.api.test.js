@@ -223,6 +223,58 @@ async function ensureSchema() {
   const editArchived = await req('POST', '/api/recipes/menu/' + P + 'CAKE', token, { bomId, yieldQuantity: 4, expectedVersion: 2, lines: [{ componentItemId: P + 'SUGAR', quantity: 1 }] });
   check('editing an ARCHIVED version -> 409 RECIPE_IMMUTABLE', editArchived.status === 409 && editArchived.body.code === 'RECIPE_IMMUTABLE', { s: editArchived.status, c: editArchived.body.code });
 
+
+  // ══ THE LEGACY ENDPOINTS DELEGATE — same rules, no divergence ═════════════
+  console.log('\n=== legacy compatibility layer delegates ===');
+  // 1) The endpoint the React app still calls (menu/api.ts:801).
+  const legacyMenu = await req('POST', '/api/menu/' + P + 'CAKE/recipe-bom', token, {
+    yieldQuantity: 2, yieldUnit: 'PCS',
+    lines: [{ componentItemId: P + 'SUGAR', quantity: 50, wastePct: 0 }],
+  });
+  check('legacy POST /api/menu/:id/recipe-bom still answers 200', legacyMenu.status === 200, legacyMenu.body);
+  check('...and returns the legacy {bomId, computedCost} shape',
+    legacyMenu.body && legacyMenu.body.bomId && typeof legacyMenu.body.computedCost === 'number', legacyMenu.body);
+  // 50 x 0.02 = 1 over yield 2 -> 0.5
+  check('...with the UNIFIED cost formula (divides by yield): 0.5', near(legacyMenu.body.computedCost, 0.5), legacyMenu.body.computedCost);
+  const [[legacyMenuRow]] = await conn.query('SELECT cost, cost_source FROM menu WHERE id=?', [P + 'CAKE']);
+  check('DB EFFECT: it still cascades menu.cost and the recipe lock', near(legacyMenuRow.cost, 0.5) && legacyMenuRow.cost_source === 'recipe', legacyMenuRow);
+
+  // The legacy path now INHERITS every rule it never had.
+  const legacyBadYield = await req('POST', '/api/menu/' + P + 'CAKE/recipe-bom', token, {
+    yieldQuantity: 0, lines: [{ componentItemId: P + 'SUGAR', quantity: 1 }],
+  });
+  check('legacy path now REJECTS yield 0 instead of coercing it to 1',
+    legacyBadYield.status === 422, { s: legacyBadYield.status, c: legacyBadYield.body && legacyBadYield.body.code });
+  const legacyDup = await req('POST', '/api/menu/' + P + 'CAKE/recipe-bom', token, {
+    yieldQuantity: 1,
+    lines: [{ componentItemId: P + 'SUGAR', quantity: 2 }, { componentItemId: P + 'SUGAR', quantity: 3 }],
+  });
+  check('legacy path now folds duplicate components', legacyDup.status === 200, legacyDup.body);
+  const [dupLines] = await conn.query('SELECT component_item_id, quantity FROM bom_lines WHERE bom_id=?', [legacyDup.body.bomId]);
+  check('DB EFFECT: one line holding the SUMMED 5, not two lines',
+    dupLines.length === 1 && near(dupLines[0].quantity, 5), dupLines);
+
+  // 2) /api/erp/bom — the one that TRUSTED a browser-sent cost.
+  const legacyErp = await req('POST', '/api/erp/bom', token, {
+    productId: P + 'DOUGH', productSource: 'inv', yieldQuantity: 100,
+    recomputedCost: 999999,
+    lines: [{ componentItemId: P + 'SUGAR', quantity: 100 }],
+  });
+  check('legacy POST /api/erp/bom still answers 200', legacyErp.status === 200, legacyErp.body);
+  // 100 x 0.02 = 2 over yield 100 -> 0.02
+  check('...and IGNORES the browser-sent recomputedCost (was "we trust it")',
+    near(legacyErp.body.computedCost, 0.02), legacyErp.body.computedCost);
+  const legacyCycle = await req('POST', '/api/erp/bom', token, {
+    productId: P + 'SUGAR', productSource: 'inv', yieldQuantity: 1,
+    lines: [{ componentItemId: P + 'DOUGH', quantity: 1 }],
+  });
+  check('legacy /erp/bom now refuses a cycle it used to accept',
+    legacyCycle.status === 422 && legacyCycle.body.code === 'RECIPE_CYCLE', { s: legacyCycle.status, c: legacyCycle.body && legacyCycle.body.code });
+
+  // 3) The reads no longer fake an empty list on failure.
+  const bomList = await req('GET', '/api/erp/bom', token);
+  check('GET /api/erp/bom still returns an array on success', bomList.status === 200 && Array.isArray(bomList.body), bomList.status);
+
   console.log('\n' + (_f === 0 ? 'ALL PASS' : 'FAILURES') + ': ' + _p + ' passed, ' + _f + ' failed\n');
   if (_f > 0) console.log(boot.slice(-2500));
   await cleanup();

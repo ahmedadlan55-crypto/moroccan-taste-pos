@@ -890,6 +890,259 @@ router.get('/compare', READ, async (req, res) => {
  * expectedVersion is checked against `row_version`, NOT `version`. See the
  * comment on `rowVersion` in _shapeBom for why those must stay distinct.
  */
+// ════════════════════════════════════════════════════════════════════════════
+// THE recipe save — exported so the two LEGACY endpoints delegate here
+// (routes/menu.js POST /:id/recipe-bom and routes/erp-core.js POST /bom)
+// instead of keeping their own divergent rules. They stay mounted as a
+// compatibility layer for existing callers; they no longer own any logic.
+//
+// ONE transaction covers the header, every line, every output, the recomputed
+// cost and the audit row. Throws typed errors (code + optional detail); the
+// HTTP layer maps them.
+// ════════════════════════════════════════════════════════════════════════════
+async function saveRecipe(o) {
+  const source = _src(o.source);
+  const productId = String(o.productId);
+  const actor = o.actor || '';
+  const b = o.body || {};
+  const reqIp = o.ip || null;
+  const product = await _loadProduct(db, source, productId);
+  if (!product) throw _err('NOT_FOUND', 'المنتج غير موجود');
+
+  // ── validate BEFORE touching anything ──────────────────────────────────
+  R.validateHeader({
+    yieldQuantity: b.yieldQuantity,
+    status: b.status,
+    effectiveFrom: b.effectiveFrom,
+    effectiveTo: b.effectiveTo,
+  });
+  const canonical = R.canonicalizeLines(b.lines || []);
+  if (!canonical.length) throw _err('VALIDATION_ERROR', 'الوصفة تحتاج مكوّنًا واحدًا على الأقل');
+
+  const expectedVersion = b.expectedVersion != null ? parseInt(b.expectedVersion, 10)
+    : (o.ifMatch != null ? parseInt(o.ifMatch, 10) : null);
+
+  const out = await db.withTransaction(async (conn) => {
+    // ── resolve the target row (FOR UPDATE) ─────────────────────────────
+    const [existing] = await conn.query(
+      `SELECT * FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')=?
+        ORDER BY FIELD(status,'active','draft','archived'), version DESC FOR UPDATE`,
+      [productId, source]);
+    const target = b.bomId ? existing.find((r) => r.id === String(b.bomId))
+      : (existing.find((r) => r.status === 'active') || existing.find((r) => r.status === 'draft') || null);
+
+    if (b.bomId && !target) throw _err('NOT_FOUND', 'النسخة المطلوبة غير موجودة لهذا المنتج');
+    if (target && target.status === 'archived') {
+      throw _err('RECIPE_IMMUTABLE', 'لا يمكن تعديل نسخة مؤرشفة — أنشئ نسخة جديدة (clone)');
+    }
+    if (target && expectedVersion != null && Number(target.row_version) !== expectedVersion) {
+      throw _err('VERSION_CONFLICT', 'تغيّرت الوصفة منذ آخر تحميل — أعد التحميل');
+    }
+    if (target && expectedVersion == null) {
+      throw _err('VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل وصفة قائمة');
+    }
+
+    // An ACTIVE recipe is in use by production and by sale-time deduction.
+    // It is never edited in place — the save becomes a new draft revision.
+    const revising = !!(target && R.requiresRevision(target.status));
+    const maxVersion = existing.reduce((m, r) => Math.max(m, Number(r.version) || 1), 0);
+
+    // ── units: free text is gone, every line carries a registered unit and
+    //    a SNAPSHOTTED factor so a later unit redefinition cannot restate
+    //    this recipe ──────────────────────────────────────────────────────
+    const resolved = [];
+    for (const l of canonical) {
+      const [it] = await conn.query('SELECT id FROM inv_items WHERE id=? AND deleted_at IS NULL LIMIT 1', [l.componentItemId]);
+      if (!it.length) throw _err('VALIDATION_ERROR', 'مكوّن غير موجود في المخزون: ' + l.componentItemId, { componentItemId: l.componentItemId });
+      const u = await IU.resolveLineBase(conn, l.componentItemId, {
+        enteredUnitId: l.enteredUnitId, enteredUnitCode: l.enteredUnitCode, enteredQty: l.quantity,
+      }, 'production', { allowUnset: true });
+      resolved.push(Object.assign({}, l, {
+        enteredUnitId: u.enteredUnitId, enteredUnitCode: u.enteredUnitCode,
+        conversionFactor: u.conversionFactorSnapshot, baseQuantity: u.baseQty,
+      }));
+    }
+
+    // ── cycles: self-reference and multi-level ──────────────────────────
+    const graph = await _loadRecipeGraph(conn, target ? target.id : null);
+    R.assertAcyclic(source, productId, resolved.map((l) => l.componentItemId), graph);
+
+    // ── outputs (joint production). Default to a single primary derived
+    //    from the yield so a plain recipe needs no outputs block. ─────────
+    const rawOutputs = Array.isArray(b.outputs) && b.outputs.length ? b.outputs : [{
+      outputType: 'primary', productId, productSource: source,
+      quantity: Number(b.yieldQuantity), allocMethod: 'standard_cost',
+    }];
+    const primaries = rawOutputs.filter((o) => (o.outputType || 'primary') === 'primary');
+    if (primaries.length !== 1) throw _err('VALIDATION_ERROR', 'يجب تحديد مخرج رئيسي واحد بالضبط');
+    const seenOut = new Set();
+    const outputs = [];
+    for (let i = 0; i < rawOutputs.length; i++) {
+      const o = rawOutputs[i];
+      const oSrc = _src(o.productSource || source);
+      const oid = String(o.productId || productId);
+      const dedupeKey = oSrc + ':' + oid;
+      if (seenOut.has(dedupeKey)) throw _err('VALIDATION_ERROR', 'مخرج مكرر: ' + oid, { productId: oid });
+      seenOut.add(dedupeKey);
+      const qty = Number(o.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) throw _err('VALIDATION_ERROR', 'كمية المخرج يجب أن تكون موجبة', { productId: oid });
+      if (R.OUTPUT_TYPES.indexOf(String(o.outputType || 'primary')) === -1) throw _err('VALIDATION_ERROR', 'نوع مخرج غير معروف: ' + o.outputType);
+      if (o.allocMethod && R.ALLOC_METHODS.indexOf(String(o.allocMethod)) === -1) throw _err('VALIDATION_ERROR', 'أسلوب توزيع غير معروف: ' + o.allocMethod);
+      let factor = 1, unitId = null, unitCode = o.enteredUnitCode || null;
+      if (oSrc === 'inv') {
+        const u = await IU.resolveLineBase(conn, oid, {
+          enteredUnitId: o.enteredUnitId, enteredUnitCode: o.enteredUnitCode, enteredQty: qty,
+        }, 'production', { allowUnset: true });
+        factor = u.conversionFactorSnapshot; unitId = u.enteredUnitId; unitCode = u.enteredUnitCode;
+      }
+      outputs.push({
+        outputType: String(o.outputType || 'primary'), productId: oid, productSource: oSrc,
+        quantity: qty, enteredUnitId: unitId, enteredUnitCode: unitCode,
+        conversionFactor: factor, baseQuantity: R.round6(qty * factor),
+        warehouseId: o.warehouseId || null,
+        allocMethod: String(o.allocMethod || 'standard_cost'),
+        allocValue: o.allocValue == null ? null : Number(o.allocValue),
+        requiresLot: o.requiresLot ? 1 : 0, lineNo: i, notes: o.notes ? String(o.notes).slice(0, 300) : null,
+      });
+    }
+    // Proving the allocation is solvable NOW beats discovering at posting
+    // time that the percentages sum past 100 with WIP already relieved.
+    R.allocateJointCost(outputs.map((o) => ({
+      id: o.productId, outputType: o.outputType, baseQuantity: o.baseQuantity,
+      allocMethod: o.allocMethod, allocValue: o.allocValue,
+    })), 100);
+
+    // ── write the header ────────────────────────────────────────────────
+    const yieldQ = Number(b.yieldQuantity);
+    const status = b.activate === true ? 'active' : 'draft';
+    const header = {
+      yield_quantity: yieldQ,
+      yield_unit: (b.yieldUnit || product.unit || 'PCS').toString().slice(0, 20),
+      yield_unit_id: b.yieldUnitId || null,
+      effective_from: b.effectiveFrom || null,
+      effective_to: b.effectiveTo || null,
+      notes: b.notes == null ? null : String(b.notes).slice(0, 2000),
+      consumption_warehouse_id: b.consumptionWarehouseId || null,
+      needs_review: b.needsReview ? 1 : 0,
+    };
+
+    let bomId, newVersion, newRowVersion, action;
+    if (!target) {
+      bomId = 'BOM-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex');
+      newVersion = 1; newRowVersion = 1; action = 'create';
+      await conn.query(
+        `INSERT INTO bom (id, product_id, product_source, version, row_version, status, yield_quantity,
+                          yield_unit, yield_unit_id, is_active, effective_from, effective_to, notes,
+                          consumption_warehouse_id, needs_review, created_by, updated_by, updated_at)
+         VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
+        [bomId, productId, source, 1, status, header.yield_quantity, header.yield_unit, header.yield_unit_id,
+         status === 'active' ? 1 : 0, header.effective_from, header.effective_to, header.notes,
+         header.consumption_warehouse_id, header.needs_review, actor, actor]);
+    } else if (revising) {
+      bomId = 'BOM-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex');
+      newVersion = maxVersion + 1; newRowVersion = 1; action = 'revise';
+      await conn.query(
+        `INSERT INTO bom (id, product_id, product_source, version, row_version, status, yield_quantity,
+                          yield_unit, yield_unit_id, is_active, effective_from, effective_to, notes,
+                          consumption_warehouse_id, needs_review, revision_of, created_by, updated_by, updated_at)
+         VALUES (?,?,?,?,1,'draft',?,?,?,0,?,?,?,?,?,?,?,?,NOW())`,
+        [bomId, productId, source, newVersion, header.yield_quantity, header.yield_unit, header.yield_unit_id,
+         header.effective_from, header.effective_to, header.notes, header.consumption_warehouse_id,
+         header.needs_review, target.id, actor, actor]);
+    } else {
+      bomId = target.id; newVersion = Number(target.version) || 1; action = 'edit';
+      const [u] = await conn.query(
+        `UPDATE bom SET yield_quantity=?, yield_unit=?, yield_unit_id=?, effective_from=?, effective_to=?,
+                        notes=?, consumption_warehouse_id=?, needs_review=?, status=?, is_active=?,
+                        updated_by=?, updated_at=NOW(), row_version=row_version+1
+           WHERE id=? AND row_version=?`,
+        [header.yield_quantity, header.yield_unit, header.yield_unit_id, header.effective_from,
+         header.effective_to, header.notes, header.consumption_warehouse_id, header.needs_review,
+         status, status === 'active' ? 1 : 0, actor, bomId, expectedVersion]);
+      if (!u || u.affectedRows !== 1) throw _err('VERSION_CONFLICT', 'تغيّرت الوصفة منذ آخر تحميل — أعد التحميل');
+      newRowVersion = expectedVersion + 1;
+    }
+
+    // ── lines ───────────────────────────────────────────────────────────
+    await conn.query('DELETE FROM bom_lines WHERE bom_id=?', [bomId]);
+    for (const l of resolved) {
+      await conn.query(
+        `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct, line_no,
+                                entered_unit_id, entered_unit_code, conversion_factor, base_quantity, notes)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ['BL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'), bomId, l.componentItemId,
+         l.quantity, (l.enteredUnitCode || 'PCS').toString().slice(0, 20), l.wastePct, l.lineNo,
+         l.enteredUnitId, l.enteredUnitCode, l.conversionFactor, l.baseQuantity, l.notes]);
+    }
+
+    // ── outputs ─────────────────────────────────────────────────────────
+    await conn.query('DELETE FROM bom_outputs WHERE bom_id=?', [bomId]);
+    for (const o of outputs) {
+      await conn.query(
+        `INSERT INTO bom_outputs (id, bom_id, output_type, product_id, product_source, quantity,
+                                  entered_unit_id, entered_unit_code, conversion_factor, base_quantity,
+                                  warehouse_id, alloc_method, alloc_value, requires_lot, line_no, notes)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ['BOUT-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'), bomId, o.outputType,
+         o.productId, o.productSource, o.quantity, o.enteredUnitId, o.enteredUnitCode, o.conversionFactor,
+         o.baseQuantity, o.warehouseId, o.allocMethod, o.allocValue, o.requiresLot, o.lineNo, o.notes]);
+    }
+
+    // ── cost: computed HERE, from component costs read inside this same
+    //    transaction. A cost sent by the client is ignored outright. ──────
+    const [costRows] = await conn.query(
+      `SELECT bl.component_item_id, COALESCE(bl.base_quantity, bl.quantity) AS base_quantity, bl.waste_pct,
+              CASE WHEN i.cost_method='standard' THEN COALESCE(i.standard_cost,0) ELSE COALESCE(i.cost,0) END AS unit_cost
+         FROM bom_lines bl LEFT JOIN inv_items i ON i.id=bl.component_item_id WHERE bl.bom_id=?`, [bomId]);
+    const cost = R.computeRecipeCost(costRows.map((r) => ({
+      baseQuantity: Number(r.base_quantity), wastePct: Number(r.waste_pct), unitCost: Number(r.unit_cost),
+    })), yieldQ);
+    await conn.query('UPDATE bom SET cost_batch=?, cost_per_unit=?, cost_computed_at=NOW() WHERE id=?',
+      [cost.batchCost, cost.unitCost, bomId]);
+
+    // ── activation: exactly ONE active version per product ──────────────
+    if (status === 'active') {
+      await conn.query(
+        `UPDATE bom SET status='archived', is_active=0 WHERE product_id=? AND COALESCE(product_source,'inv')=?
+           AND id<>? AND status='active'`, [productId, source, bomId]);
+    }
+
+    // ── cascade the recipe cost onto the product, preserving exactly what
+    //    the two legacy writers did (menu.cost + computed_cost + the
+    //    cost_source='recipe' stamp that arms the manual-edit 409 lock in
+    //    routes/menu.js PUT /:id, and the semi-finished mirror into
+    //    inv_items.cost). NOT swallowed: a cascade failure now rolls the
+    //    whole save back instead of leaving cost and recipe disagreeing. ──
+    if (status === 'active') {
+      if (source === 'menu') {
+        await conn.query("UPDATE menu SET cost=?, computed_cost=?, cost_source='recipe', bom_id=? WHERE id=?",
+          [cost.unitCost, cost.unitCost, bomId, productId]);
+        const [mr] = await conn.query('SELECT is_semi_finished FROM menu WHERE id=?', [productId]);
+        if (mr.length && Number(mr[0].is_semi_finished)) {
+          // No-ops harmlessly (0 rows) when no inv_items twin exists.
+          await conn.query('UPDATE inv_items SET cost=? WHERE id=?', [cost.unitCost, productId]);
+        }
+      } else {
+        await conn.query("UPDATE inv_items SET cost=? WHERE id=? AND COALESCE(cost_method,'wavg')<>'wavg'", [cost.unitCost, productId]);
+      }
+    }
+
+    // ── audit: FAIL-CLOSED. logAuditTx deliberately has no try/catch, and
+    //    it runs on this transaction's connection, so a recipe can never be
+    //    written without its audit row. ────────────────────────────────────
+    await logAuditTx(conn, 'recipe.' + action, 'bom', bomId, actor, JSON.stringify({
+      productSource: source, productId, version: newVersion, status,
+      lineCount: resolved.length, outputCount: outputs.length,
+      batchCost: cost.batchCost, unitCost: cost.unitCost,
+      revisionOf: revising ? target.id : null,
+      mergedDuplicates: canonical.filter((l) => l.mergedFrom > 1).map((l) => l.componentItemId),
+    }), reqIp);
+
+    return { bomId, version: newVersion, rowVersion: newRowVersion, status, action, cost, mergedCount: canonical.filter((l) => l.mergedFrom > 1).length };
+  });
+  return out;
+}
+
 router.post('/:source/:productId', MGR, requireCapability('inventory.edit'), async (req, res, next) => {
   let idemId = null;
   try {
@@ -900,245 +1153,15 @@ router.post('/:source/:productId', MGR, requireCapability('inventory.edit'), asy
     const actor = _actor(req);
     const b = req.body || {};
 
-    const product = await _loadProduct(db, source, productId);
-    if (!product) return _fail(req, res, 'NOT_FOUND', 'المنتج غير موجود');
-
-    // ── validate BEFORE touching anything ──────────────────────────────────
-    R.validateHeader({
-      yieldQuantity: b.yieldQuantity,
-      status: b.status,
-      effectiveFrom: b.effectiveFrom,
-      effectiveTo: b.effectiveTo,
-    });
-    const canonical = R.canonicalizeLines(b.lines || []);
-    if (!canonical.length) return _fail(req, res, 'VALIDATION_ERROR', 'الوصفة تحتاج مكوّنًا واحدًا على الأقل');
-
     const key = IDEM.readKey(req);
     const idem = await IDEM.begin(db, 'recipe:save', source + ':' + productId, key, actor, b);
     if (idem.mode === 'replay') return res.status(idem.statusCode || 200).json(idem.body);
     if (idem.mode === 'conflict') return _fail(req, res, 'IDEMPOTENCY_CONFLICT', 'طلب حفظ مكرر بمحتوى مختلف أو قيد التنفيذ');
     if (idem.mode === 'proceed') idemId = idem.idemId;
 
-    const expectedVersion = b.expectedVersion != null ? parseInt(b.expectedVersion, 10)
-      : (req.get && req.get('If-Match') ? parseInt(req.get('If-Match'), 10) : null);
-
-    const out = await db.withTransaction(async (conn) => {
-      // ── resolve the target row (FOR UPDATE) ─────────────────────────────
-      const [existing] = await conn.query(
-        `SELECT * FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')=?
-          ORDER BY FIELD(status,'active','draft','archived'), version DESC FOR UPDATE`,
-        [productId, source]);
-      const target = b.bomId ? existing.find((r) => r.id === String(b.bomId))
-        : (existing.find((r) => r.status === 'active') || existing.find((r) => r.status === 'draft') || null);
-
-      if (b.bomId && !target) throw _err('NOT_FOUND', 'النسخة المطلوبة غير موجودة لهذا المنتج');
-      if (target && target.status === 'archived') {
-        throw _err('RECIPE_IMMUTABLE', 'لا يمكن تعديل نسخة مؤرشفة — أنشئ نسخة جديدة (clone)');
-      }
-      if (target && expectedVersion != null && Number(target.row_version) !== expectedVersion) {
-        throw _err('VERSION_CONFLICT', 'تغيّرت الوصفة منذ آخر تحميل — أعد التحميل');
-      }
-      if (target && expectedVersion == null) {
-        throw _err('VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل وصفة قائمة');
-      }
-
-      // An ACTIVE recipe is in use by production and by sale-time deduction.
-      // It is never edited in place — the save becomes a new draft revision.
-      const revising = !!(target && R.requiresRevision(target.status));
-      const maxVersion = existing.reduce((m, r) => Math.max(m, Number(r.version) || 1), 0);
-
-      // ── units: free text is gone, every line carries a registered unit and
-      //    a SNAPSHOTTED factor so a later unit redefinition cannot restate
-      //    this recipe ──────────────────────────────────────────────────────
-      const resolved = [];
-      for (const l of canonical) {
-        const [it] = await conn.query('SELECT id FROM inv_items WHERE id=? AND deleted_at IS NULL LIMIT 1', [l.componentItemId]);
-        if (!it.length) throw _err('VALIDATION_ERROR', 'مكوّن غير موجود في المخزون: ' + l.componentItemId, { componentItemId: l.componentItemId });
-        const u = await IU.resolveLineBase(conn, l.componentItemId, {
-          enteredUnitId: l.enteredUnitId, enteredUnitCode: l.enteredUnitCode, enteredQty: l.quantity,
-        }, 'production', { allowUnset: true });
-        resolved.push(Object.assign({}, l, {
-          enteredUnitId: u.enteredUnitId, enteredUnitCode: u.enteredUnitCode,
-          conversionFactor: u.conversionFactorSnapshot, baseQuantity: u.baseQty,
-        }));
-      }
-
-      // ── cycles: self-reference and multi-level ──────────────────────────
-      const graph = await _loadRecipeGraph(conn, target ? target.id : null);
-      R.assertAcyclic(source, productId, resolved.map((l) => l.componentItemId), graph);
-
-      // ── outputs (joint production). Default to a single primary derived
-      //    from the yield so a plain recipe needs no outputs block. ─────────
-      const rawOutputs = Array.isArray(b.outputs) && b.outputs.length ? b.outputs : [{
-        outputType: 'primary', productId, productSource: source,
-        quantity: Number(b.yieldQuantity), allocMethod: 'standard_cost',
-      }];
-      const primaries = rawOutputs.filter((o) => (o.outputType || 'primary') === 'primary');
-      if (primaries.length !== 1) throw _err('VALIDATION_ERROR', 'يجب تحديد مخرج رئيسي واحد بالضبط');
-      const seenOut = new Set();
-      const outputs = [];
-      for (let i = 0; i < rawOutputs.length; i++) {
-        const o = rawOutputs[i];
-        const oSrc = _src(o.productSource || source);
-        const oid = String(o.productId || productId);
-        const dedupeKey = oSrc + ':' + oid;
-        if (seenOut.has(dedupeKey)) throw _err('VALIDATION_ERROR', 'مخرج مكرر: ' + oid, { productId: oid });
-        seenOut.add(dedupeKey);
-        const qty = Number(o.quantity);
-        if (!Number.isFinite(qty) || qty <= 0) throw _err('VALIDATION_ERROR', 'كمية المخرج يجب أن تكون موجبة', { productId: oid });
-        if (R.OUTPUT_TYPES.indexOf(String(o.outputType || 'primary')) === -1) throw _err('VALIDATION_ERROR', 'نوع مخرج غير معروف: ' + o.outputType);
-        if (o.allocMethod && R.ALLOC_METHODS.indexOf(String(o.allocMethod)) === -1) throw _err('VALIDATION_ERROR', 'أسلوب توزيع غير معروف: ' + o.allocMethod);
-        let factor = 1, unitId = null, unitCode = o.enteredUnitCode || null;
-        if (oSrc === 'inv') {
-          const u = await IU.resolveLineBase(conn, oid, {
-            enteredUnitId: o.enteredUnitId, enteredUnitCode: o.enteredUnitCode, enteredQty: qty,
-          }, 'production', { allowUnset: true });
-          factor = u.conversionFactorSnapshot; unitId = u.enteredUnitId; unitCode = u.enteredUnitCode;
-        }
-        outputs.push({
-          outputType: String(o.outputType || 'primary'), productId: oid, productSource: oSrc,
-          quantity: qty, enteredUnitId: unitId, enteredUnitCode: unitCode,
-          conversionFactor: factor, baseQuantity: R.round6(qty * factor),
-          warehouseId: o.warehouseId || null,
-          allocMethod: String(o.allocMethod || 'standard_cost'),
-          allocValue: o.allocValue == null ? null : Number(o.allocValue),
-          requiresLot: o.requiresLot ? 1 : 0, lineNo: i, notes: o.notes ? String(o.notes).slice(0, 300) : null,
-        });
-      }
-      // Proving the allocation is solvable NOW beats discovering at posting
-      // time that the percentages sum past 100 with WIP already relieved.
-      R.allocateJointCost(outputs.map((o) => ({
-        id: o.productId, outputType: o.outputType, baseQuantity: o.baseQuantity,
-        allocMethod: o.allocMethod, allocValue: o.allocValue,
-      })), 100);
-
-      // ── write the header ────────────────────────────────────────────────
-      const yieldQ = Number(b.yieldQuantity);
-      const status = b.activate === true ? 'active' : 'draft';
-      const header = {
-        yield_quantity: yieldQ,
-        yield_unit: (b.yieldUnit || product.unit || 'PCS').toString().slice(0, 20),
-        yield_unit_id: b.yieldUnitId || null,
-        effective_from: b.effectiveFrom || null,
-        effective_to: b.effectiveTo || null,
-        notes: b.notes == null ? null : String(b.notes).slice(0, 2000),
-        consumption_warehouse_id: b.consumptionWarehouseId || null,
-        needs_review: b.needsReview ? 1 : 0,
-      };
-
-      let bomId, newVersion, newRowVersion, action;
-      if (!target) {
-        bomId = 'BOM-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex');
-        newVersion = 1; newRowVersion = 1; action = 'create';
-        await conn.query(
-          `INSERT INTO bom (id, product_id, product_source, version, row_version, status, yield_quantity,
-                            yield_unit, yield_unit_id, is_active, effective_from, effective_to, notes,
-                            consumption_warehouse_id, needs_review, created_by, updated_by, updated_at)
-           VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
-          [bomId, productId, source, 1, status, header.yield_quantity, header.yield_unit, header.yield_unit_id,
-           status === 'active' ? 1 : 0, header.effective_from, header.effective_to, header.notes,
-           header.consumption_warehouse_id, header.needs_review, actor, actor]);
-      } else if (revising) {
-        bomId = 'BOM-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex');
-        newVersion = maxVersion + 1; newRowVersion = 1; action = 'revise';
-        await conn.query(
-          `INSERT INTO bom (id, product_id, product_source, version, row_version, status, yield_quantity,
-                            yield_unit, yield_unit_id, is_active, effective_from, effective_to, notes,
-                            consumption_warehouse_id, needs_review, revision_of, created_by, updated_by, updated_at)
-           VALUES (?,?,?,?,1,'draft',?,?,?,0,?,?,?,?,?,?,?,?,NOW())`,
-          [bomId, productId, source, newVersion, header.yield_quantity, header.yield_unit, header.yield_unit_id,
-           header.effective_from, header.effective_to, header.notes, header.consumption_warehouse_id,
-           header.needs_review, target.id, actor, actor]);
-      } else {
-        bomId = target.id; newVersion = Number(target.version) || 1; action = 'edit';
-        const [u] = await conn.query(
-          `UPDATE bom SET yield_quantity=?, yield_unit=?, yield_unit_id=?, effective_from=?, effective_to=?,
-                          notes=?, consumption_warehouse_id=?, needs_review=?, status=?, is_active=?,
-                          updated_by=?, updated_at=NOW(), row_version=row_version+1
-             WHERE id=? AND row_version=?`,
-          [header.yield_quantity, header.yield_unit, header.yield_unit_id, header.effective_from,
-           header.effective_to, header.notes, header.consumption_warehouse_id, header.needs_review,
-           status, status === 'active' ? 1 : 0, actor, bomId, expectedVersion]);
-        if (!u || u.affectedRows !== 1) throw _err('VERSION_CONFLICT', 'تغيّرت الوصفة منذ آخر تحميل — أعد التحميل');
-        newRowVersion = expectedVersion + 1;
-      }
-
-      // ── lines ───────────────────────────────────────────────────────────
-      await conn.query('DELETE FROM bom_lines WHERE bom_id=?', [bomId]);
-      for (const l of resolved) {
-        await conn.query(
-          `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct, line_no,
-                                  entered_unit_id, entered_unit_code, conversion_factor, base_quantity, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          ['BL-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'), bomId, l.componentItemId,
-           l.quantity, (l.enteredUnitCode || 'PCS').toString().slice(0, 20), l.wastePct, l.lineNo,
-           l.enteredUnitId, l.enteredUnitCode, l.conversionFactor, l.baseQuantity, l.notes]);
-      }
-
-      // ── outputs ─────────────────────────────────────────────────────────
-      await conn.query('DELETE FROM bom_outputs WHERE bom_id=?', [bomId]);
-      for (const o of outputs) {
-        await conn.query(
-          `INSERT INTO bom_outputs (id, bom_id, output_type, product_id, product_source, quantity,
-                                    entered_unit_id, entered_unit_code, conversion_factor, base_quantity,
-                                    warehouse_id, alloc_method, alloc_value, requires_lot, line_no, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          ['BOUT-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex'), bomId, o.outputType,
-           o.productId, o.productSource, o.quantity, o.enteredUnitId, o.enteredUnitCode, o.conversionFactor,
-           o.baseQuantity, o.warehouseId, o.allocMethod, o.allocValue, o.requiresLot, o.lineNo, o.notes]);
-      }
-
-      // ── cost: computed HERE, from component costs read inside this same
-      //    transaction. A cost sent by the client is ignored outright. ──────
-      const [costRows] = await conn.query(
-        `SELECT bl.component_item_id, COALESCE(bl.base_quantity, bl.quantity) AS base_quantity, bl.waste_pct,
-                CASE WHEN i.cost_method='standard' THEN COALESCE(i.standard_cost,0) ELSE COALESCE(i.cost,0) END AS unit_cost
-           FROM bom_lines bl LEFT JOIN inv_items i ON i.id=bl.component_item_id WHERE bl.bom_id=?`, [bomId]);
-      const cost = R.computeRecipeCost(costRows.map((r) => ({
-        baseQuantity: Number(r.base_quantity), wastePct: Number(r.waste_pct), unitCost: Number(r.unit_cost),
-      })), yieldQ);
-      await conn.query('UPDATE bom SET cost_batch=?, cost_per_unit=?, cost_computed_at=NOW() WHERE id=?',
-        [cost.batchCost, cost.unitCost, bomId]);
-
-      // ── activation: exactly ONE active version per product ──────────────
-      if (status === 'active') {
-        await conn.query(
-          `UPDATE bom SET status='archived', is_active=0 WHERE product_id=? AND COALESCE(product_source,'inv')=?
-             AND id<>? AND status='active'`, [productId, source, bomId]);
-      }
-
-      // ── cascade the recipe cost onto the product, preserving exactly what
-      //    the two legacy writers did (menu.cost + computed_cost + the
-      //    cost_source='recipe' stamp that arms the manual-edit 409 lock in
-      //    routes/menu.js PUT /:id, and the semi-finished mirror into
-      //    inv_items.cost). NOT swallowed: a cascade failure now rolls the
-      //    whole save back instead of leaving cost and recipe disagreeing. ──
-      if (status === 'active') {
-        if (source === 'menu') {
-          await conn.query("UPDATE menu SET cost=?, computed_cost=?, cost_source='recipe', bom_id=? WHERE id=?",
-            [cost.unitCost, cost.unitCost, bomId, productId]);
-          const [mr] = await conn.query('SELECT is_semi_finished FROM menu WHERE id=?', [productId]);
-          if (mr.length && Number(mr[0].is_semi_finished)) {
-            // No-ops harmlessly (0 rows) when no inv_items twin exists.
-            await conn.query('UPDATE inv_items SET cost=? WHERE id=?', [cost.unitCost, productId]);
-          }
-        } else {
-          await conn.query("UPDATE inv_items SET cost=? WHERE id=? AND COALESCE(cost_method,'wavg')<>'wavg'", [cost.unitCost, productId]);
-        }
-      }
-
-      // ── audit: FAIL-CLOSED. logAuditTx deliberately has no try/catch, and
-      //    it runs on this transaction's connection, so a recipe can never be
-      //    written without its audit row. ────────────────────────────────────
-      await logAuditTx(conn, 'recipe.' + action, 'bom', bomId, actor, JSON.stringify({
-        productSource: source, productId, version: newVersion, status,
-        lineCount: resolved.length, outputCount: outputs.length,
-        batchCost: cost.batchCost, unitCost: cost.unitCost,
-        revisionOf: revising ? target.id : null,
-        mergedDuplicates: canonical.filter((l) => l.mergedFrom > 1).map((l) => l.componentItemId),
-      }), req.ip);
-
-      return { bomId, version: newVersion, rowVersion: newRowVersion, status, action, cost, mergedCount: canonical.filter((l) => l.mergedFrom > 1).length };
+    const out = await saveRecipe({
+      source, productId, actor, ip: req.ip, body: b,
+      ifMatch: (req.get && req.get('If-Match')) || null,
     });
 
     const body = {
@@ -1297,4 +1320,9 @@ router.post('/bom/:bomId/archive', MGR, requireCapability('inventory.edit'), asy
 });
 
 module.exports = router;
+// `saveRecipe` is the ONE write path. routes/menu.js and routes/erp-core.js
+// import it so their legacy endpoints keep working for existing callers without
+// keeping any rules of their own.
+module.exports.saveRecipe = saveRecipe;
+module.exports.HTTP_FOR = HTTP_FOR;
 module.exports._internals = { _loadProduct, _loadLines, _loadOutputs, _loadRecipeGraph, _shapeBom, _canSeeCost, _fail, _err, HTTP_FOR };

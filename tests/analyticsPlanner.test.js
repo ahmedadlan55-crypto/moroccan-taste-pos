@@ -84,7 +84,14 @@ console.log('\n── totals statement shape ──');
 test('totals = GROUP BY <exprs> WITH ROLLUP + GROUPING flag per dimension', () => {
   const p = planner.plan(req({ dimensions: ['branch', 'business_day'] }), GLOBAL);
   const t = p.statements[0].totals.sql;
-  ok(/WITH ROLLUP$/.test(t.trim()), 'totals must end WITH ROLLUP');
+  // The `$` anchor used to be the assertion. It pinned the MECHANISM (the
+  // statement ending at WITH ROLLUP) rather than the GUARANTEE, so it broke
+  // the moment the detail rows started being discarded in SQL — the whole
+  // point of bounding the totals query — even though the rollup itself was
+  // untouched. What must hold is that the grouping is a ROLLUP and that the
+  // discard happens on the server, not after 900 rows have crossed the wire.
+  ok(/WITH ROLLUP\b/.test(t), 'totals must GROUP BY … WITH ROLLUP');
+  ok(/HAVING \(GROUPING\(/.test(t), 'totals must discard detail rows in SQL, not in Node');
   ok(/GROUPING\(f\.branch_id\) AS g0/.test(t), 'GROUPING flag g0 missing');
   // date dims are select-wrapped; GROUPING/GROUP BY must reuse the EXACT
   // wrapped expression (ONLY_FULL_GROUP_BY matches by text)

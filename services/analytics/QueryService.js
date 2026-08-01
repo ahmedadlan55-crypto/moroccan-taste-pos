@@ -10,6 +10,16 @@
  *
  * NO cross-fact SQL joins, ever — merging is the only way facts meet.
  *
+ * SOURCE ROUTING: before planning, run() reads the rollup horizon (the last
+ * business day whose rollup is provably complete — see readRollupHorizon) and
+ * hands it to the planner, which decides per request whether the pre-aggregated
+ * rollup tables can answer it, whether a live tail is needed for the open days,
+ * or whether the raw facts must serve the whole window. The verdict rides out
+ * as meta.source ('rollup' | 'live' | 'hybrid') and is also written over
+ * meta.freshness.source, which used to be the constant 'live'. A hybrid plan
+ * marks its live statements combine:'add' — the two halves cover DISJOINT date
+ * windows and the period's figure is their sum.
+ *
  * CACHE: in-memory Map, key = sha256(stableStringify(request) + scopeHash +
  * freshness watermark), TTL 60s, max 200 entries, LRU-ish (hit re-inserts;
  * overflow evicts the oldest). `request.noCache: true` bypasses both read
@@ -102,6 +112,36 @@ function fmtMetric(id, raw) {
   return n;
 }
 
+/** Driver value → a finite number. Non-numeric and NULL are 0, same as
+ *  fmtMetric's contract, but WITHOUT rounding: accumulation happens in full
+ *  precision and is rounded exactly once, at the end. Rounding each half of a
+ *  hybrid window and then adding would let a rollup+live answer differ from the
+ *  all-live answer by a halala on every row — a routing change that moves money
+ *  is a money bug, however small. */
+function rawNum(v) {
+  if (v == null) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Fold one statement's value for `id` into `values`.
+ * combine 'add' is what a HYBRID plan needs: the rollup statement and the live
+ * tail compute the SAME metric over DISJOINT date windows, and the period's
+ * number is their sum. 'set' is the ordinary single-source case.
+ */
+function foldMetric(values, id, raw, combine) {
+  const n = rawNum(raw);
+  values[id] = combine === 'add' ? rawNum(values[id]) + n : n;
+}
+
+/** Round every accumulated additive value ONCE, after every statement has
+ *  contributed. Runs before the zero/null fill so it can never turn a
+ *  deliberate `null` ("this fact never looked") into a confident 0. */
+function formatAccumulated(values) {
+  for (const id of Object.keys(values)) values[id] = fmtMetric(id, values[id]);
+}
+
 // ── derived computation ──────────────────────────────────────────────────────
 function computeDerived(values, derivedIds, grandValues) {
   for (const id of derivedIds) {
@@ -144,13 +184,12 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
     if (cancelState && cancelState.cancelled) {
       const e = new Error('client disconnected'); e.code = 'ANALYTICS_CANCELLED'; e.http = 499; throw e;
     }
+    const combine = st.combine === 'add' ? 'add' : 'set';
     const [rows] = await conn.query(st.rows.sql, st.rows.params);
     if (nd === 0) {
       // single aggregate row (may be a NULL-sum row on an empty range)
       const r = rows[0] || {};
-      for (const id of st.metrics) {
-        grand[id] = fmtMetric(id, r['m_' + id]);
-      }
+      for (const id of st.metrics) foldMetric(grand, id, r['m_' + id], combine);
       sawGrand = true;
       continue;
     }
@@ -168,10 +207,14 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
       const keyJson = JSON.stringify(keyVals);
       let row = rowsByKey.get(keyJson);
       if (!row) { row = { keys, values: {} }; rowsByKey.set(keyJson, row); }
-      for (const id of st.metrics) row.values[id] = fmtMetric(id, r['m_' + id]);
+      for (const id of st.metrics) foldMetric(row.values, id, r['m_' + id], combine);
     }
 
-    // totals / subtotals via ROLLUP + GROUPING flags
+    // Totals + subtotals. The statement is now HAVING-filtered server-side, so
+    // only super-aggregate rows come back; the `rolled === 0` guard below stays
+    // because a fake/legacy driver may still hand us detail rows and silently
+    // treating one as a subtotal would print a single group's figure as the
+    // period total.
     const [trows] = await conn.query(st.totals.sql, st.totals.params);
     for (const r of trows) {
       const flags = [];
@@ -179,7 +222,7 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
       const rolled = flags.filter(Boolean).length;
       if (rolled === 0) continue;              // detail row — rows stmt owns it
       if (rolled === nd) {                     // grand total
-        for (const id of st.metrics) grand[id] = fmtMetric(id, r['m_' + id]);
+        for (const id of st.metrics) foldMetric(grand, id, r['m_' + id], combine);
         sawGrand = true;
         continue;
       }
@@ -194,9 +237,14 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
       const skey = level + '|' + JSON.stringify(keyVals);
       let sub = subtotalsByKey.get(skey);
       if (!sub) { sub = { level, keys, values: {} }; subtotalsByKey.set(skey, sub); }
-      for (const id of st.metrics) sub.values[id] = fmtMetric(id, r['m_' + id]);
+      for (const id of st.metrics) foldMetric(sub.values, id, r['m_' + id], combine);
     }
   }
+
+  // Every statement has contributed; round the accumulated money exactly once.
+  for (const row of rowsByKey.values()) formatAccumulated(row.values);
+  for (const sub of subtotalsByKey.values()) formatAccumulated(sub.values);
+  formatAccumulated(grand);
 
   /*
    * Fill the metrics a fact did not contribute for a key.
@@ -204,8 +252,9 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
    * ZERO IS ONLY TRUE WHEN THE FACT ACTUALLY LOOKED.
    *   Every fact statement fetches its OWN top-`fetchN` slice, and when the
    *   sort metric does not live on a fact the planner falls back to
-   *   `ORDER BY d0` for it (planner.js:396-399) — a lexicographic slice of one
-   *   dimension, not a metric ranking. So two facts can return 500 rows each
+   *   `ORDER BY d0` for it (planner.js emitStatementSql) — a lexicographic
+   *   slice of one dimension, not a metric ranking. So two facts can each
+   *   return a full fetch window of rows
    *   that barely intersect. Zero-filling the gap then prints a fabricated 0
    *   that is indistinguishable from a real one:
    *
@@ -241,6 +290,55 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
   for (const id of allAdditive) if (grand[id] == null) grand[id] = 0;
 
   return { rowsByKey, subtotalsByKey, grand, anyCapped, truncatedMetrics: [...truncated] };
+}
+
+// ── rollup horizon ───────────────────────────────────────────────────────────
+
+/**
+ * The LAST business day whose rollup is provably complete, or null when that
+ * cannot be established (in which case the planner serves everything live).
+ *
+ * Two independent conditions, and the answer is the earlier of them:
+ *
+ *   today − 1        The current business day is still being written to, so it
+ *                    is never "closed". business_day can also lag the calendar
+ *                    date (a branch closing at 04:00 books a 01:30 sale to
+ *                    yesterday), which is exactly what the dirty queue covers.
+ *
+ *   minDirty − 1     analytics_rollup_dirty holds every (branch, business_day)
+ *                    pair whose rollup is out of date. ProjectionService
+ *                    enqueues the pair INSIDE the projection transaction and
+ *                    RollupService deletes it only after the rebuild has
+ *                    committed, so a day with no dirty row is a day whose
+ *                    rollup already reflects every fact row written to it. Any
+ *                    day at or after the oldest dirty day is therefore suspect
+ *                    and must be answered live.
+ *
+ * CURDATE() comes from the DB session (the same +03:00 clock the facts are
+ * written on) rather than from Node — a server whose OS clock drifts would
+ * otherwise start serving today's trade out of yesterday's rollup.
+ *
+ * ANY failure here — table not migrated, permission, a driver hiccup — returns
+ * null, which means "live only". Fail-closed toward correctness: an unavailable
+ * horizon must never be read as "everything is closed".
+ */
+async function readRollupHorizon(db, offsetMin) {
+  try {
+    const [rows] = await db.query(
+      'SELECT (SELECT MIN(business_day) FROM analytics_rollup_dirty) AS min_dirty, CURDATE() AS today');
+    if (!rows || !rows.length) return null;
+    const today = normDimValue(rows[0].today, offsetMin);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(today || ''))) return null;
+    let closed = planner.addDaysIso(today, -1);
+    const minDirty = normDimValue(rows[0].min_dirty, offsetMin);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(minDirty || ''))) {
+      const beforeDirty = planner.addDaysIso(minDirty, -1);
+      if (beforeDirty < closed) closed = beforeDirty;
+    }
+    return closed;
+  } catch (_) {
+    return null;
+  }
 }
 
 // ── labels ───────────────────────────────────────────────────────────────────
@@ -323,21 +421,27 @@ async function run(db, request, scope, opts = {}) {
   }
 
   const fresh = await freshness.read(db);
+  const offsetMin = _dbOffsetMinutes(db);
+  const rollupClosedThrough = await readRollupHorizon(db, offsetMin);
 
+  // The horizon is part of the cache identity. The watermark alone is not
+  // enough: it advances when the worker drains, but the horizon ALSO moves at
+  // midnight with no write anywhere, and a cached hybrid answer keyed only on
+  // the watermark would keep serving yesterday's live tail as today's.
   const cacheKey = crypto.createHash('sha256')
-    .update(_stable(request) + '|' + scopeLib.scopeHash(scope) + '|' + String(fresh.watermark))
+    .update(_stable(request) + '|' + scopeLib.scopeHash(scope) + '|' + String(fresh.watermark) +
+      '|' + String(rollupClosedThrough))
     .digest('hex');
   if (request && request.noCache !== true) {
     const hit = cacheGet(cacheKey);
     if (hit) return hit;
   }
 
-  const plan = planner.plan(request, scope, { mealPeriods });
+  const plan = planner.plan(request, scope, { mealPeriods, rollupClosedThrough });
 
   const conn = await db.getConnection();
   cancelState.threadId = (conn.connection && conn.connection.threadId) || null;
   try {
-    const offsetMin = _dbOffsetMinutes(db);
     const exec = await executePlan(conn, plan, offsetMin, cancelState);
 
     const dims = plan.meta.dims;
@@ -351,9 +455,36 @@ async function run(db, request, scope, opts = {}) {
     const subtotals = [...exec.subtotalsByKey.values()];
     for (const sub of subtotals) computeDerived(sub.values, derived, exec.grand);
 
-    // sort merged rows (cross-fact correct), then page
+    /*
+     * SORT, THEN PAGE — and why this is OFFSET paging rather than keyset.
+     *
+     * A keyset ("seek") cursor works by pushing `WHERE (sortkey) < :last` into
+     * the SQL, and nothing here can do that honestly:
+     *   • the page is cut AFTER a cross-fact merge in Node, so the ordering the
+     *     reader pages through is not the ordering of any single statement;
+     *   • the sort key is frequently a metric that the fact being seeked does
+     *     not compute (the planner already falls back to `ORDER BY d0` for it),
+     *     and it can be a DERIVED metric that exists only once the merge and
+     *     equations have run — there is no column to compare against;
+     *   • a hybrid plan splits one metric across two statements, so even a
+     *     shared metric's per-statement value is not the value being sorted on.
+     * A cursor built on any of those would skip or repeat rows. Offset paging
+     * over the merged, sorted set is the mechanism that is actually correct
+     * here; what was broken was that it never fetched deep enough to reach the
+     * offset (see planner.MAX_FETCH_ROWS), and that is what is fixed.
+     */
     sortMerged(mergedRows, plan.meta.sort, plan);
     const pageRows = mergedRows.slice(plan.meta.offset, plan.meta.offset + plan.meta.limit);
+
+    // Is what we merged the WHOLE result, or only as far as the fetch reached?
+    // Either a statement filled its fetch window (there is more behind it) or
+    // the requested page ran past the declared hard cap. In both cases the row
+    // count is a floor, not a total, and must not be published as one.
+    const exhausted = !!exec.anyCapped || !!plan.meta.fetchCapped;
+    const totalMerged = mergedRows.length;
+    const hasMore = exhausted
+      ? true // we cannot see past the cap, so we must not claim this is the end
+      : (plan.meta.offset + pageRows.length) < totalMerged;
 
     // ── compare window ──
     let compareTotals = null;
@@ -362,7 +493,7 @@ async function run(db, request, scope, opts = {}) {
     if (mode === 'prevPeriod' || mode === 'prevYear') {
       const prevRange = compare.shiftRange(plan.meta.range, mode);
       const prevReq = Object.assign({}, request, { range: prevRange, compare: null, noCache: true });
-      const prevPlan = planner.plan(prevReq, scope, { mealPeriods });
+      const prevPlan = planner.plan(prevReq, scope, { mealPeriods, rollupClosedThrough });
       const prevExec = await executePlan(conn, prevPlan, offsetMin, cancelState);
       computeDerived(prevExec.grand, derived, prevExec.grand);
       const prevRows = new Map();
@@ -432,10 +563,32 @@ async function run(db, request, scope, opts = {}) {
           // values are null ("—"), not 0, and the UI names them so the reader
           // knows which column to distrust rather than the whole page.
           truncatedMetrics: exec.truncatedMetrics || [],
+          // ── real paging ──
+          // hasMore: false ONLY on a page we can prove is the last one.
+          hasMore,
+          // total is the merged row count, and totalIsExact says whether that
+          // count is the whole result or just how far the fetch reached. A
+          // caller that shows "1–50 of 500" must read the flag: publishing a
+          // floor as a total is how an export of 4,000 rows got presented as a
+          // complete 500-row file.
+          total: exhausted ? null : totalMerged,
+          totalIsExact: !exhausted,
+          // The declared hard cap was hit — the result is KNOWN-incomplete.
+          // Anything writing a file must record this; a partial export may
+          // never be handed over as the whole report.
+          truncated: exhausted,
+          fetchCapped: !!plan.meta.fetchCapped,
+          maxFetchRows: plan.meta.maxFetchRows,
         },
       },
       meta: {
-        freshness: fresh,
+        // The physical source that actually answered. This used to be a
+        // hardcoded 'live' in lib/analytics/freshness.js while the four rollup
+        // tables sat unread; freshness.source is overwritten here so the
+        // envelope cannot carry two different answers to the same question.
+        source: plan.meta.source,
+        rollup: plan.meta.rollup,
+        freshness: Object.assign({}, fresh, { source: plan.meta.source }),
         completeness: [],
         maskedMetrics: plan.meta.maskedMetrics,
         defaultsApplied: plan.meta.defaultsApplied,

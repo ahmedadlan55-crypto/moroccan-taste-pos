@@ -21,6 +21,7 @@ const { nextNumber } = require('../../lib/order-to-cash/numbering');
 const posting = require('../../lib/order-to-cash/posting');
 const events = require('../../lib/order-to-cash/events');
 const Zqr = require('../../lib/zatca-qr-image');
+const SalesScope = require('../../lib/salesScope');
 const { runTransition } = require('./TransitionExecutor');
 const Alloc = require('./PaymentAllocationService');
 const Zatca = require('./ZatcaDocumentService');
@@ -541,6 +542,11 @@ async function list(params = {}) {
   if (params.status && LIST_STATUSES.includes(params.status)) { where.push('status = ?'); args.push(params.status); }
   if (params.customerId) { where.push('customer_id = ?'); args.push(String(params.customerId)); }
   if (params.q) { where.push('return_number LIKE ?'); args.push('%' + params.q + '%'); }
+  // Same fix as the invoices and receipts lists: the predicate goes into the
+  // page query AND the COUNT, so pagination.total is the caller's own total
+  // rather than the company's. Zero grants → `1=0`; a global caller is unchanged.
+  const b = SalesScope.branchClause(params.scope, 'branch_id');
+  if (b.sql) { where.push(b.sql); b.params.forEach((v) => args.push(v)); }
   const whereSql = 'WHERE ' + where.join(' AND ');
   const [rows] = await db.query(
     `SELECT id, return_number, original_ar_document_id, customer_id, customer_name, return_date,

@@ -121,7 +121,11 @@ function check(name, cond, extra) {
     const src = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     src.split(/\r?\n/).forEach((line, i) => {
       if (/^\s*\/\//.test(line)) return;
-      if (/journalDate\s*:/.test(line) && /toISOString/.test(line)) {
+      // Every parameter name a LEDGER date travels under. `journalDate` alone
+      // missed a live UTC bug in routes/procurement/payments.js, where the
+      // reversal date is passed as `dateYMD` — the sweep looked for the wrong
+      // word and reported clean.
+      if (/(journalDate|dateYMD|postingDate|journal_date)\s*:/.test(line) && /toISOString/.test(line)) {
         offenders.push(path.relative(ROOT, f) + ':' + (i + 1));
       }
     });

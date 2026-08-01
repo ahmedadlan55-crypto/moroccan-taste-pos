@@ -53,9 +53,13 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
 // skipped the column the enforcement depends on.
 {
   const schema = code(read('db', 'migrations', 'party-dimension', 'schema.js'));
-  check('every step is individually guarded', /await step\('/.test(schema));
-  check('…and there are five of them',
-    (schema.match(/await step\('/g) || []).length === 5, schema.match(/await step\('/g));
+  // Count the DDL calls, not the guards, and require a guard for each — a
+  // hard-coded total goes stale the moment a step is added, which says
+  // nothing about whether the new step is safe.
+  const ddl = (schema.match(/H\.(addColumn|addIndex)\(/g) || []).length;
+  const guarded = (schema.match(/await step\('/g) || []).length;
+  check('every DDL call is wrapped in its own guarded step',
+    ddl > 0 && guarded === ddl, { ddl, guarded });
   check('a failing step reports itself rather than vanishing', /FAILED: '/.test(schema));
 
   // addIndex wraps the column list in parens itself.

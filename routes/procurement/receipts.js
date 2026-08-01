@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db/connection');
+const acctDate = require('../../lib/accountingDate');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/procurement/http');
 const { err } = require('../../lib/procurement/errors');
@@ -194,7 +195,7 @@ router.post('/:id/reverse', requireCapability('receipts.reverse'), async (req, r
         const stock = await inv.reverseReceiptStock(conn, { grn: row, lines, actor });
         let journalId = null;
         if (row.gl_journal_id) {
-          journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'GoodsReceipt', referenceId: row.id, actor, dateYMD: new Date().toISOString().slice(0, 10) });
+          journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'GoodsReceipt', referenceId: row.id, actor, dateYMD: acctDate.journalDate() });
         }
         return { journalIds: journalId ? [journalId] : [], affectedStock: stock.affectedStock, affectedValue: -stock.netValue };
       },

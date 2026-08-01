@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db/connection');
+const acctDate = require('../../lib/accountingDate');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/procurement/http');
 const { err } = require('../../lib/procurement/errors');
@@ -32,7 +33,13 @@ function allocId() { return 'ALC-' + Date.now() + '-' + Math.random().toString(3
 // payment (serialized behind the invoice row lock) sees the first's allocation.
 async function _lockedAllocatedSum(conn, invoiceId) {
   const [rows] = await conn.query(
-    'SELECT allocated_amount FROM payment_allocations WHERE supplier_invoice_id = ? AND reversed = 0 FOR UPDATE',
+    // Scoped to THIS payment system. `payment_allocations` is about to gain a
+    // second writer (the treasury voucher), and cash_payments.id and
+    // payment_records.id come from two generators that emit the same
+    // `PAY-<ms>-<rand>` shape out of separate tables — neither can see the
+    // other's ids. An unscoped read would count another system's allocation
+    // against this invoice's remaining balance.
+    "SELECT allocated_amount FROM payment_allocations WHERE supplier_invoice_id = ? AND reversed = 0 AND payment_source = 'procurement' FOR UPDATE",
     [invoiceId]);
   return calc.money(rows.reduce((s, r) => s + Number(r.allocated_amount), 0));
 }
@@ -61,15 +68,15 @@ async function _applyAllocations(conn, payment, allocations, actor) {
     const outstanding = calc.money(Number(inv[0].total_amount) - alreadyAllocated);
     if (amount - outstanding > 0.01) throw err('PAYMENT_OVER_ALLOCATION', `التخصيص (${amount}) يتجاوز المتبقي على الفاتورة (${outstanding})`);
     await conn.query(
-      `INSERT INTO payment_allocations (id, payment_id, supplier_invoice_id, allocated_amount, allocation_date, actor)
-       VALUES (?,?,?,?,?,?)
+      `INSERT INTO payment_allocations (id, payment_id, supplier_invoice_id, allocated_amount, allocation_date, actor, payment_source)
+       VALUES (?,?,?,?,?,?,'procurement')
        ON DUPLICATE KEY UPDATE allocated_amount = allocated_amount + VALUES(allocated_amount), reversed = 0`,
-      [allocId(), payment.id, invoiceId, amount, payment.receipt_date || new Date().toISOString().slice(0, 10), actor]);
+      [allocId(), payment.id, invoiceId, amount, payment.receipt_date || acctDate.journalDate(), actor]);
     await _recomputeInvoice(conn, invoiceId);
     allocatedTotal += amount;
   }
   allocatedTotal = calc.money(allocatedTotal);
-  const [tot] = await conn.query('SELECT COALESCE(SUM(allocated_amount),0) AS a FROM payment_allocations WHERE payment_id = ? AND reversed = 0', [payment.id]);
+  const [tot] = await conn.query("SELECT COALESCE(SUM(allocated_amount),0) AS a FROM payment_allocations WHERE payment_id = ? AND reversed = 0 AND payment_source = 'procurement'", [payment.id]);
   if (Number(tot[0].a) - Number(payment.amount) > 0.01) throw err('PAYMENT_OVER_ALLOCATION', 'مجموع التخصيصات يتجاوز مبلغ الدفعة');
   return { allocatedTotal, totalAllocated: calc.money(tot[0].a) };
 }
@@ -94,7 +101,7 @@ router.post('/', requireCapability('payments.request'), async (req, res) => {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'requested',1,?,?,?,?)`,
         [id, number, 'SupplierPayment', b.supplierId, 'out', amount, b.currency || 'SAR', b.paymentMethod || 'bank',
          b.bankAccountId || null, b.cashBoxId || null, b.supplierId, b.brandId || null, b.branchId || null, b.costCenterId || null,
-         actor, H.idemOf(req), b.paymentDate || new Date().toISOString().slice(0, 10), b.notes || null]);
+         actor, H.idemOf(req), b.paymentDate || acctDate.journalDate(), b.notes || null]);
       // store intended allocations in payload for pay-time application
       await events.recordEvent(conn, { documentType: 'payment', documentId: id, action: 'create', toStatus: 'requested', actor, payload: { allocations } });
       return { id, number };
@@ -125,7 +132,7 @@ router.get('/:id', requireCapability('procurement.view'), async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM payment_records WHERE id = ?', [req.params.id]);
     if (!rows.length) throw err('NOT_FOUND', 'الدفعة غير موجودة');
-    const [alloc] = await db.query('SELECT * FROM payment_allocations WHERE payment_id = ?', [req.params.id]);
+    const [alloc] = await db.query("SELECT * FROM payment_allocations WHERE payment_id = ? AND payment_source = 'procurement'", [req.params.id]);
     return H.sendData(res, Object.assign({}, rows[0], { allocations: alloc }));
   } catch (e) { return H.sendErr(res, e); }
 });
@@ -206,11 +213,19 @@ router.post('/:id/reverse', requireCapability('payments.reverse'), async (req, r
       docType: 'payment', table: 'payment_records', id: req.params.id, action: 'reverse',
       actor, expectedVersion: H.expectedVersionOf(req), idempotencyKey: H.idemOf(req),
       perform: async (conn, row) => {
-        const [alloc] = await conn.query('SELECT supplier_invoice_id FROM payment_allocations WHERE payment_id = ? AND reversed = 0', [row.id]);
-        await conn.query('UPDATE payment_allocations SET reversed = 1 WHERE payment_id = ?', [row.id]);
+        // THE reason payment_source exists. This UPDATE names only the payment
+        // id, and cash_payments.id / payment_records.id can collide by shape —
+        // so once the treasury voucher also allocates, reversing a procurement
+        // payment could silently clear a treasury allocation, changing an
+        // invoice balance for a payment nobody touched.
+        const [alloc] = await conn.query("SELECT supplier_invoice_id FROM payment_allocations WHERE payment_id = ? AND reversed = 0 AND payment_source = 'procurement'", [row.id]);
+        await conn.query("UPDATE payment_allocations SET reversed = 1 WHERE payment_id = ? AND payment_source = 'procurement'", [row.id]);
         for (const a of alloc) await _recomputeInvoice(conn, a.supplier_invoice_id);
         let journalId = null;
-        if (row.gl_journal_id) journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'SupplierPayment', referenceId: row.id, actor, dateYMD: new Date().toISOString().slice(0, 10) });
+        // Riyadh calendar date — this is a LEDGER date. It reached production
+        // as UTC because the parameter is named `dateYMD`, not `journalDate`,
+        // so the sweep that caught the other eleven sites did not look here.
+        if (row.gl_journal_id) journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'SupplierPayment', referenceId: row.id, actor, dateYMD: acctDate.journalDate() });
         return { journalIds: journalId ? [journalId] : [] };
       },
     });

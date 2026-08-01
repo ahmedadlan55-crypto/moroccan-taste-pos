@@ -82,6 +82,39 @@ async function apply(db, log = () => {}) {
   await step('dim_required', log, () =>
     H.addColumn(db, 'gl_accounts', 'dim_required', 'VARCHAR(200) NULL', log));
 
+  // ── payment_allocations: which payment SYSTEM the id belongs to ─────────
+  //
+  // A PREREQUISITE, not a fix for a live bug — and the distinction matters.
+  //
+  // `payment_allocations.payment_id` is currently written by exactly ONE
+  // caller (routes/procurement/payments.js), so nothing collides today. But
+  // `cash_payments.id` and `payment_records.id` are minted from two different
+  // generators that produce the SAME SHAPE — `PAY-<ms>-<rand4>` from both
+  // routes/shifts.js and routes/procurement/payments.js — and they live in
+  // separate tables, so neither generator can see the other's ids.
+  //
+  // The moment the treasury voucher becomes a first-class AP document and
+  // starts allocating against invoices, `UPDATE payment_allocations SET
+  // reversed = 1 WHERE payment_id = ?` can reach across the two systems and
+  // silently reverse an allocation belonging to the other one. Adding the
+  // discriminator BEFORE that path exists is the difference between a column
+  // default and a data-repair exercise.
+  //
+  // DEFAULT 'procurement' is correct for every existing row: procurement is
+  // the only writer there has ever been.
+  await step('payment_source', log, () =>
+    H.addColumn(db, 'payment_allocations', 'payment_source',
+      "VARCHAR(20) NOT NULL DEFAULT 'procurement'", log));
+
+  // The uniqueness rule that actually holds: one allocation per
+  // (system, payment, invoice). The old `uq_alloc (payment_id,
+  // supplier_invoice_id)` would forbid a treasury payment and a procurement
+  // payment that happen to share an id from both allocating to the same
+  // invoice — a legitimate pair it cannot tell apart.
+  await step('uq_alloc_src', log, () =>
+    H.addIndex(db, 'payment_allocations', 'uq_alloc_src',
+      'payment_source, payment_id, supplier_invoice_id', { unique: true }, log));
+
   log('party dimension ready');
 }
 

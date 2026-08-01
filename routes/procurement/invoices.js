@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db/connection');
+const acctDate = require('../../lib/accountingDate');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/procurement/http');
 const { err } = require('../../lib/procurement/errors');
@@ -258,7 +259,7 @@ router.post('/:id/credit-note', requireCapability('supplier_invoices.credit'), a
       if (Number(alloc[0].a) > 0) throw err('DOCUMENT_HAS_HISTORY', 'توجد مدفوعات مخصصة — اعكس السداد أولًا');
       let journalId = null;
       if (inv.gl_journal_id) {
-        journalId = await posting.postReversal(conn, { originalJournalId: inv.gl_journal_id, referenceType: 'SupplierInvoice', referenceId: inv.id, actor, dateYMD: new Date().toISOString().slice(0, 10), description: 'إشعار دائن للفاتورة ' + (inv.invoice_no || inv.code) });
+        journalId = await posting.postReversal(conn, { originalJournalId: inv.gl_journal_id, referenceType: 'SupplierInvoice', referenceId: inv.id, actor, dateYMD: acctDate.journalDate(), description: 'إشعار دائن للفاتورة ' + (inv.invoice_no || inv.code) });
       }
       await conn.query('UPDATE supplier_invoices SET status = "cancelled", version = version + 1, cancelled_by = ?, cancelled_at = NOW() WHERE id = ?', [actor, inv.id]);
       await events.recordEvent(conn, { documentType: 'supplier_invoice', documentId: inv.id, action: 'credit_note', fromStatus: inv.status, toStatus: 'cancelled', actor, glJournalId: journalId });

@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db/connection');
+const acctDate = require('../../lib/accountingDate');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/procurement/http');
 const { err } = require('../../lib/procurement/errors');
@@ -165,7 +166,7 @@ router.post('/:id/reverse', requireCapability('purchase_returns.post'), async (r
       // put stock back
       await inv.applyReceiptStock(conn, { grn: { id: row.id, warehouse_id: row.warehouse_id, po_id: null }, lines: lines.map((l) => ({ item_id: l.item_id, item_name: l.item_name_snapshot, base_qty: l.base_qty, base_unit_cost: l.base_unit_cost, warehouse_id: row.warehouse_id, po_line_id: null })), actor });
       let journalId = null;
-      if (row.gl_journal_id) journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'PurchaseReturn', referenceId: row.id, actor, dateYMD: new Date().toISOString().slice(0, 10) });
+      if (row.gl_journal_id) journalId = await posting.postReversal(conn, { originalJournalId: row.gl_journal_id, referenceType: 'PurchaseReturn', referenceId: row.id, actor, dateYMD: acctDate.journalDate() });
       await conn.query('UPDATE purchase_returns SET status = "draft", version = version + 1 WHERE id = ?', [req.params.id]);
       await events.recordEvent(conn, { documentType: 'return', documentId: req.params.id, action: 'reverse', fromStatus: 'posted', toStatus: 'draft', actor, glJournalId: journalId });
       return { journalId };

@@ -59,7 +59,64 @@ orders created from now on, where someone actually chose it.
 
 ---
 
-## 3. Risks and open items
+## 3. Test results
+
+| Suite | Result |
+|---|---|
+| `tests/recipeEngine.test.js` (pure) | 95/95 |
+| `tests/inventoryOperations.test.js` (pure) | 96/96 |
+| `tests/productionEngine.test.js` (pure) | 33/33 |
+| `npm test` (whole backend unit chain) | green end to end |
+| `npm run test:recipes-api` | 60/60 |
+| `npm run test:production-integrity` | 44/44 |
+| `npm run test:operations-api` | 32/32 |
+| `npm run test:mutation:full` | **12 mutants, 0 survived** |
+| ERP `tsc --noEmit` | clean |
+| ERP vitest | 573/573 across 80 files |
+| `npm run tokens:check` | pass, no new hex |
+| `npm run check:rtl-literals` | pass (POS at zero, ERP ratcheted) |
+| `build:erp` / `build:pos` | both green |
+| `schema:release-chain` / `release-sequence` / `migration-concurrency` | 3/3 — the release chain runs against an EMPTY database |
+
+Every integration suite asserts the DATABASE effect after a write, not the HTTP
+status. The genealogy fix, for instance, is proven by reading
+`production_material_allocations` back: 6 units consumed, **6** attributed across
+three partial outputs, where the old code recorded 18.
+
+### Responsive / bilingual verification (live, against a running server)
+
+Measured in a real browser at 390 / 768 / 1024 / 1440 on `/menu/recipes`,
+`/inventory/operations`, `/inventory/production` and `/inventory/production/new`:
+**body horizontal overflow = 0 px at every size**, and zero elements wider than
+the viewport that are not inside their own `overflow-x-auto` container (the wide
+tables scroll themselves, which is the intended behaviour). Arabic renders
+`dir="rtl"`, English `dir="ltr"`; no untranslated i18n keys leak; zero console
+errors; every `/api/` request returned 200.
+
+### Full gate
+
+25/37 steps ran before it stopped at the first failure, and **every step this
+work added or touched passed**: `static:design-tokens`, `static:rtl-literals`,
+`erp:tsc`, `erp:vitest`, `root:tests`, `backend:recipes-api`,
+`backend:production-integrity`, `backend:operations-api`,
+`audit:mutation-guards`, plus all three `schema:*` steps and both builds.
+
+TWO GATE STEPS FAIL, and BOTH ARE PRE-EXISTING — verified, not assumed:
+
+* `backend:sales-fixes` → `dashboardPayments.api.test.js`, 18 passed / 2 failed
+  on `marginBasis` expecting `cogs` but getting `proxy`. Reproduced **identically
+  on an untouched `origin/main` worktree** (same 18/2, same two assertions).
+* `audit:retired-surfaces` → `e2e/erp/sales-hub-redirects.spec.ts` references the
+  retired `/accounting/sales-analytics` and `/pos-admin/reports` paths but is not
+  on the audit's allow-list. That file is untouched by this branch and was
+  introduced by `origin/main`'s own commit `c05a66a3`; the audit and the spec
+  disagree in the baseline.
+
+Neither is fixed here: both sit in the sales-reports area, which is exactly the
+work in flight on `release/sales-reports-final`, and touching it from this branch
+would collide with it.
+
+## 4. Risks and open items
 
 Stated plainly rather than buried.
 

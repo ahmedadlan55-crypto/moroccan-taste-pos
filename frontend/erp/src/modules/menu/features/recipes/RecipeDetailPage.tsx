@@ -56,6 +56,7 @@ import { ProductionTab } from "./ProductionTab";
 import { AvailabilityTab } from "./AvailabilityTab";
 import { WhereUsedTab } from "./WhereUsedTab";
 import { VersionsTab } from "./VersionsTab";
+import { AuthedImage } from "./AuthedImage";
 
 const TAB_IDS = ["overview", "components", "cost", "production", "availability", "whereUsed", "versions"] as const;
 type TabId = (typeof TAB_IDS)[number];
@@ -296,7 +297,7 @@ export function RecipeDetailPage({ source, productId }: { source: string; produc
       {/* ── identity strip ── */}
       <section className="surface mb-4 flex flex-wrap items-center gap-4 p-4">
         {imageSrc ? (
-          <img src={imageSrc} alt="" className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />
+          <AuthedImage src={imageSrc} alt="" className="h-16 w-16 rounded-xl border border-slate-200 object-cover" fallback={null} />
         ) : (
           <span className="grid h-16 w-16 place-items-center rounded-xl bg-slate-100 text-slate-400" title={t("recipes.noImage")}>
             <ImageOff className="h-5 w-5" aria-hidden="true" />

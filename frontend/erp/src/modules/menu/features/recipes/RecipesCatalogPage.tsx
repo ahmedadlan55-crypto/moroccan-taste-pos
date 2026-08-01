@@ -31,6 +31,7 @@ import {
   type CatalogRow,
 } from "@/modules/menu/recipesApi";
 import { anomalyLabel, bizName, formatPct, statusLabel, statusTone, typeLabel } from "./labels";
+import { AuthedImage } from "./AuthedImage";
 
 const PAGE_SIZES = [10, 25, 50, 100];
 /** The exact sort keys routes/recipes.js accepts (SORTS). Column ids mirror them. */
@@ -163,25 +164,25 @@ export function RecipesCatalogPage() {
         width: 72,
         cell: (r) => {
           const src = productImageUrl(r.productSource, r.productId, r.imageVersion);
-          // No imageVersion → the product genuinely has no image. Rendering an
-          // <img> anyway would fire a request that 404s for every such row.
-          if (!src) {
-            return (
-              <span
-                className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-400"
-                title={t("recipes.noImage")}
-              >
-                <ImageOff className="h-4 w-4" aria-hidden="true" />
-                <span className="sr-only">{t("recipes.noImage")}</span>
-              </span>
-            );
-          }
+          // No imageVersion → the product genuinely has no image; nothing is
+          // requested. Otherwise AuthedImage fetches the bytes WITH the session
+          // token — the endpoint is behind the JWT gate and a plain <img src>
+          // cannot send an Authorization header, so it 401s on every row.
+          const placeholder = (
+            <span
+              className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-400"
+              title={t("recipes.noImage")}
+            >
+              <ImageOff className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">{t("recipes.noImage")}</span>
+            </span>
+          );
           return (
-            <img
+            <AuthedImage
               src={src}
               alt=""
-              loading="lazy"
               className="h-10 w-10 rounded-lg border border-slate-200 object-cover"
+              fallback={placeholder}
             />
           );
         },

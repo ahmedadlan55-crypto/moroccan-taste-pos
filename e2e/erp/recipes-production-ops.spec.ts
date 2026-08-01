@@ -13,7 +13,7 @@
 //     (?item=, ?new=1, ?view=), which is exactly what a refresh discarded.
 //   • the old paths still resolve (the redirect table)
 //   • document details open as PAGES, never as a side panel
-//   • three viewports x two languages on the new surfaces specifically
+//   • both languages, at every viewport the config defines
 // ═══════════════════════════════════════════════════════════════════════════
 import { test, expect, Page } from "@playwright/test";
 import fs from "fs";
@@ -21,11 +21,10 @@ import path from "path";
 
 const TOKEN = fs.readFileSync(path.join(process.cwd(), "e2e", ".token"), "utf8").trim();
 
-const VIEWPORTS = [
-  { name: "mobile", width: 390, height: 844 },
-  { name: "tablet", width: 768, height: 1024 },
-  { name: "desktop", width: 1440, height: 900 },
-];
+// The VIEWPORTS come from playwright.erp.config.ts's projects (mobile 390 /
+// tablet-768 / laptop-1024 / desktop 1440) — this spec must NOT set its own, or
+// every project re-runs every size and the test names read "[desktop] ›
+// [ar][tablet]", which is both four times the work and a lie about what ran.
 const LANGS = ["ar", "en"] as const;
 
 const BENIGN_CONSOLE =
@@ -127,11 +126,12 @@ async function assertNotASidePanel(page: Page) {
 
 test.describe("recipes / production / operations — deep links", () => {
   for (const lang of LANGS) {
-    for (const vp of VIEWPORTS) {
-      test(`[${lang}][${vp.name}] the three new surfaces render, survive refresh and never overflow`, async ({ page }) => {
+    {
+      test(`[${lang}] the three new surfaces render, survive refresh and never overflow`, async ({ page }, testInfo) => {
         test.setTimeout(180_000);
         const seen = watch(page);
-        await page.setViewportSize({ width: vp.width, height: vp.height });
+        // The project supplies the viewport; read it back for the messages.
+        const vp = { name: testInfo.project.name, width: page.viewportSize()?.width ?? 0 };
         await login(page, lang);
 
         const SURFACES = [
@@ -150,7 +150,7 @@ test.describe("recipes / production / operations — deep links", () => {
           const h = await health(page);
           expect(h.badState, `${route} rendered a non-healthy state`).toBeNull();
           expect(h.text, `${route} crashed`).not.toContain(CRASH_TEXT);
-          expect(h.overflow, `${route} overflows the body horizontally at ${vp.width}px`).toBeLessThanOrEqual(1);
+          expect(h.overflow, `${route} overflows the body horizontally at ${vp.width}px (${vp.name})`).toBeLessThanOrEqual(1);
           expect(h.dir, `${route} html dir must follow the language`).toBe(lang === "ar" ? "rtl" : "ltr");
           expect(h.lang).toBe(lang);
 
@@ -180,6 +180,12 @@ test.describe("recipes / production / operations — deep links", () => {
     expect(url.searchParams.get("brandId")).toBe("B1");
   });
 
+  // On narrow viewports DataTable renders a stacked CARD layout and keeps the
+  // <table> in the DOM but HIDDEN — so `count()` is truthy while the row can
+  // never be clicked, and the click times out. Require VISIBILITY, and when
+  // there is no visible row reach the document by its real URL instead. The
+  // contract under test is "it is a full page at its own URL", not "a table row
+  // exists".
   test("a recipe opens as a full PAGE at its own URL, not a panel", async ({ page }) => {
     const seen = watch(page);
     await login(page, "ar");
@@ -187,22 +193,27 @@ test.describe("recipes / production / operations — deep links", () => {
     await waitRendered(page);
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-    // Click the first data row, whatever product it is.
     const row = page.locator("#main table tbody tr").first();
-    if (await row.count()) {
+    let deep: string | null = null;
+    if (await row.isVisible().catch(() => false)) {
       await row.click();
-      await page.waitForURL(/\/app\/menu\/recipes\/(menu|inv)\//, { timeout: 15_000 }).catch(() => {});
-      if (/\/app\/menu\/recipes\/(menu|inv)\//.test(page.url())) {
-        await waitRendered(page);
-        await assertNotASidePanel(page);
-        // …and the deep URL works cold.
-        const deep = page.url();
-        await page.goto(deep);
-        await waitRendered(page);
-        const h = await health(page);
-        expect(h.badState).toBeNull();
-      }
+      await page.waitForURL(//app/menu/recipes/(menu|inv)//, { timeout: 15_000 }).catch(() => {});
+      if (//app/menu/recipes/(menu|inv)//.test(page.url())) deep = page.url();
     }
+    if (!deep) {
+      const first = await page.evaluate(async () => {
+        const tok = localStorage.getItem("pos_token");
+        const r = await fetch("/api/recipes?pageSize=1", { headers: { Authorization: "Bearer " + tok } });
+        const j = await r.json();
+        return j.data && j.data[0] ? { src: j.data[0].productSource, id: j.data[0].productId } : null;
+      });
+      if (first) deep = `/app/menu/recipes/${first.src}/${encodeURIComponent(first.id)}`;
+    }
+    expect(deep, "no recipe product to open").not.toBeNull();
+    await page.goto(deep as string);
+    await waitRendered(page);
+    await assertNotASidePanel(page);
+    expect((await health(page)).badState).toBeNull();
     expect(seen.errors).toEqual([]);
   });
 
@@ -214,17 +225,28 @@ test.describe("recipes / production / operations — deep links", () => {
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
     const row = page.locator("#main table tbody tr").first();
-    if (await row.count()) {
+    let deep: string | null = null;
+    if (await row.isVisible().catch(() => false)) {
       await row.click();
-      await page.waitForURL(/\/app\/inventory\/operations\/[^/]+\/[^/]+/, { timeout: 15_000 }).catch(() => {});
-      if (/\/app\/inventory\/operations\/[^/]+\/[^/]+/.test(page.url())) {
-        await waitRendered(page);
-        await assertNotASidePanel(page);
-        const deep = page.url();
-        await page.goto(deep);
-        await waitRendered(page);
-        expect((await health(page)).badState).toBeNull();
-      }
+      await page.waitForURL(//app/inventory/operations/[^/]+/[^/]+/, { timeout: 15_000 }).catch(() => {});
+      if (//app/inventory/operations/[^/]+/[^/]+/.test(page.url())) deep = page.url();
+    }
+    if (!deep) {
+      const first = await page.evaluate(async () => {
+        const tok = localStorage.getItem("pos_token");
+        const r = await fetch("/api/inventory/operations?pageSize=1", { headers: { Authorization: "Bearer " + tok } });
+        const j = await r.json();
+        return j.data && j.data[0] ? { type: j.data[0].documentType, id: j.data[0].documentId } : null;
+      });
+      if (first) deep = `/app/inventory/operations/${first.type}/${encodeURIComponent(first.id)}`;
+    }
+    if (deep) {
+      await page.goto(deep);
+      await waitRendered(page);
+      await assertNotASidePanel(page);
+      expect((await health(page)).badState).toBeNull();
+      // A document page must be a printable DOCUMENT, not the whole app chrome.
+      expect(await page.locator(".print-document").count()).toBeGreaterThan(0);
     }
     expect(seen.errors).toEqual([]);
   });

@@ -14,7 +14,7 @@
 // render disabled with a "coming soon" tooltip until then.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CalendarClock, Play, Save } from "lucide-react";
+import { CalendarClock, Play, Save, SlidersHorizontal, Table2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -281,8 +281,23 @@ export default function Builder() {
         </div>
       )}
 
-      <div className="surface space-y-3 p-4" data-testid="builder-config">
-        <div className="flex flex-wrap items-end gap-3">
+      <div className="surface space-y-4 p-4" data-testid="builder-config">
+        {/* Names this card "Configuration" so it reads as distinct from the
+            AnalyticsTopBar filter card above it — that card carries no header
+            of its own, so the two used to blend into one long stack of fields. */}
+        <header className="flex items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-teal-700" aria-hidden="true" />
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900">{t("salesReports.builder.configTitle")}</h3>
+            <p className="mt-0.5 text-xs font-bold text-slate-500">{t("salesReports.builder.configSubtitle")}</p>
+          </div>
+        </header>
+
+        {/* Row A — what to measure: the two controls that decide the report's
+            shape. items-start (not items-end): GroupByControl now carries its
+            own padded box below, so bottom-aligning it against a plain field
+            would misalign the two label rows above them. */}
+        <div className="flex flex-wrap items-start gap-3">
           {field(
             `${t("salesReports.builder.metrics")} (${metricIds.length}/${MAX_METRICS})`,
             <MultiSelectCombobox
@@ -297,11 +312,14 @@ export default function Builder() {
               up to the planner's three levels, illegal ones disabled with the
               metric that blocks them named. It replaces two native <select>s
               that offered a curated pair and could not say why anything was
-              unavailable. */}
+              unavailable. Boxed (not `.surface` — no nested cards) so it reads
+              as its own multi-slot unit instead of merging into the plain
+              fields beside it. */}
           <GroupByControl
             registry={registry.data}
             metricIds={metricIds}
             value={dimensions}
+            className="rounded-xl border border-slate-200 bg-slate-50/60 p-3"
             // ONE navigation for all three levels. Three separate patchParam
             // calls would each be computed from the pre-patch params, so only
             // the last would survive — see patchParams above.
@@ -313,6 +331,11 @@ export default function Builder() {
               })
             }
           />
+        </div>
+
+        {/* Row B — how to shape it: page size and ordering, separate from
+            what to measure so the two questions don't compete in one row. */}
+        <div className="flex flex-wrap items-end gap-3">
           {field(
             "N",
             <NumberInput
@@ -347,7 +370,10 @@ export default function Builder() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Row C — actions. A thin top rule separates "configuring" from
+            "acting", the same divider convention CardHeader uses (border-b),
+            flipped to border-t since this sits at the bottom of the card. */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
           <Button onClick={() => setRanSig(configSig)} disabled={!canRun} data-testid="builder-run">
             <Play className="h-4 w-4" /> {t("salesReports.builder.runQuery")}
           </Button>
@@ -365,40 +391,61 @@ export default function Builder() {
         </div>
       </div>
 
-      {/* ── result ── */}
-      {!enabled ? (
-        <EmptyState title={t("salesReports.builder.runQuery")} body={t("salesReports.pages.builder.subtitle")} />
-      ) : result.isPending ? (
-        <LoadingState />
-      ) : result.isError ? (
-        <ErrorState error={result.error} onRetry={() => result.refetch()} />
-      ) : rows.length === 0 ? (
-        <EmptyState title={t("salesReports.states.empty")} />
-      ) : (
-        <>
-          {result.data?.meta?.completeness?.complete === false && (
-            <div data-testid="completeness-notice">
-              <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
-            </div>
+      {/* ── result — its own titled zone, plain (no .surface: PivotTable is
+          already one, and a card nested in a card is the one thing this
+          design system forbids). Present in every state, so the page always
+          reads as two zones: configure above, report below. ── */}
+      <div className="space-y-3" data-testid="builder-results">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Table2 className="h-4 w-4 text-teal-700" aria-hidden="true" />
+            <h3 className="text-sm font-extrabold text-slate-900">{t("salesReports.builder.resultsTitle")}</h3>
+          </div>
+          {/* Only shown once there is an actual count — idle/loading/error/empty
+              already carry their own one-line message just below, and a second
+              "nothing yet" line here would be exactly the clutter this redesign
+              removes. */}
+          {enabled && !result.isPending && !result.isError && rows.length > 0 && (
+            <span className="text-xs font-bold text-slate-500">
+              {t("salesReports.builder.resultsCount", { count: rows.length })}
+            </span>
           )}
-          <PivotTable
-            rows={rows}
-            subtotals={result.data?.subtotals}
-            rowDims={dimensions}
-            rowDimLabels={dimensions.map((d) => t(`salesReports.dims.${d}`))}
-            measures={measures}
-            expanded={expanded}
-            onToggle={(key) =>
-              setExpanded((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })
-            }
-          />
-        </>
-      )}
+        </div>
+
+        {!enabled ? (
+          <EmptyState title={t("salesReports.builder.runQuery")} body={t("salesReports.pages.builder.subtitle")} />
+        ) : result.isPending ? (
+          <LoadingState />
+        ) : result.isError ? (
+          <ErrorState error={result.error} onRetry={() => result.refetch()} />
+        ) : rows.length === 0 ? (
+          <EmptyState title={t("salesReports.states.empty")} />
+        ) : (
+          <>
+            {result.data?.meta?.completeness?.complete === false && (
+              <div data-testid="completeness-notice">
+                <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
+              </div>
+            )}
+            <PivotTable
+              rows={rows}
+              subtotals={result.data?.subtotals}
+              rowDims={dimensions}
+              rowDimLabels={dimensions.map((d) => t(`salesReports.dims.${d}`))}
+              measures={measures}
+              expanded={expanded}
+              onToggle={(key) =>
+                setExpanded((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })
+              }
+            />
+          </>
+        )}
+      </div>
     </section>
   );
 }

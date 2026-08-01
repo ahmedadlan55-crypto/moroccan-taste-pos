@@ -339,6 +339,10 @@ export const salesReports = {
     sort: "Sort",
     schedule: "Schedule report",
     showChart: "Show chart",
+    configTitle: "Configuration",
+    configSubtitle: "Pick the metrics, grouping, and sort order, then press “Run query”.",
+    resultsTitle: "Report",
+    resultsCount: "{count} rows",
   },
 
   pivot: {

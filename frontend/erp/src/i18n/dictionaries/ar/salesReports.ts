@@ -352,6 +352,10 @@ export const salesReports = {
     sort: "الترتيب",
     schedule: "جدولة التقرير",
     showChart: "عرض الرسم البياني",
+    configTitle: "الإعدادات",
+    configSubtitle: "حدّد المقاييس والتجميع وطريقة الترتيب، ثم اضغط «تشغيل الاستعلام»",
+    resultsTitle: "التقرير",
+    resultsCount: "{count} سطر",
   },
 
   pivot: {

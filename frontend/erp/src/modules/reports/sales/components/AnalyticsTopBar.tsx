@@ -60,6 +60,13 @@ export interface AnalyticsTopBarProps {
   onRefresh?: () => void;
   /** Page-owned actions (save view / export …) rendered at the end. */
   pageActions?: ReactNode;
+  /**
+   * The routed report's OWN settings, published through the rail slot
+   * (lib/reportRail). They render inside this card, below the shared filters,
+   * so the analyst sees ONE filters-and-settings surface instead of two
+   * stacked panels that look like unrelated features.
+   */
+  children?: ReactNode;
 }
 
 /** One removable active-filter chip. */
@@ -225,7 +232,7 @@ function SaveViewControl() {
   );
 }
 
-export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageActions }: AnalyticsTopBarProps) {
+export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageActions, children }: AnalyticsTopBarProps) {
   const t = useT();
   const location = useLocation();
   const defaults = analyticsFilterCodec.defaults;
@@ -328,17 +335,63 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   const watermark = meta?.freshness?.watermark ?? null;
   const pendingDays = meta?.freshness?.pendingDays ?? 0;
 
+  // `xl:w-full xl:min-w-0` — in the rail every field fills the column; below
+  // xl the min-width keeps the wrapping bar readable, exactly as before.
   const field = (label: string, control: ReactNode) => (
-    <div className="flex min-w-40 flex-col gap-1.5">
+    <div className="flex min-w-40 flex-col gap-1.5 xl:w-full xl:min-w-0">
       <span className="text-xs font-extrabold text-slate-500">{label}</span>
       {control}
     </div>
   );
 
   return (
-    <div className="no-print surface mb-4 space-y-3 p-4" data-testid="analytics-topbar">
-      {/* row 1 — period + compare + scopes */}
-      <div className="flex flex-wrap items-end gap-3">
+    // Two layouts, one component, ONE breakpoint: a wrapping bar below xl and a
+    // column at xl+. Keyed to the same `xl` as the hub's grid, so the bar and
+    // the grid are mathematically incapable of disagreeing — which a `layout`
+    // prop would have allowed.
+    <div
+      className="no-print surface mb-4 flex flex-col gap-3 p-4 xl:mb-0"
+      data-testid="analytics-topbar"
+    >
+      {/* toolbar — FIRST in the DOM, not moved with `order`. Visually-top /
+          tab-order-fourth would be a WCAG 2.4.3 focus-order defect, and in a
+          700px rail these actions must not sit below the fold. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3">
+        <h2 className="me-auto text-sm font-extrabold text-slate-900">
+          {t("salesReports.hub.filtersTitle")}
+        </h2>
+        {pendingDays > 0 && (
+          <Badge tone="warning">{t("salesReports.topbar.lateTx", { count: pendingDays })}</Badge>
+        )}
+        {watermark && (
+          // data-freshness-watermark: the visual-baseline masks target this
+          // attribute — a SERVER timestamp can never be pixel-stable, so the
+          // baselines blank it instead of photographing it.
+          <span data-freshness-watermark className="text-xs font-bold text-slate-400">
+            {t("salesReports.topbar.refreshedAt", { time: formatDateTime(watermark) })}
+          </span>
+        )}
+        {onRefresh && (
+          <IconButton size="sm" aria-label={t("salesReports.topbar.refresh")} onClick={onRefresh}>
+            <RefreshCw className="h-4 w-4" />
+          </IconButton>
+        )}
+        <SaveViewControl />
+        {/* Print is NOT export-gated: it puts the report the user is already
+            reading on paper. The hub wraps the routed page in PrintArea, and
+            this bar is .no-print, so the printout is the report alone. */}
+        <IconButton size="sm" aria-label={t("salesReports.topbar.print")} onClick={printReport}>
+          <Printer className="h-4 w-4" />
+        </IconButton>
+        {canExport && <ExportMenu segment={segment} filters={filters} />}
+        {pageActions}
+      </div>
+
+      {/* row 1 — period + compare + scopes.
+          `items-end` is a CROSS-axis rule; in a column the cross axis is
+          horizontal, so leaving it would shrink every field to its content
+          width and jam it against the inline-end edge. Hence items-stretch. */}
+      <div className="flex flex-wrap items-end gap-3 xl:flex-col xl:flex-nowrap xl:items-stretch">
         {field(
           t("salesReports.topbar.period"),
           <DateRangePicker
@@ -427,61 +480,53 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
         )}
       </div>
 
-      {/* row 2 — basis toggles + freshness + page actions */}
-      <div className="flex flex-wrap items-center gap-3">
-        <SegmentedControl
-          size="sm"
-          aria-label={t("salesReports.topbar.dateBasis")}
-          value={filters.businessDay ? "business" : "calendar"}
-          onChange={(v) => patch({ businessDay: v === "business" })}
-          options={[
-            { value: "business", label: t("salesReports.topbar.businessDay") },
-            { value: "calendar", label: t("salesReports.topbar.calendarDay") },
-          ]}
-        />
-        <SegmentedControl
-          size="sm"
-          aria-label={t("salesReports.topbar.taxBasis")}
-          value={filters.taxIncl ? "incl" : "excl"}
-          onChange={(v) => patch({ taxIncl: v === "incl" })}
-          options={[
-            { value: "excl", label: t("salesReports.topbar.taxExcl") },
-            { value: "incl", label: t("salesReports.topbar.taxIncl") },
-          ]}
-        />
-
-        <div className="ms-auto flex flex-wrap items-center gap-2">
-          {pendingDays > 0 && (
-            <Badge tone="warning">{t("salesReports.topbar.lateTx", { count: pendingDays })}</Badge>
-          )}
-          {watermark && (
-            // data-freshness-watermark: the visual-baseline masks target this
-            // attribute — a SERVER timestamp can never be pixel-stable, so the
-            // baselines blank it instead of photographing it.
-            <span data-freshness-watermark className="text-xs font-bold text-slate-400">
-              {t("salesReports.topbar.refreshedAt", { time: formatDateTime(watermark) })}
-            </span>
-          )}
-          {onRefresh && (
-            <IconButton size="sm" aria-label={t("salesReports.topbar.refresh")} onClick={onRefresh}>
-              <RefreshCw className="h-4 w-4" />
-            </IconButton>
-          )}
-          <SaveViewControl />
-          {/* Print is NOT export-gated: it puts the report the user is already
-              reading on paper. The hub wraps the routed page in PrintArea, and
-              this bar is .no-print, so the printout is the report alone. */}
-          <IconButton size="sm" aria-label={t("salesReports.topbar.print")} onClick={printReport}>
-            <Printer className="h-4 w-4" />
-          </IconButton>
-          {canExport && <ExportMenu segment={segment} filters={filters} />}
-          {pageActions}
-        </div>
+      {/* row 2 — basis toggles. Wrapped in field() like every other control so
+          the rail reads as one consistent labelled list; the SegmentedControl
+          is inline-flex with non-flexing children, so a stretched one needs
+          `[&>button]:flex-1` or it leaves trailing dead space. */}
+      <div className="flex flex-wrap items-end gap-3 xl:flex-col xl:items-stretch">
+        {field(
+          t("salesReports.topbar.dateBasis"),
+          <SegmentedControl
+            size="sm"
+            className="xl:w-full xl:[&>button]:flex-1"
+            aria-label={t("salesReports.topbar.dateBasis")}
+            value={filters.businessDay ? "business" : "calendar"}
+            onChange={(v) => patch({ businessDay: v === "business" })}
+            options={[
+              { value: "business", label: t("salesReports.topbar.businessDay") },
+              { value: "calendar", label: t("salesReports.topbar.calendarDay") },
+            ]}
+          />,
+        )}
+        {field(
+          t("salesReports.topbar.taxBasis"),
+          <SegmentedControl
+            size="sm"
+            className="xl:w-full xl:[&>button]:flex-1"
+            aria-label={t("salesReports.topbar.taxBasis")}
+            value={filters.taxIncl ? "incl" : "excl"}
+            onChange={(v) => patch({ taxIncl: v === "incl" })}
+            options={[
+              { value: "excl", label: t("salesReports.topbar.taxExcl") },
+              { value: "incl", label: t("salesReports.topbar.taxIncl") },
+            ]}
+          />,
+        )}
       </div>
 
-      {/* row 3 — active-filter chips */}
+      {/* The routed report's OWN settings — the whole point of the rail. A page
+          publishes them through lib/reportRail; the 15 fixed reports publish
+          nothing and this renders nothing. */}
+      {children && <div className="border-t border-slate-100 pt-3">{children}</div>}
+
+      {/* row 3 — active-filter chips. Last, because it is a summary of state
+          the controls above already show. */}
       {chips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2" data-testid="active-filter-chips">
+        <div
+          className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3"
+          data-testid="active-filter-chips"
+        >
           <span className="text-[11px] font-extrabold text-slate-400">
             {t("salesReports.topbar.activeFilters")}
           </span>

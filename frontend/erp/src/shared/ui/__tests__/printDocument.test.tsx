@@ -92,8 +92,16 @@ describe("every screen that prints, prints a document", () => {
    * Each entry names WHY, so the list cannot quietly become a dumping ground.
    */
   const ALLOWED: Record<string, string> = {
-    // A reusable print BUTTON. The pages that use it own their own wrapper.
-    "detail-shared.tsx": "shared print button; the calling detail page wraps",
+    // A reusable print BUTTON, rendered inside DetailHeader. Its six callers —
+    // the five procurement documents in DetailPages.tsx and SupplierDetail —
+    // each wrap their own body.
+    //
+    // This entry USED TO SAY the same thing while NONE of the six wrapped,
+    // and the suite was green throughout: an allowlist entry is an assertion
+    // about other files, and nothing checked it. That is why the companion
+    // test below re-verifies every excuse against the filesystem instead of
+    // trusting the sentence.
+    "detail-shared.tsx": "shared print button; every caller wraps — verified below",
     // The printing helper itself.
     "components.tsx": "defines printReport()/PrintArea for the accounting module",
     // A hub SEGMENT. SalesAnalyticsHub wraps whichever segment is routed, so
@@ -122,5 +130,39 @@ describe("every screen that prints, prints a document", () => {
   it("still finds the printing screens at all — the probe must not silently pass", () => {
     // A regex that matched nothing would make the test above vacuously green.
     expect(printingFiles(SRC).length).toBeGreaterThan(10);
+  });
+
+  it("the shared print button's excuse is TRUE — every caller really does wrap", () => {
+    // The excuse above claims the callers wrap. It said exactly that while none
+    // of them did, and this suite stayed green: an allowlist entry asserts
+    // something about OTHER files, and an unverified assertion in a guard is
+    // worse than no guard — it converts an open question into a false all-clear.
+    // So the sentence is re-derived from the filesystem here.
+    const callers: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "__tests__" || e.name === "node_modules") continue;
+          walk(p);
+        } else if (e.name.endsWith(".tsx") && e.name !== "detail-shared.tsx") {
+          const src = fs.readFileSync(p, "utf8");
+          if (/<DetailHeader\b/.test(src)) callers.push(p);
+        }
+      }
+    };
+    walk(SRC);
+
+    expect(callers.length, "no DetailHeader callers found — the probe broke").toBeGreaterThan(0);
+
+    const unwrapped = callers
+      .filter((p) => !/PrintDocument|PrintArea|print-document/.test(fs.readFileSync(p, "utf8")))
+      .map((p) => path.relative(SRC, p));
+
+    expect(
+      unwrapped,
+      `these render the shared print button but wrap nothing, so the allowlist ` +
+        `excuse for detail-shared.tsx is false:\n  ` + unwrapped.join("\n  "),
+    ).toEqual([]);
   });
 });

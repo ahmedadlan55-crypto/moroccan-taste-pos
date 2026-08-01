@@ -23,6 +23,8 @@ export const salesReports = {
     subtitle: "مركز تحليلات المبيعات الموحّد — المقاييس والأبعاد من سجل الحقائق المعتمد",
     tabsAria: "أقسام تحليلات المبيعات",
     pickerLabel: "التقرير",
+    filtersTitle: "الفلاتر والإعدادات",
+    filtersAria: "فلاتر وإعدادات التقرير",
   },
 
   report: {
@@ -344,6 +346,7 @@ export const salesReports = {
   builder: {
     metrics: "المقاييس",
     atCap: "بلغتَ الحد الأقصى {max} مقاييس للطلب الواحد — أزل واحدًا لإضافة آخر",
+    truncated: "الرابط يحمل {count} مقياسًا وحدّ الطلب {max}؛ عُرضت الاثنا عشر الأولى.",
     dimensions: "الأبعاد",
     runQuery: "تشغيل الاستعلام",
     saveReport: "حفظ التقرير",
@@ -351,6 +354,10 @@ export const salesReports = {
     sort: "الترتيب",
     schedule: "جدولة التقرير",
     showChart: "عرض الرسم البياني",
+    configTitle: "الإعدادات",
+    configSubtitle: "حدّد المقاييس والتجميع وطريقة الترتيب، ثم اضغط «تشغيل الاستعلام»",
+    resultsTitle: "التقرير",
+    resultsCount: "{count} سطر",
   },
 
   pivot: {

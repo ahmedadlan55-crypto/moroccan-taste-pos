@@ -29,6 +29,7 @@ const { REGISTRY, lastBody, LINE_IDS } = vi.hoisted(() => {
     dimensions: [
       { id: "business_day", kind: "time", groupable: true, facts: ["order", "line"] },
       { id: "menu_item", kind: "attribute", groupable: true, facts: ["line"] },
+      { id: "vat_rate", kind: "attribute", groupable: true, facts: ["line"] },
     ],
   };
   return { REGISTRY, lastBody, LINE_IDS };
@@ -130,5 +131,52 @@ describe("the other two rules the planner enforces", () => {
     renderBuilder("/reports/sales/builder?b_m=orders&b_d1=business_day");
     const list = await openMetrics();
     expect(optionFor(list, "عدد الطلبات الملغاة")).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+/* ── what the adversarial audit of the shipped builder found ───────────────
+ * Two defects, both confirmed by three independent refutation passes.
+ */
+describe("regressions the audit caught", () => {
+  it("changing the PRIMARY grouping level actually changes it", async () => {
+    // Two back-to-back setSearchParams calls do not compose: react-router
+    // resolves each functional update against the location its own closure
+    // captured, so the b_d2 write was computed from the PRE-patch params and
+    // reinstated the old b_d1. The primary level could never be changed — the
+    // combobox snapped back and Run queried the old dimension.
+    renderBuilder("/reports/sales/builder?b_m=net_ex_vat&b_d1=business_day");
+    const control = await screen.findByTestId("group-by-control");
+    const level1 = within(control).getAllByRole("button")[0];
+    fireEvent.click(level1);
+    const list = await waitFor(() => screen.getByRole("listbox"));
+    // The clickable is the BUTTON inside li[role=option]; clicking the li does
+    // nothing, which is how this test first "reproduced" a defect of its own.
+    const opt = within(list).getAllByRole("option").find((o) => (o.textContent ?? "").includes("الصنف"))!;
+    fireEvent.click(opt.querySelector("button") ?? opt);
+
+    const run = await screen.findByRole("button", { name: /تشغيل/ });
+    fireEvent.click(run);
+    await waitFor(() => expect(lastBody.value?.dimensions?.[0]).toBe("menu_item"));
+  });
+
+  it("a THIRD grouping level reaches the query instead of being silently dropped", async () => {
+    // The control offers MAX_GROUP_DIMS levels; the page stored only b_d1/b_d2,
+    // so picking a third was accepted by the control, dropped on the way to the
+    // URL, and reverted on the next render — a no-op the user cannot see.
+    renderBuilder(
+      "/reports/sales/builder?b_m=net_ex_vat&b_d1=business_day&b_d2=menu_item&b_d3=vat_rate",
+    );
+    const run = await screen.findByRole("button", { name: /تشغيل/ });
+    fireEvent.click(run);
+    await waitFor(() => expect(lastBody.value?.dimensions).toHaveLength(3));
+    expect(lastBody.value!.dimensions).toEqual(["business_day", "menu_item", "vat_rate"]);
+  });
+
+  it("says so when a link's metric list was truncated to the ceiling", async () => {
+    // Dropping three columns silently leaves the recipient comparing a
+    // 12-column report against the 15-column one they were sent.
+    renderBuilder(`/reports/sales/builder?b_m=${LINE_IDS.join(",")}`);
+    const notice = await screen.findByTestId("builder-adjusted-notice");
+    expect(notice.textContent).toContain(String(LINE_IDS.length));
   });
 });

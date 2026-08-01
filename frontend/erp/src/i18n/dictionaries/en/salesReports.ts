@@ -9,6 +9,8 @@ export const salesReports = {
     subtitle: "The unified sales analytics center — metrics and dimensions from the certified fact store",
     tabsAria: "Sales analytics sections",
     pickerLabel: "Report",
+    filtersTitle: "Filters & settings",
+    filtersAria: "Report filters and settings",
   },
 
   report: {
@@ -331,6 +333,7 @@ export const salesReports = {
   builder: {
     metrics: "Metrics",
     atCap: "At the ceiling of {max} metrics per request — remove one to add another",
+    truncated: "The link carries {count} metrics and the request limit is {max}; the first twelve are shown.",
     dimensions: "Dimensions",
     runQuery: "Run query",
     saveReport: "Save report",
@@ -338,6 +341,10 @@ export const salesReports = {
     sort: "Sort",
     schedule: "Schedule report",
     showChart: "Show chart",
+    configTitle: "Configuration",
+    configSubtitle: "Pick the metrics, grouping, and sort order, then press “Run query”.",
+    resultsTitle: "Report",
+    resultsCount: "{count} rows",
   },
 
   pivot: {

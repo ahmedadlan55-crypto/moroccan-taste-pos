@@ -64,6 +64,16 @@
   --mt-text-muted:  #64748b;
   --mt-text-light:  #94a3b8;
 
+  /* Print ink. Paper is not a screen: the on-screen text colours are tuned
+     for a lit panel and read washed-out under toner, and the hairlines that
+     separate rows on screen disappear entirely. These are the only colours a
+     printed document uses. */
+  --mt-print-ink:    #18181b;   /* body + headings on paper */
+  --mt-print-rule:   #71717a;   /* header/footer rules      */
+  --mt-print-hair:   #d4d4d8;   /* row dividers             */
+  --mt-print-edge:   #a1a1aa;   /* outline of a flattened tinted block */
+  --mt-print-strong: #52525b;   /* the masthead rule        */
+
   /* Geometry — DO NOT change sm/md/lg/xl (205 uses across the app) */
   --mt-radius-xs:   4px;               /* Wave1 additive */
   --mt-radius-sm:   10px;

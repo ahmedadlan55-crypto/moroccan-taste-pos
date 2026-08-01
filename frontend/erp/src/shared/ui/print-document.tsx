@@ -30,7 +30,7 @@
 //   a clean typographic head. When a branding source exists it goes in HERE,
 //   once, and every report in the system gains it at the same moment.
 import type { ReactNode } from "react";
-import { formatDateTime } from "@/shared/lib";
+import { cn, formatDateTime } from "@/shared/lib";
 import { useT } from "@/i18n";
 
 export interface PrintDocumentProps {
@@ -42,15 +42,33 @@ export interface PrintDocumentProps {
   meta?: ReactNode;
   /** Fixed timestamp, for tests. Defaults to the moment of render. */
   printedAt?: string;
+  /**
+   * TRUE when this document lives in a dialog or drawer ON TOP of a page that
+   * is itself a printable document.
+   *
+   * Both are then `.print-document` and both print: pressing "print this lot
+   * card" emitted the one-lot card AND the entire lots catalogue underneath it.
+   * An overlay document wins — it is what the user is looking at and what the
+   * print button belongs to.
+   */
+  overlay?: boolean;
+  /**
+   * Layout classes for the wrapper. PrintDocument usually REPLACES a page's
+   * outer layout div, so it has to carry that div's classes — dropping them
+   * silently changes the screen layout while "only" fixing print.
+   */
+  className?: string;
   children: ReactNode;
 }
 
-export function PrintDocument({ title, subtitle, meta, printedAt, children }: PrintDocumentProps) {
+export function PrintDocument({ title, subtitle, meta, printedAt, overlay, className, children }: PrintDocumentProps) {
   const t = useT();
   const stamp = printedAt ?? new Date().toISOString();
 
   return (
-    <div className="print-document">
+    <div
+      className={cn("print-document", overlay && "print-document-overlay", className)}
+    >
       <header className="print-only print-masthead" data-testid="print-masthead">
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "8mm" }}>
           <h1 style={{ fontSize: "13pt", fontWeight: 800, margin: 0 }}>{title}</h1>
@@ -68,7 +86,7 @@ export function PrintDocument({ title, subtitle, meta, printedAt, children }: Pr
             gap: "8mm",
             marginTop: "1mm",
             paddingBottom: "1.5mm",
-            borderBottom: "0.4mm solid #52525b",
+            borderBottom: "0.4mm solid var(--mt-print-strong)",
             fontSize: "8pt",
             fontWeight: 600,
           }}

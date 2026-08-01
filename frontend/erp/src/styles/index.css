@@ -135,6 +135,19 @@
   body {
     background: theme(colors.white);
   }
+  /* The sales hub's two-column work area collapses to one column on paper.
+     Belt-and-braces, deliberately: the filter rail is `.no-print` (so the grid
+     ITEM is removed, not merely blanked) and the tracks are `xl:`-gated while
+     the print viewport is ~700px — but `display:none` does NOT remove a
+     declared grid TRACK. If either guard were ever lost, the report would be
+     placed in the 17rem track and print as a 300px-wide column. A grid
+     container must also never sit between <main> and .print-document while a
+     long report paginates — see the position:static note below for what that
+     class of failure looks like (a plausible page 1, everything after it
+     silently gone). */
+  [data-analytics-split] {
+    display: block !important;
+  }
   /* the shell reserves a right margin for the (hidden) sidebar — reclaim it */
   main {
     margin: 0 !important;
@@ -160,6 +173,19 @@
   }
   body:has(.print-document) .print-document,
   body:has(.print-document) .print-document * {
+    visibility: visible;
+  }
+  /* A dialog or drawer opened OVER a page that is itself a printable document
+     leaves two .print-document roots on the page, and both printed: "print this
+     lot card" emitted the one-lot card AND the whole lots catalogue underneath
+     it. The overlay wins — it is what the user is looking at and what the print
+     button belongs to. */
+  body:has(.print-document-overlay) .print-document:not(.print-document-overlay),
+  body:has(.print-document-overlay) .print-document:not(.print-document-overlay) * {
+    visibility: hidden;
+  }
+  body:has(.print-document-overlay) .print-document-overlay,
+  body:has(.print-document-overlay) .print-document-overlay * {
     visibility: visible;
   }
   /* NOT position:absolute. An absolutely-positioned element is taken out of the
@@ -206,15 +232,15 @@
   .print-document th,
   .print-document td {
     padding: 1.5mm 2mm !important;
-    border-bottom: 0.2mm solid #d4d4d8;
+    border-bottom: 0.2mm solid var(--mt-print-hair);
   }
   .print-document thead th {
-    border-bottom: 0.4mm solid #71717a;
-    color: #18181b !important;
+    border-bottom: 0.4mm solid var(--mt-print-rule);
+    color: var(--mt-print-ink) !important;
     font-weight: 800;
   }
   .print-document tfoot td {
-    border-top: 0.4mm solid #71717a;
+    border-top: 0.4mm solid var(--mt-print-rule);
     font-weight: 800;
   }
 
@@ -227,19 +253,69 @@
     max-height: none !important;
   }
 
-  /* Ink, not screen colour: tinted note/alert blocks turn into flat outlines so
-     a monochrome printer still shows them as distinct blocks. */
-  .print-document [class*="bg-amber"],
-  .print-document [class*="bg-rose"],
-  .print-document [class*="bg-blue"],
-  .print-document [class*="bg-slate"],
-  .print-document [class*="bg-teal"] {
+  /* …but a VIRTUALIZED table's scroller holds two absolutely-sized spacer rows
+     that stand in for the rows React never put in the DOM. Releasing the height
+     cap above lets those spacers lay out at their full pixel height: a 500-row
+     pivot emitted a 24,596px spacer — roughly two dozen entirely blank sheets
+     between the ~27 rendered rows and the end of the table. The rows behind the
+     spacer do not exist to print, so the honest thing is to drop the spacer and
+     print the rows that do. */
+  .print-document [data-virtual-spacer] {
+    display: none !important;
+  }
+
+  /* Ink, not screen colour: a tinted NOTE BLOCK becomes a flat outline so a
+     monochrome printer still shows it as a distinct block.
+
+     Scoped to blocks that carry a border AND a rounded corner — i.e. the note
+     and alert panels this is for. The first version matched `[class*="bg-…"]`
+     alone, and `class*=` also matches HOVER variants: every table row carrying
+     `hover:bg-slate-50` gained a printed 0.2mm box, so a plain data table came
+     out as a grid of outlined cells. It also flattened only five of the eight
+     tone families, so a green "approved" badge kept its colour on paper while
+     a red "shortage" badge lost its — inverting the emphasis exactly where it
+     matters. Badges are left alone entirely: their tint IS the information. */
+  .print-document [class*="rounded-xl"][class*="border-amber"],
+  .print-document [class*="rounded-xl"][class*="border-rose"],
+  .print-document [class*="rounded-xl"][class*="border-blue"],
+  .print-document [class*="rounded-xl"][class*="border-slate"],
+  .print-document [class*="rounded-xl"][class*="border-teal"],
+  .print-document [class*="rounded-xl"][class*="border-emerald"] {
     background: transparent !important;
-    border: 0.2mm solid #a1a1aa !important;
-    color: #18181b !important;
+    border: 0.2mm solid var(--mt-print-edge) !important;
+    color: var(--mt-print-ink) !important;
   }
   .print-document {
-    color: #18181b;
+    color: var(--mt-print-ink);
+  }
+
+  /* RESPONSIVE SPLIT: paper is not a wide screen.
+     The print viewport is roughly 700px, which is BELOW Tailwind's md (768px).
+     So a page built as `hidden md:block` desktop table + `md:hidden` mobile
+     card stack printed the CARDS: the expiry sheet lost its quantity column
+     entirely, which is the one number an expiry report exists to state.
+     On paper the full table always wins — there is no narrow-screen reader to
+     serve, and columns are exactly what a printed report is for. */
+  .print-document .hidden.md\:block,
+  .print-document .hidden.sm\:block,
+  .print-document .hidden.lg\:block {
+    display: block !important;
+  }
+  .print-document .hidden.md\:table {
+    display: table !important;
+  }
+  .print-document .md\:hidden,
+  .print-document .sm\:hidden,
+  .print-document .lg\:hidden {
+    display: none !important;
+  }
+
+  /* The on-screen page title block, INSIDE a printed document, repeats the
+     name the masthead already carries — and at a larger size than it. One
+     title per sheet. (A PageHeader OUTSIDE the document, as the sales hub
+     renders it, is already excluded by the visibility rule above.) */
+  .print-document [data-page-header] {
+    display: none !important;
   }
 
   /* The masthead repeats nothing — it is one block at the top of the document —

@@ -67,7 +67,7 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
         // The DRAWER chrome (title bar, close button, the page behind it) is
         // not part of the lot card. Wrapping the body puts only the card on
         // paper, with the lot number on it.
-        <PrintDocument title={t("inventoryRest.lots.detail.title", { lot: d.lotNumber })}>
+        <PrintDocument overlay title={t("inventoryRest.lots.detail.title", { lot: d.lotNumber })}>
           <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge>{lotStatusToLabel(d.lifecycleStatus)}</StatusBadge>

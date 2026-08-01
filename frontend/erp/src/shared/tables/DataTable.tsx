@@ -445,7 +445,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const bodyRows = (
     <tbody>
       {virtualActive && padTop > 0 && (
-        <tr aria-hidden="true">
+        <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
           <td colSpan={colSpan} style={{ height: padTop }} />
         </tr>
       )}
@@ -515,7 +515,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
         );
       })}
       {virtualActive && padBottom > 0 && (
-        <tr aria-hidden="true">
+        <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
           <td colSpan={colSpan} style={{ height: padBottom }} />
         </tr>
       )}

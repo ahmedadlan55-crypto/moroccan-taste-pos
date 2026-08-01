@@ -16,9 +16,31 @@ const _number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
 const _percentNum = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
-/** "1,234.50 ر.س" — English digits, Arabic currency label. */
+/**
+ * "1,234.50 ر.س" in Arabic, "SAR 1,234.50" in English.
+ *
+ * The suffix used to be the literal `ر.س`, unconditionally — so the English UI
+ * printed an Arabic currency symbol on every money figure in the product: every
+ * report, every KPI card, every invoice total. A number whose unit is written
+ * in a script the reader cannot read is not a formatting blemish; it is a
+ * figure they cannot safely act on.
+ *
+ * WHY IT READS THE DOCUMENT INSTEAD OF TAKING A `lang` ARGUMENT
+ *   There are 73 call sites across the ERP, most of them in `columns` arrays
+ *   and other non-hook contexts where `useLang()` cannot be called. Adding a
+ *   required parameter would be a 73-file change whose failure mode is a
+ *   forgotten call site silently reverting to the wrong locale. The provider
+ *   already stamps `document.documentElement.lang` on every language switch
+ *   (i18n/I18nProvider.tsx), so reading it here is the one place that cannot
+ *   drift. `i18n/format.ts` keeps the explicit `formatCurrency(n, lang)` for
+ *   code that does have the language in hand.
+ *
+ * Digits stay English in both languages — the approved numbering policy above.
+ */
 export function formatCurrency(value: number | null | undefined): string {
-  return `${_currencyNum.format(Number(value) || 0)} ر.س`;
+  const n = _currencyNum.format(Number(value) || 0);
+  const ar = typeof document === "undefined" || document.documentElement.lang !== "en";
+  return ar ? `${n} ر.س` : `SAR ${n}`;
 }
 
 export function formatNumber(value: number | null | undefined): string {

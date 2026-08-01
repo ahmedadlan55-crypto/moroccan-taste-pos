@@ -110,51 +110,11 @@ export const sales = {
     remaining: "Remaining {amount}",
   },
 
-  // ── Orders ──
-  orders: {
-    eyebrow: "Sales orders",
-    title: "Sales orders",
-    subtitle: "Draft → Confirm → Fulfill → Invoice.",
-    newBtn: "Sales order",
-    searchPlaceholder: "Search by order number or customer…",
-    emptyTitle: "No sales orders",
-    emptyBody: "Create a new sales order.",
-    credit: "Credit",
-    cash: "Cash",
-    col: {
-      number: "Order no.",
-      credit: "Credit?",
-    },
-    filter: {
-      draft: "Draft",
-      confirmed: "Confirmed",
-      fulfilled: "Fulfilled",
-      invoiced: "Invoiced",
-      cancelled: "Cancelled",
-    },
-    detail: {
-      back: "Back to orders",
-      creditOrder: "Credit sales order",
-      cashOrder: "Cash sales order",
-      invoice: "Invoice",
-      timeline: "Timeline",
-    },
-    form: {
-      eyebrow: "New sales order",
-      title: "Create sales order",
-      creditHint: "Credit sales require a customer with a credit limit",
-      orderDate: "Order date",
-      creditSale: "Credit sale",
-      serverCalcNote: "Totals are computed on the server. Confirming a credit sale applies the credit gate.",
-    },
-  },
-
   // ── Invoices ──
   invoices: {
     eyebrow: "Invoices",
     title: "Customer invoices",
     subtitle: "The single source for receivables — an issued invoice cannot be edited.",
-    newBtn: "New invoice",
     searchPlaceholder: "Search by invoice number or customer…",
     emptyTitle: "No invoices",
     emptyBody: "Create a new invoice to start.",
@@ -180,16 +140,6 @@ export const sales = {
       paid: "Paid",
       accountingRef: "Accounting reference",
       zatcaUuid: "ZATCA UUID",
-    },
-    form: {
-      eyebrow: "New invoice",
-      title: "Create customer invoice",
-      customerHint: "Optional for a cash invoice; required for credit sales",
-      issueDate: "Issue date",
-      lineDescAria: "Line {n} description",
-      lineQtyAria: "Line {n} quantity",
-      linePriceAria: "Line {n} price",
-      serverCalcNote: "Totals and VAT are computed on the server when saved (never trusted to the browser).",
     },
   },
 

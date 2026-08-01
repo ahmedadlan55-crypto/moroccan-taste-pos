@@ -123,23 +123,9 @@ router.post('/scan', async (req,res)=>{
       }
     } catch(_){}
 
-    // 3) Overdue contracts not invoiced
-    try {
-      const [overdueSched] = await db.query(`
-        SELECT id, contract_id, due_date, total_amount FROM contract_invoice_schedules
-        WHERE status='scheduled' AND due_date<DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        LIMIT 20`);
-      for (const o of overdueSched){
-        const id = _id('ALR');
-        await db.query(
-          `INSERT IGNORE INTO anomaly_alerts (id,severity,category,title,description,related_doc_type,related_doc_id,score,status)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
-          [id, 'medium', 'operational', 'فاتورة عقد متأخرة الإصدار',
-           `موعد الإصدار ${o.due_date} مضى ولم تُولَّد فاتورة (${o.total_amount} ر.س)`,
-           'contract_schedule', o.id, 70, 'open']);
-        found.push({type:'overdue_invoice_gen', id:o.id});
-      }
-    } catch(_){}
+    // 3) was "overdue contracts not invoiced" — it read contract_invoice_schedules,
+    //    a table that no longer exists. Its try/catch swallows errors, so leaving
+    //    the query in place would have looked healthy while silently finding nothing.
   } catch(e) { /* swallow */ }
   res.json({success:true, found_count: found.length, items: found});
 });

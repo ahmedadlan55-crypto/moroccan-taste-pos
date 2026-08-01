@@ -319,6 +319,16 @@ async function threeWay(db, { scope, from, to, branchIds } = {}) {
     }
     totals.paymentsWithoutOrder += c.exceptions.paymentsWithoutOrder.count;
     totals.ordersWithoutPayment += c.exceptions.ordersWithoutPayment.count;
+    // The till leg. The movement columns default to 0 per row (a day with no
+    // pay-outs really had none); the two MEASURED figures stay nullable.
+    totals.open_float = equations.sumMoney([totals.open_float, c.till.open_float || 0]);
+    totals.cash_sale = equations.sumMoney([totals.cash_sale, c.till.cash_sale || 0]);
+    totals.cash_refund = equations.sumMoney([totals.cash_refund, c.till.cash_refund || 0]);
+    totals.pay_in = equations.sumMoney([totals.pay_in, c.till.pay_in || 0]);
+    totals.pay_out = equations.sumMoney([totals.pay_out, c.till.pay_out || 0]);
+    totals.deposit = equations.sumMoney([totals.deposit, c.till.deposit || 0]);
+    totals.expected_cash = _addNullable(totals.expected_cash, c.till.expected_cash);
+    totals.counted = _addNullable(totals.counted, c.till.counted);
   }
 
   return { rows, totals, meta };
@@ -329,7 +339,24 @@ function _emptyTotals() {
     orders: 0, invoice_total: 0, payments_in: 0, payments_out: 0,
     salesVsPayments: 0, cashExpectedVsCounted: 0,
     paymentsWithoutOrder: 0, ordersWithoutPayment: 0,
+    // ── the till leg of the cash chain ──────────────────────────────────────
+    // Present per ROW since v2 but never summed, so the one screen that shows
+    // the money's whole path — invoiced → collected → drawer → deposited — had
+    // to add them up in the browser. Period figures belong in one place, next
+    // to the deltas that are computed from them.
+    //
+    // expected_cash / counted stay NULLABLE all the way up: a period in which
+    // no drawer was ever counted must read "—", not 0. A zero here is the
+    // claim that the drawer was counted and found empty.
+    open_float: 0, cash_sale: 0, cash_refund: 0, pay_in: 0, pay_out: 0, deposit: 0,
+    expected_cash: null, counted: null,
   };
+}
+
+/** Sum that keeps null meaning "never measured" rather than collapsing to 0. */
+function _addNullable(acc, v) {
+  if (v == null) return acc;
+  return equations.sumMoney([acc == null ? 0 : acc, v]);
 }
 
 module.exports = { threeWay, clampBranches, DRILL_CAP, MAX_RANGE_DAYS };

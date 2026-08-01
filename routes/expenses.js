@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // G-SALES hardening — expense writes post GL / open approval workflows: gated
@@ -215,7 +216,7 @@ router.post('/', requireCapability('finance.expenses.view'), async (req, res) =>
         });
 
         const post = await gl.postJournal(db, {
-          journalDate: expenseDate.toISOString().slice(0, 10),
+          journalDate: acctDate.toAccountingDate(expenseDate),
           description: 'Expense ' + expenseId + ' — ' + (description || category || ''),
           referenceType: 'Expense',
           referenceId: expenseId,

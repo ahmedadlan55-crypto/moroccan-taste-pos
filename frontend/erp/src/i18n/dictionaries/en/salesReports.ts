@@ -23,9 +23,18 @@ export const salesReports = {
     difference: "Difference",
     balanced: "Balanced",
     sectionSummary: "Sales statement",
-    sectionSummaryNote: "From gross product sales down to the invoice total, step by step",
+    sectionSummaryNote: "Every line on one tax basis; the “=” line is the exact arithmetic result of the lines above it",
+    basisExcl: "Basis: excluding VAT",
+    basisIncl: "Basis: including VAT",
+    basisNoteExcl:
+      "The discount is recorded VAT-inclusive with no tax split anywhere in the data, so it is already out of the lines below and is not a line of this statement — its value is under “Memo”.",
+    basisNoteIncl:
+      "The statement opens on what was actually invoiced — a figure summed independently, not reconstructed — and subtracts returns. The discount is recorded VAT-inclusive and is already out of the invoiced amount, so it sits under “Memo” rather than as a line here: an opening line rebuilt by adding the discount back, followed by subtracting that same discount, would close by construction and could never detect a wrong discount.",
+    memoTitle: "Memo — outside the statement above",
+    memoNote: "Shown for reference only; these do not enter the arithmetic above, and fees and rounding are not part of the invoice total",
+    memoControl: "Control line: must read zero",
     sectionTax: "Tax by category",
-    sectionTaxNote: "Taxable base and tax amount per category — the basis of the VAT return",
+    sectionTaxNote: "Taxable base and tax amount per category — always ex-VAT, whichever basis is selected above",
     sectionCollections: "Collections by payment method",
     sectionCollectionsNote: "Received, refunded and net collections, reconciled against the invoice total",
     sectionReturns: "Returns and voids",
@@ -55,6 +64,10 @@ export const salesReports = {
     items: {
       title: "Items",
       subtitle: "Item and category sales: quantities, net and contribution to total",
+    },
+    "item-sales": {
+      title: "Item Sales",
+      subtitle: "Daily breakdown per item per branch: quantity, gross, discount, returns and net — plus cost and profit for holders of the cost permission",
     },
     modifiers: {
       title: "Modifiers",
@@ -130,10 +143,12 @@ export const salesReports = {
     clearAll: "Clear all",
     saveView: "Save view",
     export: "Export",
+    print: "Print report",
     from: "From",
     to: "To",
     allBrands: "All brands",
     allBranches: "All branches",
+    allItems: "All items",
     allChannels: "All channels",
     allOrderTypes: "All order types",
     removeFilter: "Remove filter: {name}",
@@ -143,8 +158,11 @@ export const salesReports = {
       last7: "Last 7 days",
       last30: "Last 30 days",
       mtd: "Month to date",
+      lastMonth: "Last month",
       qtd: "Quarter to date",
+      lastQuarter: "Last quarter",
       ytd: "Year to date",
+      lastYear: "Last year",
       custom: "Custom",
     },
     compareModes: {
@@ -168,12 +186,20 @@ export const salesReports = {
   },
 
   metrics: {
-    gross_product_sales: "Gross product sales",
-    discounts_total: "Total discounts",
-    returns_net: "Net returns",
-    net_ex_vat: "Net sales (ex. VAT)",
-    vat_amount: "VAT amount",
-    invoice_total: "Invoice total",
+    // Every money label states its tax basis: a statement may not add two
+    // figures that sit on different ones, and the reader must be able to see
+    // which is which without opening the code. gross_product_sales is
+    // Σ d.gross_amount = net + VAT after the discount, i.e. the amount actually
+    // invoiced — neither "before discount" nor "before tax".
+    gross_product_sales: "Invoiced to customers (incl. VAT)",
+    discounts_total: "Discounts given (incl. VAT)",
+    discounts_line: "Line discount (incl. VAT)",
+    returns_net: "Returns (ex. VAT)",
+    returns_vat: "VAT on returns",
+    returns_cogs: "Cost of returns",
+    net_ex_vat: "Net sales, ex. VAT (after discount)",
+    vat_amount: "VAT on sales",
+    invoice_total: "Invoice totals as issued (incl. VAT)",
     orders: "Orders",
     guests: "Guests",
     discounted_orders: "Discounted orders",
@@ -182,20 +208,25 @@ export const salesReports = {
     voids_count: "Voided orders",
     voids_value: "Voided value",
     returns_count: "Returns count",
-    returns_value: "Returns value",
+    returns_value: "Returns (incl. VAT)",
     cogs: "Cost of goods sold",
+    uncosted_net: "Revenue with no defined cost",
     payments_in: "Payments in",
     refunds_out: "Refunds out",
     tips_total: "Total tips",
-    fees_total: "Total fees",
-    rounding_total: "Total rounding",
+    fees_total: "Fees recorded outside the invoice total",
+    rounding_total: "Rounding differences (outside the invoice total)",
     till_expected_cash: "Expected till cash",
     till_counted: "Counted cash",
     modifier_lines: "Modifier lines",
     modifier_qty: "Modifier quantity",
     budget_amount: "Budget amount",
     net_incl_vat: "Net sales (incl. VAT)",
-    net_product_sales: "Net product sales",
+    sales_before_discount: "Sales before discount (incl. VAT)",
+    net_product_sales: "Net sales after returns (incl. VAT)",
+    net_product_sales_ex_vat: "Net sales after returns (ex. VAT)",
+    net_vat: "Net output VAT (sales − returns)",
+    statement_variance: "Invoice headers vs lines",
     qty_net: "Net quantity",
     avg_ticket: "Average ticket",
     avg_items_per_order: "Avg items per order",
@@ -264,11 +295,15 @@ export const salesReports = {
     trigger: "Why this number?",
     sum: "Sum of the stored values within the selected period and filters.",
     count: "Count of the matching records within the selected period and filters.",
-    grossProductSales: "Sum of sale-line amounts before discounts and returns (ex. VAT).",
-    invoiceTotal: "Sum of invoice totals as issued (including VAT and fees).",
+    grossProductSales: "Sum of invoice-line amounts (net + VAT) after discount — the amount actually invoiced to the customer, VAT included.",
+    invoiceTotal: "Sum of invoice totals as issued (VAT included; fees and rounding are not part of it).",
     expectedCash: "Opening float + cash sales + pay-ins − pay-outs − cash refunds.",
     netInclVat: "Net sales (ex. VAT) + VAT amount.",
-    netProductSales: "Gross product sales − total discounts − net returns.",
+    salesBeforeDiscount: "Invoiced (incl. VAT) + discounts given — the discount is recorded VAT-inclusive only, so it is added back in the same space rather than divided by the tax rate.",
+    netSalesInclVat: "Invoiced (incl. VAT) − returns (incl. VAT).",
+    netSalesExVat: "Net sales (ex. VAT) − returns (ex. VAT).",
+    netVat: "VAT on sales less VAT credited back on returns; this is the figure a return carries, not VAT on sales alone.",
+    statementVariance: "Invoice headers − the sum of their lines. Zero whenever the line projection ran; non-zero exposes a header with no lines.",
     netQuantity: "Quantity sold − quantity returned.",
     avgTicket: "Net sales (ex. VAT) ÷ orders.",
     avgItemsPerOrder: "Quantity sold ÷ orders.",
@@ -295,6 +330,7 @@ export const salesReports = {
 
   builder: {
     metrics: "Metrics",
+    atCap: "At the ceiling of {max} metrics per request — remove one to add another",
     dimensions: "Dimensions",
     runQuery: "Run query",
     saveReport: "Save report",
@@ -302,11 +338,6 @@ export const salesReports = {
     sort: "Sort",
     schedule: "Schedule report",
     showChart: "Show chart",
-  },
-
-  placeholder: {
-    title: "Under construction",
-    body: "This page arrives with the upcoming pages wave — the filters above are live and will apply to it on arrival.",
   },
 
   pivot: {
@@ -327,8 +358,87 @@ export const salesReports = {
     topN: "Result count",
   },
 
+  filing: {
+    title: "VAT return detail",
+    note: "Base and tax on both the sales and returns sides, per category and rate. Net output VAT = VAT on sales less VAT credited back on returns; a return is credited in the period it was recorded, not the period of the original sale.",
+  },
+
+  chain: {
+    title: "Cash chain",
+    subtitle: "The whole path: billed → collected → in the drawer → counted",
+    stepBilled: "Billed",
+    stepCollected: "Collected",
+    stepDrawer: "Drawer",
+    invoiced: "Invoices issued",
+    received: "Received",
+    refunded: "Refunded",
+    collected: "Net collections",
+    openFloat: "Opening float",
+    cashSales: "Cash sales",
+    cashRefunds: "Cash refunds",
+    payIns: "Pay-ins",
+    payOuts: "Pay-outs",
+    deposits: "Deposits",
+    expected: "Expected cash",
+    counted: "Counted cash",
+    gapCollection: "Billed not yet collected",
+    gapCollectionNote: "Not necessarily an error: every credit sale sits here until it is paid. Review it as a receivable, not as a discrepancy.",
+    gapTill: "Till variance",
+    gapTillNote: "The one line that must read zero. Every halala of it is unexplained.",
+  },
+  print: {
+    printedAt: "Printed: {time}",
+  },
+
+  basis: {
+    title: "Basis of preparation",
+    period: "Period",
+    dateBasis: "Date basis",
+    dateBasisBusiness: "Business day (runs past midnight, per the branch setting)",
+    dateBasisCalendar: "Calendar day",
+    taxBasis: "Tax basis",
+    taxBasisIncl: "Including VAT",
+    taxBasisExcl: "Excluding VAT",
+    scope: "Scope",
+    scopeAll: "All brands, branches, channels and order types",
+    treatment: "Treatments",
+    treatmentBody:
+      "Voided orders are excluded from counts and values, except in a report that measures voiding itself, where they are necessarily included; returns are netted in the period they were recorded, not the period of the original sale; cost is the at-sale snapshot, never today's cost.",
+    dataAsOf: "Data as of",
+  },
+
+  groupBy: {
+    label: "Group by",
+    pickFirst: "Pick a grouping",
+    pickNext: "Add a grouping level",
+    kinds: {
+      time: "Time",
+      scope: "Scope",
+      attribute: "Attributes",
+      employee: "People",
+      constant: "Constant",
+    },
+    noSource: "No data source for this dimension yet",
+    blockedBy: "Unavailable with:",
+    alreadyUsed: "Used in another level",
+    voidPopulation: "Cannot sit beside a void metric: asking for it makes voided orders count in this one too",
+    truncatedNotice: "This grouping is deeper than one query can bound, so the following columns were not measured on some rows and read “—” rather than zero: {metrics}. Use fewer grouping levels or a narrower period.",
+    voidPopulationNotice: "A void metric in the same request makes voided orders count in: {metrics} — the figures above cover two different populations.",
+    droppedNotice: "Dropped grouping levels the chosen metrics cannot support: {dims}",
+    grandTotal: "Grand total",
+    grandTotalNote: "The grand total covers the whole period, not only the rows shown",
+  },
+
   orders: {
     colInvoice: "Invoice no.",
+  },
+
+  itemSales: {
+    costUndefined: "Cost not defined",
+    costUndefinedHint:
+      "This item has neither a recipe nor a manual cost, so no cost was captured at sale time — showing the stored zero would have printed a 100% margin.",
+    costUndefinedCount: "{count} rows carry no defined cost — cost, profit and margin are withheld for them",
+    rowLimit: "This report shows the first {count} rows only — narrow the period or filters to see the rest",
   },
 
   profitability: {
@@ -338,6 +448,8 @@ export const salesReports = {
       puzzles: "Puzzles",
       dogs: "Dogs",
     },
+    uncostedItems:
+      "{count} items have no defined cost — excluded from classification and from the medians, and the figures above overstate the business by their cost",
   },
 
   reconciliation: {
@@ -372,6 +484,9 @@ export const salesReports = {
     ready: "Export ready to download",
     failed: "Export failed",
     download: "Download export",
+    // Header of the display-name column the export adds next to a dimension's
+    // id column (menu_item → "Item", menu_item_label → "Item name").
+    nameColumn: "{name} name",
   },
 
   schedules: {

@@ -169,6 +169,8 @@ export function makeCtx(opts: MakeCtxOpts = {}): PosContextValue {
     channelId: null,
     activeChannelId: null,
     channelPricesUnavailable: false,
+    channelHealed: false,
+    dismissChannelHealed: vi.fn(),
     setChannel: vi.fn(),
     shiftId: opts.shiftId === undefined ? "SH-77" : opts.shiftId,
     shiftLoading: false,

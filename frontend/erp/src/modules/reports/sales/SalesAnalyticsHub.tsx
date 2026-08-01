@@ -17,9 +17,12 @@ import { LoadingState, PageHeader, PermissionDenied, StateShell } from "@/shared
 import { normalizeRoutePath } from "@/shared/lib";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { useCan, usePermissions, type Capability } from "@/shared/permissions";
+import { PrintArea } from "@/modules/accounting/components";
 import { useT } from "@/i18n";
 import { analyticsFilterCodec } from "./lib/filters";
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
+import { BasisOfPreparation } from "./components/BasisOfPreparation";
+import { PrintMasthead } from "./components/PrintMasthead";
 import { SectionPicker } from "./components/SectionPicker";
 import { SEGMENT_PAGES } from "./pages/registry";
 
@@ -45,12 +48,16 @@ const SECTION_GROUPS: readonly SectionGroupKey[] = [
   "advanced",
 ];
 
-/** The 16 hub segments, in menu order. Exported for tests + the pages. */
+/** The 17 hub segments, in menu order. Exported for tests + the pages. */
 export const SALES_HUB_SEGMENTS: readonly HubSegment[] = [
   { id: "executive", group: "overview" },
   { id: "explorer", group: "overview" },
   { id: "branches", group: "overview" },
   { id: "items", group: "products" },
+  // No `cap` even though it carries cost columns: the cost/profit/margin
+  // columns gate themselves inside the page, so an analyst without
+  // analytics.cost.view still gets the quantity/discount/returns report.
+  { id: "item-sales", group: "products" },
   { id: "modifiers", group: "products" },
   { id: "profitability", cap: "analytics.cost.view", group: "products" },
   { id: "payments", group: "money" },
@@ -139,12 +146,30 @@ export default function SalesAnalyticsHub() {
       {segmentDenied ? (
         <PermissionDenied />
       ) : (
-        <Suspense fallback={<LoadingState />}>
-          {(() => {
-            const Page = SEGMENT_PAGES[segment.id];
-            return <Page />;
-          })()}
-        </Suspense>
+        // PrintArea marks the routed report as THE printable document (see
+        // styles/index.css @media print): printing the hub then puts the
+        // report on paper, not the picker, the filter bar and the app shell.
+        <PrintArea>
+          {/* First thing on paper, nothing on screen: a printed sheet has to
+              say which report it is and for which period. On screen the page
+              header and the filter bar already do. */}
+          <PrintMasthead segment={segment.id} filters={filters} />
+          <Suspense fallback={<LoadingState />}>
+            {(() => {
+              const Page = SEGMENT_PAGES[segment.id];
+              return <Page />;
+            })()}
+          </Suspense>
+          {/* INSIDE PrintArea, deliberately. The filter bar states the basis on
+              screen and is .no-print, so a printed report used to carry none of
+              it: two printouts of "sales, July" can differ by a full day's
+              takings — the business day runs past midnight — with nothing on
+              either page to say which is which. Placing it here gives all 16
+              reports the disclosure without touching 16 files. */}
+          <div className="mt-4">
+            <BasisOfPreparation filters={filters} />
+          </div>
+        </PrintArea>
       )}
     </>
   );

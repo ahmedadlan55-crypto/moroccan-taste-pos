@@ -106,7 +106,6 @@ export const misc = {
       eyebrow: "{type} customer",
       statement: "Statement",
       recordCollection: "Record collection",
-      salesOrder: "Sales order",
       metric: {
         balance: "Balance (AR)",
         creditLimit: "Credit limit",

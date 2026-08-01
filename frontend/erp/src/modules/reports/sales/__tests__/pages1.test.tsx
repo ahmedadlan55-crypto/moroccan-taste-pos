@@ -6,11 +6,22 @@
 // stableStringify — stays real). One canned-fixture harness serves every page:
 // runAnalyticsQuery dispatches on the requested dimension signature, so each
 // page's several bodies each get a shaped result. Per page we assert the five
-// contract behaviors: KPI values from the fixture, the chart's accessible
-// <details> table alternative, EmptyState on empty rows, ErrorState on
+// contract behaviors: KPI values from the fixture, the dimension labels in the
+// page's own result table, EmptyState on empty rows, ErrorState on
 // failure, and the masked-metric "—" contract (masked value NEVER rendered).
+//
+// REQUIREMENT CHANGE (in-report charts removed). Every wave-1 page used to end
+// in a lazily-imported recharts ChartCard, and this file's "chart" test read
+// the dimension label out of that card's accessible <details> table
+// alternative. The reports are now decision tables (charts live on the
+// dashboard), so the ChartCard and its <details> are gone and the SAME fixture
+// label is asserted where it now renders: the page's own PivotTable /
+// DataTable. Nothing is relaxed or dropped -- the probes are unchanged, the
+// grouped pivots additionally expand to reach their leaf label, and each
+// chart-free page now also proves the chart is really gone (zero <details>).
+// Hours is the one exception and documents why below.
 import type { ComponentType } from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -275,11 +286,23 @@ function renderPage(Comp: ComponentType, path: string) {
   );
 }
 
-/** True when any chart's <details> accessible alternative contains the probe. */
+/** True when a <details> accessible table alternative contains the probe. */
 function probeInDetails(probe: string): boolean {
   return [...document.querySelectorAll("details")].some(
     (d) => within(d as HTMLElement).queryAllByText(probe).length > 0,
   );
+}
+
+/**
+ * Expand the collapsed pivot group whose label is `groupLabel`.
+ * PivotTable is caller-controlled and every page seeds `expanded` empty, so a
+ * grouped result paints its level-0 subtotal rows only; the leaf dimension
+ * label lives one click away behind that row's aria-expanded=false expander.
+ */
+function expandPivotGroup(groupLabel: string): void {
+  const row = screen.getAllByText(groupLabel)[0]?.closest("tr");
+  expect(row).not.toBeNull();
+  fireEvent.click(within(row as HTMLElement).getByRole("button", { expanded: false }));
 }
 
 interface PageSpec {
@@ -288,13 +311,25 @@ interface PageSpec {
   path: string;
   /** Fixture-derived KPI values that must render in the KPI row wave. */
   kpiProbes: string[];
-  /** A label that must appear inside a chart's <details> table alternative. */
-  chartProbe: string;
   /**
-   * Chart-free pages (the executive report is deliberately one) prove the same
-   * thing through their own tables instead of a chart's <details> fallback.
+   * A fixture dimension label the page's own result table must render on first
+   * paint (formerly the label probed inside the chart's <details> fallback).
    */
-  chartless?: true;
+  tableProbe: string;
+  /**
+   * Grouped pivot pages paint collapsed, so `tableProbe` is the group label and
+   * this is the LEAF label that must appear once the group is expanded. Named
+   * separately so the original leaf probe stays asserted instead of being
+   * quietly downgraded to the group row.
+   */
+  leafProbe?: string;
+  /**
+   * Hours only. Its weekday x hour Heatmap is a data grid, not a plot (cells
+   * carry values and drill), so it deliberately survived the chart removal and
+   * keeps its accessible <details> table. This is the label that must appear
+   * inside it. Every OTHER page asserts zero <details> instead.
+   */
+  detailsProbe?: string;
   /** Metric to mask; its formatted UNMASKED value must then be absent. */
   maskMetric: string;
   maskedValue: string;
@@ -306,8 +341,7 @@ const PAGES: PageSpec[] = [
     Comp: Executive,
     path: "/reports/sales/executive",
     kpiProbes: ["1,000.00 ر.س", "1,500.00 ر.س", "40", "25.00 ر.س"],
-    chartProbe: "2026-07-01",
-    chartless: true,
+    tableProbe: "2026-07-01",
     maskMetric: "avg_ticket",
     maskedValue: "25.00 ر.س",
   },
@@ -316,7 +350,9 @@ const PAGES: PageSpec[] = [
     Comp: Explorer,
     path: "/reports/sales/explorer",
     kpiProbes: ["1,000.00 ر.س", "40"],
-    chartProbe: "Branch A",
+    // Default `by` is branch with no second dimension, so the pivot's level-0
+    // rows ARE the leaves: no expansion needed to reach the branch label.
+    tableProbe: "Branch A",
     maskMetric: "orders",
     maskedValue: "40",
   },
@@ -325,7 +361,9 @@ const PAGES: PageSpec[] = [
     Comp: Items,
     path: "/reports/sales/items",
     kpiProbes: ["500", "1,500.00 ر.س", "1,000.00 ر.س"],
-    chartProbe: "Item A",
+    // category > menu_item: the category group row paints, "Item A" is its leaf.
+    tableProbe: "Category A",
+    leafProbe: "Item A",
     maskMetric: "net_ex_vat",
     maskedValue: "1,000.00 ر.س",
   },
@@ -334,7 +372,7 @@ const PAGES: PageSpec[] = [
     Comp: Modifiers,
     path: "/reports/sales/modifiers",
     kpiProbes: ["210", "1.4", "35%"],
-    chartProbe: "Combo Kind",
+    tableProbe: "Combo Kind",
     maskMetric: "attach_rate",
     maskedValue: "35%",
   },
@@ -343,7 +381,7 @@ const PAGES: PageSpec[] = [
     Comp: Payments,
     path: "/reports/sales/payments",
     kpiProbes: ["1,200.00 ر.س", "30.00 ر.س", "1,170.00 ر.س"],
-    chartProbe: "Cash",
+    tableProbe: "Cash",
     maskMetric: "refunds_out",
     maskedValue: "30.00 ر.س",
   },
@@ -352,7 +390,7 @@ const PAGES: PageSpec[] = [
     Comp: Cashiers,
     path: "/reports/sales/cashiers",
     kpiProbes: ["40", "1,000.00 ر.س", "25.00 ر.س"],
-    chartProbe: "Cashier A",
+    tableProbe: "Cashier A",
     maskMetric: "avg_ticket",
     maskedValue: "25.00 ر.س",
   },
@@ -361,7 +399,9 @@ const PAGES: PageSpec[] = [
     Comp: Branches,
     path: "/reports/sales/branches",
     kpiProbes: ["1,000.00 ر.س", "40"],
-    chartProbe: "Branch A",
+    // brand > branch: the brand group row paints, "Branch A" is its leaf.
+    tableProbe: "Brand X",
+    leafProbe: "Branch A",
     maskMetric: "orders",
     maskedValue: "40",
   },
@@ -370,7 +410,10 @@ const PAGES: PageSpec[] = [
     Comp: Hours,
     path: "/reports/sales/hours",
     kpiProbes: ["1,000.00 ر.س", "40"],
-    chartProbe: "Mon",
+    // The hour DataTable carries the hour label; the surviving Heatmap's
+    // <details> carries the weekday one (see detailsProbe above).
+    tableProbe: "10:00",
+    detailsProbe: "Mon",
     maskMetric: "net_ex_vat",
     maskedValue: "1,000.00 ر.س",
   },
@@ -383,7 +426,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, chartless, maskMetric, maskedValue }) => {
+describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, tableProbe, leafProbe, detailsProbe, maskMetric, maskedValue }) => {
   // The per-test budget MUST exceed the inner findBy wait. vitest's default
   // testTimeout is 5000ms, so `findByTestId(..., {timeout: 5000})` inside a
   // default-budget test can never actually consume its 5s: the test-level
@@ -402,22 +445,34 @@ describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, chartProbe, chartle
   }, 20000);
 
   it(
-    chartless
-      ? "renders the dimension label in its own report table"
-      : "renders the chart's accessible table alternative",
+    "renders the dimension label in its own report table",
     async () => {
       renderPage(Comp, path);
       await screen.findByTestId("kpi-row", undefined, { timeout: 5000 });
-      if (chartless) {
-        // No chart to fall back from — the report's daily table carries it.
-        await waitFor(() => expect(screen.getAllByText(chartProbe).length).toBeGreaterThan(0), {
+      // The result table paints from the same query as the KPI row; the wait
+      // budget is the one the lazy chart kit used to need, kept as headroom.
+      await waitFor(() => expect(screen.getAllByText(tableProbe).length).toBeGreaterThan(0), {
+        timeout: 15000,
+      });
+
+      if (leafProbe) {
+        // Grouped pivot: collapsed on first paint, so the leaf must be absent
+        // until its group is expanded, then present.
+        expect(screen.queryAllByText(leafProbe)).toHaveLength(0);
+        expandPivotGroup(tableProbe);
+        await waitFor(() => expect(screen.getAllByText(leafProbe).length).toBeGreaterThan(0), {
           timeout: 15000,
         });
-        expect(document.querySelectorAll("details")).toHaveLength(0);
+      }
+
+      if (detailsProbe) {
+        // Hours keeps the Heatmap's accessible <details> table (a data grid,
+        // not a plot) — the label must still be reachable inside it.
+        await waitFor(() => expect(probeInDetails(detailsProbe)).toBe(true), { timeout: 15000 });
         return;
       }
-      // The chart kit (recharts + ChartCard) loads lazily — allow it to arrive.
-      await waitFor(() => expect(probeInDetails(chartProbe)).toBe(true), { timeout: 15000 });
+      // Chart removal, asserted: no ChartCard means no <details> fallback at all.
+      expect(document.querySelectorAll("details")).toHaveLength(0);
     },
     20000,
   );

@@ -1,17 +1,17 @@
 // Sales Analytics Hub — "branches" page.
 //
 // Brand → branch pivot (API subtotals win) over net / orders — plus the growth
-// metric column when a compare mode is on — and a grouped current-vs-compare
-// bar per branch. A BRANCH (leaf) row click drills OUT: it navigates to the
-// explorer segment with branchId set and by=business_day, preserving every
-// current filter param (the navigate itself is the history push). Brand rows
-// toggle their group.
-import { lazy, Suspense, useMemo, useState, type ReactElement } from "react";
+// metric column when a compare mode is on. A BRANCH (leaf) row click drills
+// OUT: it navigates to the explorer segment with branchId set and
+// by=business_day, preserving every current filter param (the navigate itself
+// is the history push). Brand rows toggle their group.
+//
+// No chart lives here: a report is a decision table, so the branch bar was
+// removed — charts belong on the dashboard.
+import { useMemo, useState } from "react";
 import { Coins, ShoppingBag } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
+import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
 import { formatCurrency, formatNumber } from "@/shared/lib";
@@ -19,7 +19,7 @@ import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
-  displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -30,24 +30,19 @@ import { PivotTable, type PivotMeasure } from "../components/PivotTable";
 import type { FlatPivotRow } from "../lib/pivot";
 
 const SEGMENT = "branches";
+// E2E-wave fix: `growth` is a PARAMETERIZED registry metric — requesting it
+// plainly is a planner VALIDATION_ERROR (422), so with a compare mode on this
+// page errored on load. The growth column now derives client-side from the
+// compare envelope's per-row delta (see the `rows` mapping below).
+const METRICS = ["net_ex_vat", "orders"] as const;
 const DIMS = ["brand", "branch"] as const;
 
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...METRICS],
+  dimensions: [...DIMS],
+  sort: [{ by: "net_ex_vat", dir: "desc" }],
+}));
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -101,8 +96,6 @@ const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
 export default function Branches() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -110,17 +103,12 @@ export default function Branches() {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const hasCompare = filters.compare !== "none";
-  // E2E-wave fix: `growth` is a PARAMETERIZED registry metric — requesting it
-  // plainly is a planner VALIDATION_ERROR (422), so with a compare mode on
-  // this page errored on load. The growth column now derives client-side from
-  // the compare envelope's per-row delta (see pivotRows below).
-  const metricIds = ["net_ex_vat", "orders"];
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
   const body: AnalyticsQueryBody = {
     ...base,
-    metrics: metricIds,
+    metrics: [...METRICS],
     dimensions: [...DIMS],
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
@@ -130,19 +118,6 @@ export default function Branches() {
   // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
-
-  const branchBars = useMemo(
-    () =>
-      (query.data?.rows ?? [])
-        .map((row) => ({
-          key: String(row.keys[1] ?? ""),
-          label: row.labels[1] ?? String(row.keys[1] ?? ""),
-          net: displayMetric(row, "net_ex_vat"),
-          compareNet: typeof row.compare?.net_ex_vat === "number" ? row.compare.net_ex_vat : null,
-        }))
-        .filter((r) => r.net != null || r.compareNet != null),
-    [query.data],
-  );
 
   const measures = useMemo<PivotMeasure[]>(() => {
     const list: PivotMeasure[] = [
@@ -172,7 +147,7 @@ export default function Branches() {
 
   const srcRows = query.data?.rows ?? [];
   if (srcRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
-  // Client-derived growth column (see metricIds note): the compare envelope
+  // Client-derived growth column (see the METRICS note): the compare envelope
   // already carries the per-row growth % as delta.net_ex_vat.
   const rows = hasCompare
     ? srcRows.map((r) => ({
@@ -228,48 +203,6 @@ export default function Branches() {
           );
         })}
       </div>
-
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t("salesReports.metrics.net_ex_vat")}
-              subtitle={t("salesReports.dims.branch")}
-              isEmpty={branchBars.length === 0}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.branch")}`}
-              tableColumns={[
-                { key: "label", label: t("salesReports.dims.branch") },
-                { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
-                ...(hasCompare ? [{ key: "compareText", label: t("salesReports.topbar.compare") }] : []),
-              ]}
-              tableRows={branchBars.map((r) => ({
-                label: r.label,
-                netText: r.net == null ? "—" : formatCurrency(r.net),
-                compareText: r.compareNet == null ? "—" : formatCurrency(r.compareNet),
-              }))}
-            >
-              <R.BarChart data={branchBars} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterCurrency(value)} />
-                {hasCompare && <R.Legend />}
-                <R.Bar dataKey="net" name={t("salesReports.metrics.net_ex_vat")} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-                {hasCompare && (
-                  <R.Bar
-                    dataKey="compareNet"
-                    name={t("salesReports.topbar.compare")}
-                    fill={palette.series[2]}
-                    radius={[6, 6, 0, 0]}
-                  />
-                )}
-              </R.BarChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
 
       <PivotTable
         rows={rows}

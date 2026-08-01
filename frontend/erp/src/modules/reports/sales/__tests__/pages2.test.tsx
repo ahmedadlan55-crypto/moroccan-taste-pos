@@ -400,6 +400,68 @@ describe("Profitability page", () => {
     expectCellTone("10%", "bg-rose-50");
   });
 
+  // An item with neither a recipe nor a manual cost snapshots cost 0.00, which
+  // the server turns into margin_pct = 100. Unguarded, that item lands top-right
+  // of the quadrant grid and is labelled a STAR — the page tells the owner to
+  // push the one item it understands least. It also drags BOTH medians, which
+  // re-classifies every other item around it. This pins both effects.
+  it("never crowns an uncosted item a Star, and keeps it out of the medians", async () => {
+    dispatch({
+      [`${M}@menu_item`]: result([
+        row(["a"], ["برجر"], { qty_sold: 100, net_ex_vat: 2000, cogs: 800, gross_profit: 1200, margin_pct: 60 }),
+        row(["b"], ["شاورما"], { qty_sold: 80, net_ex_vat: 1000, cogs: 900, gross_profit: 100, margin_pct: 5 }),
+        // no recipe, no manual cost → cost_snapshot 0.00 → phantom 100% margin
+        row(["c"], ["ماء"], { qty_sold: 90, net_ex_vat: 1000, cogs: 0, gross_profit: 1000, margin_pct: 100 }),
+        row(["d"], ["سلطة"], { qty_sold: 10, net_ex_vat: 200, cogs: 180, gross_profit: 20, margin_pct: 15 }),
+      ]),
+    });
+
+    renderPage(<ProfitabilityPage />, "/reports/sales/profitability");
+    await screen.findAllByText("ماء");
+
+    // DataTable renders a desktop <table> AND a mobile card list, so every label
+    // matches more than once — scope each assertion to the real table row.
+    const tableRow = (label: string): HTMLElement => {
+      const tr = screen
+        .getAllByText(label)
+        .map((el) => el.closest("tr"))
+        .find((el): el is HTMLTableRowElement => !!el);
+      expect(tr, `no table row for ${label}`).toBeTruthy();
+      return tr as HTMLElement;
+    };
+
+    // 1. The uncosted item is flagged and left unclassified.
+    const uncosted = tableRow("ماء");
+    expect(within(uncosted).getByText("تكلفة غير مُعرَّفة")).toBeInTheDocument();
+    expect(within(uncosted).queryByText("النجوم")).not.toBeInTheDocument();
+    // Cost / profit / margin are blanked — by CELL, not by text: net_ex_vat is
+    // still 1,000.00 and legitimately printed, because revenue IS known. It is
+    // only the three cost-derived columns that the system cannot stand behind.
+    // Columns: item | qty | net | cogs | profit | margin | class.
+    const cells = within(uncosted).getAllByRole("cell");
+    expect(cells[2]).toHaveTextContent("1,000.00"); // net — known, still shown
+    expect(cells[3]).toHaveTextContent("—"); // cogs (+ the badge asserted above)
+    expect(cells[4]).toHaveTextContent("—"); // gross_profit, NOT 1,000.00
+    expect(cells[5]).toHaveTextContent("—"); // margin_pct, NOT 100%
+    expect(cells[5]).not.toHaveTextContent("100%");
+    expect(cells[6]).toHaveTextContent("—"); // quadrant class — unclassified
+
+    // 2. Exactly one item is a Star in the table — the phantom would make two.
+    const starRows = screen
+      .getAllByText("النجوم")
+      .map((el) => el.closest("tr"))
+      .filter((el): el is HTMLTableRowElement => !!el);
+    expect(starRows).toHaveLength(1);
+    expect(starRows[0]).toBe(tableRow("برجر"));
+
+    // 3. Medians are computed WITHOUT it: with the phantom in the sample the
+    //    margin median rises from 15 to 37.5 and شاورما is demoted to a Dog.
+    expect(within(tableRow("شاورما")).getByText("الأحصنة العاملة")).toBeInTheDocument();
+
+    // 4. The KPI cards sum the whole window, so the gap is named explicitly.
+    await screen.findByTestId("uncosted-notice");
+  });
+
   it("masks cogs as '—' and shows the cost-provenance notice when cogs is masked", async () => {
     dispatch({
       [`${M}@menu_item`]: result(

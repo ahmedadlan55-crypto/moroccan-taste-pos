@@ -86,10 +86,20 @@ function renderStore() {
   );
 }
 
+/**
+ * Stubs the response EXACTLY as routes/pos-v2.js:1027 sends it —
+ * `{ success: true, data: <catalog> }`.
+ *
+ * It used to return the bare catalog, a shape the server has never produced.
+ * That single fixture detail is why an entire suite stayed green while the real
+ * channel path shipped a catalog with no items, no channels and no payment
+ * methods to production: the code was only ever tested against a wire format
+ * that did not exist. See state/__tests__/channelEnvelope.test.tsx.
+ */
 function stubChannelFetch(catalog: Catalog | Error) {
   const fn = vi.fn(async () => {
     if (catalog instanceof Error) throw catalog;
-    return { ok: true, status: 200, json: async () => catalog };
+    return { ok: true, status: 200, json: async () => ({ success: true, data: catalog }) };
   });
   vi.stubGlobal("fetch", fn as unknown as typeof fetch);
   return fn;

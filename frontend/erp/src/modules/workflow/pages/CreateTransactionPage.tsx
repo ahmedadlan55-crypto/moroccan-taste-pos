@@ -274,7 +274,7 @@ export function CreateTransactionPage() {
           <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
             <Clock3 className="h-4 w-4 text-teal-600" aria-hidden="true" />
             {draft.updatedAt
-              ? t("workflow.create.localSavedAt", { time: new Date(draft.updatedAt).toLocaleTimeString(rtl ? "ar-SA" : "en-US", { hour: "2-digit", minute: "2-digit" }) })
+              ? t("workflow.create.localSavedAt", { time: new Date(draft.updatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) })
               : t("workflow.create.localAutosave")}
           </div>
         </section>

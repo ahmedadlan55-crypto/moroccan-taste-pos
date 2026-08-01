@@ -27,10 +27,10 @@ vi.mock("@/app/navigation/manifest", () => ({
       label: "nav.groups.sales",
       items: [
         {
-          id: "sales-orders",
-          path: "/sales/orders",
-          label: "nav.items.sl-orders",
-          icon: "ShoppingCart",
+          id: "sales-invoices",
+          path: "/sales/invoices",
+          label: "nav.items.sl-invoices",
+          icon: "FileText",
           module: "sales",
         },
       ],
@@ -82,9 +82,9 @@ describe("Sidebar section navigation", () => {
       ),
     );
     expect(screen.getByTestId("location")).toHaveTextContent("/overview");
-    expect(screen.getByRole("link", { name: "الطلبات" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "الفواتير" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "المبيعات" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/sales/orders"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/sales/invoices"));
   });
 });

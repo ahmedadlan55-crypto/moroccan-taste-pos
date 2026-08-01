@@ -118,7 +118,6 @@ export const misc = {
       eyebrow: "عميل {type}",
       statement: "كشف حساب",
       recordCollection: "تسجيل تحصيل",
-      salesOrder: "أمر بيع",
       metric: {
         balance: "الرصيد (ذمم)",
         creditLimit: "حد الائتمان",

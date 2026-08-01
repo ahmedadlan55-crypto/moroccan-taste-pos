@@ -6,7 +6,7 @@
  *   auth-token-attach-fetch — every api call carries Authorization: Bearer <pos_token>
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TOKEN_KEY, currentUser, decodeUser, getToken, isSupervisor } from "../auth";
+import { TOKEN_KEY, currentUser, decodeUser, displayNameOf, getToken, isSupervisor } from "../auth";
 import { getServerFlags } from "../api";
 
 /** Build an unsigned JWT-shaped token with a UTF-8 JSON payload (base64url). */
@@ -27,7 +27,7 @@ afterEach(() => {
 describe("auth-get-current-user — decodeUser reads the shared pos_token", () => {
   it("decodes username + role from the payload", () => {
     const u = decodeUser(makeToken({ username: "kashier1", role: "cashier" }));
-    expect(u).toEqual({ username: "kashier1", role: "cashier" });
+    expect(u).toEqual({ username: "kashier1", role: "cashier", name: "kashier1" });
   });
 
   it("decodes ARABIC usernames (UTF-8 payload)", () => {
@@ -50,7 +50,62 @@ describe("auth-get-current-user — decodeUser reads the shared pos_token", () =
     expect(TOKEN_KEY).toBe("pos_token");
     localStorage.setItem(TOKEN_KEY, makeToken({ username: "kashier1", role: "cashier" }));
     expect(getToken()).not.toBeNull();
-    expect(currentUser()).toEqual({ username: "kashier1", role: "cashier" });
+    expect(currentUser()).toEqual({ username: "kashier1", role: "cashier", name: "kashier1" });
+  });
+});
+
+/** The owner's complaint: the receipt named him "2004" — his login id — because
+ *  the token carried no name and the till has no other source (it re-derives the
+ *  user from the token on every mount, and an OFFLINE sale cannot ask the
+ *  server). routes/auth.js now signs a `displayName` claim, already resolved
+ *  server-side through users.full_name → settings.user_meta → username by
+ *  lib/displayName.js. */
+describe("cashier display name — the JWT displayName claim", () => {
+  it("a token WITH a name: decodeUser keeps it, username stays the login id", () => {
+    const u = decodeUser(makeToken({ username: "2004", role: "cashier", displayName: "أحمد عدلان" }));
+    expect(u).toEqual({ username: "2004", role: "cashier", name: "أحمد عدلان" });
+    expect(displayNameOf(u)).toBe("أحمد عدلان");
+  });
+
+  it("THE DEPLOY CASE — a token WITHOUT the claim falls back to the username", () => {
+    // Every session live in localStorage the moment this ships was minted
+    // without the claim and stays valid for up to 24h. It must keep working and
+    // print exactly what it printed yesterday, never a blank "served by".
+    const u = decodeUser(makeToken({ username: "2004", role: "cashier" }));
+    expect(u?.name).toBe("2004");
+    expect(displayNameOf(u)).toBe("2004");
+  });
+
+  it("an empty or whitespace-only claim falls back to the username too", () => {
+    expect(decodeUser(makeToken({ username: "2004", role: "cashier", displayName: "" }))?.name).toBe("2004");
+    expect(decodeUser(makeToken({ username: "2004", role: "cashier", displayName: "   " }))?.name).toBe("2004");
+    expect(decodeUser(makeToken({ username: "2004", role: "cashier", displayName: "\t\n" }))?.name).toBe("2004");
+  });
+
+  it("a padded claim is trimmed — no leading spaces on thermal paper", () => {
+    expect(
+      decodeUser(makeToken({ username: "2004", role: "cashier", displayName: "  أحمد عدلان  " }))?.name,
+    ).toBe("أحمد عدلان");
+  });
+
+  it("a non-string claim is ignored (never printed as [object Object])", () => {
+    expect(decodeUser(makeToken({ username: "2004", displayName: { ar: "أحمد" } }))?.name).toBe("2004");
+    expect(decodeUser(makeToken({ username: "2004", displayName: 42 }))?.name).toBe("2004");
+  });
+
+  it("the claim is read from `displayName`, NOT `name` — `name` is a USERNAME fallback", () => {
+    // decodeUser treats a bare `name` claim as a username (legacy tokens), so
+    // reusing that key for a display name would let it masquerade as a login id
+    // and would then be what every API scopes on.
+    const u = decodeUser(makeToken({ role: "cashier", name: "legacy-login-id" }));
+    expect(u?.username).toBe("legacy-login-id");
+  });
+
+  it("displayNameOf never returns blank for a user with a username", () => {
+    expect(displayNameOf({ username: "2004", role: "cashier" })).toBe("2004");
+    expect(displayNameOf({ username: "2004", role: "cashier", name: "  " })).toBe("2004");
+    expect(displayNameOf(null)).toBe("");
+    expect(displayNameOf(undefined)).toBe("");
   });
 });
 

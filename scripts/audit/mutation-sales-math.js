@@ -123,11 +123,41 @@ const CATALOG = [
     find: 'for (const v of values || []) total += toMinor(v);',
     replace: 'for (const v of values || []) total += Number(v);',
   },
+  // EQ-05 targeted netProductSales — now DELETED. That function mixed three
+  // tax bases in one subtraction (incl-VAT gross − incl-VAT discounts − ex-VAT
+  // returns) and was the exact defect the statement rewrite removed. A mutant
+  // whose `find` string no longer exists in the source is not a passing check:
+  // it is a permanently red gate. Replaced by one mutant per SURVIVING money
+  // function, so the coverage rule at the top of this catalog still holds.
   {
-    id: 'EQ-05', target: 'equations',
-    description: 'netProductSales: discounts ADDED instead of subtracted (− → +)',
-    find: 'return fromMinor(toMinor(gross) - toMinor(discounts) - toMinor(returnsNet));',
-    replace: 'return fromMinor(toMinor(gross) + toMinor(discounts) - toMinor(returnsNet));',
+    id: 'EQ-05a', target: 'equations',
+    description: 'netSalesInclVat: returns ADDED instead of subtracted (− → +)',
+    find: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(returnsInclVat));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) + toMinor(returnsInclVat));',
+  },
+  {
+    id: 'EQ-05b', target: 'equations',
+    description: 'netSalesExVat: returns ADDED instead of subtracted (− → +)',
+    find: 'return fromMinor(toMinor(netExVat) - toMinor(returnsNet));',
+    replace: 'return fromMinor(toMinor(netExVat) + toMinor(returnsNet));',
+  },
+  {
+    id: 'EQ-05c', target: 'equations',
+    description: 'salesBeforeDiscount: discount SUBTRACTED instead of added (+ → −)',
+    find: 'return fromMinor(toMinor(invoicedInclVat) + toMinor(discounts));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(discounts));',
+  },
+  {
+    id: 'EQ-05d', target: 'equations',
+    description: 'statementVariance: operands swapped, so a real gap reports with the wrong sign',
+    find: 'return fromMinor(toMinor(invoiceTotal) - toMinor(invoicedInclVat));',
+    replace: 'return fromMinor(toMinor(invoicedInclVat) - toMinor(invoiceTotal));',
+  },
+  {
+    id: 'EQ-05e', target: 'equations',
+    description: 'netVat: returns VAT ADDED instead of credited back (− → +)',
+    find: 'return fromMinor(toMinor(vatOnSales) - toMinor(vatOnReturns));',
+    replace: 'return fromMinor(toMinor(vatOnSales) + toMinor(vatOnReturns));',
   },
   {
     id: 'EQ-06', target: 'equations',
@@ -228,8 +258,14 @@ const CATALOG = [
   {
     id: 'EQ-22', target: 'equations',
     description: 'discountPct: numerator left in SAR while the denominator is halalas (unit mismatch, 100× understated)',
-    find: '  return round2((toMinor(discounts) / g) * 100);',
-    replace: '  return round2((Number(discounts) / g) * 100);',
+    find: '  return round2((toMinor(discounts) / before) * 100);',
+    replace: '  return round2((Number(discounts) / before) * 100);',
+  },
+  {
+    id: 'EQ-22b', target: 'equations',
+    description: 'discountPct: denominator back to the POST-discount invoiced figure (D/(S−D) — the shipped defect)',
+    find: '  const before = toMinor(invoicedInclVat) + toMinor(discounts);',
+    replace: '  const before = toMinor(invoicedInclVat);',
   },
   {
     id: 'EQ-23', target: 'equations',
@@ -447,21 +483,58 @@ function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
+/**
+ * LINE ENDINGS ARE NOT PART OF THE MUTANT.
+ *
+ * A dozen catalog entries are MULTI-LINE snippets written with "\n". The
+ * targets are checked out through git on Windows, where core.autocrlf hands
+ * back CRLF — so every one of those snippets matched ZERO times and the
+ * harness exited 2 with "catalog drift — the source has evolved past the
+ * catalog". It had not evolved at all; the bytes differed by a \r per line.
+ *
+ * That failure mode is worse than it looks, because this harness is what
+ * proves the money tests are real. Red on a fresh Windows clone, for a reason
+ * that reads like a genuine source/catalog divergence, is exactly the kind of
+ * gate failure people learn to wave through.
+ *
+ * So matching happens on a NORMALISED copy, and the patch is written back with
+ * the target file's OWN newline so the mutated file stays byte-plausible and
+ * the SHA restore check still means something.
+ */
+function normalizeNewlines(s) {
+  return s.replace(/\r\n/g, '\n');
+}
+
+/** The newline this file actually uses — CRLF if any CRLF is present. */
+function dominantNewline(text) {
+  return /\r\n/.test(text) ? '\r\n' : '\n';
+}
+
 function countOccurrences(haystack, needle) {
+  const h = normalizeNewlines(haystack);
+  const n = normalizeNewlines(needle);
   let count = 0, idx = 0;
   for (;;) {
-    idx = haystack.indexOf(needle, idx);
+    idx = h.indexOf(n, idx);
     if (idx === -1) return count;
     count++;
     idx += 1; // overlapping-safe; find snippets are code lines, overlap is drift anyway
   }
 }
 
-/** Literal splice — never String.replace(), whose `$` sequences are magic. */
+/**
+ * Literal splice — never String.replace(), whose `$` sequences are magic.
+ * Indices are computed on the normalised text, so the splice is done on the
+ * normalised text too and the result is re-encoded to the file's own newline.
+ */
 function applyMutant(text, find, replace) {
-  const i = text.indexOf(find);
+  const nl = dominantNewline(text);
+  const h = normalizeNewlines(text);
+  const f = normalizeNewlines(find);
+  const i = h.indexOf(f);
   if (i === -1) return null;
-  return text.slice(0, i) + replace + text.slice(i + find.length);
+  const spliced = h.slice(0, i) + normalizeNewlines(replace) + h.slice(i + f.length);
+  return nl === '\r\n' ? spliced.replace(/\n/g, '\r\n') : spliced;
 }
 
 function stripAnsi(s) {

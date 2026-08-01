@@ -404,7 +404,9 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
 
 // Standalone Order-to-Cash (sales) SPA retired (Closure Sprint v2) — its features
 // live in the unified ERP at /app (sales + customers). Redirect old links there.
-app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sales/orders'); });
+// Lands on the invoices ledger: /app/sales/orders was retired with the manual
+// order surface, so the old target is no longer a registered route.
+app.all(/^\/sales(?:\/.*)?$/, function (req, res) { res.redirect(302, '/app/sales/invoices'); });
 
 // ── ADLAN Back-Office (unified React SPA) — served at /app ───────────────────
 // The unified Back-Office (frontend/erp) is served at /app behind
@@ -667,8 +669,9 @@ if (ORDER_TO_CASH_ENABLE) {
   app.use('/api/order-to-cash', require('./routes/order-to-cash'));
 
   // Single-writer AR — block the legacy duplicate AR/collection write paths (reads pass).
-  const { legacyArGate, customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
-  app.use('/api/ar-invoices', legacyArGate('/sales/invoices'));         // second invoice source → gated
+  // /api/ar-invoices needed no gate once it was deleted outright: the second
+  // invoice source is gone, not merely blocked.
+  const { customerReceiptGate, saleReverseGate, creditSaleGate } = require('./middleware/o2cLegacyGate');
   app.use('/api/cash', customerReceiptGate('/sales/payments'));         // customer-directed receipts → gated
   app.use('/api/sales', creditSaleGate());                             // credit sales must pass the server credit gate
   app.use('/api/sales', saleReverseGate('/sales'));                     // legacy sale reverse/delete (GL-destroying) → gated; POS create passes
@@ -739,6 +742,15 @@ app.use('/api/inventory/v2', require('./routes/inventory-items'));
 app.use('/api/inventory/v2', require('./routes/inventory-lots'));
 app.use('/api/inventory/v2', require('./routes/inventory-transactions'));
 try { app.use('/api/accounting', require('./routes/accounting')); } catch (e) { console.warn('[mod:accounting]', e.message); }
+// نماذج الجرد المحفوظة — saved stocktake templates (a named, reusable item set
+// the owner counts periodically). Deliberately NOT under /api/inventory/v2:
+// that prefix is wrapped by the canary allow-list and by the V2 WRITE gate
+// above, which 503s every mutation whenever WAREHOUSE_V2_ENABLED is off — a
+// register must still be able to save and edit its own count sheet then.
+// Mounted BEFORE the /api/inventory catch-all router so this path is claimed
+// here; it still inherits loadWarehouseScope (req.guardWh / req.whScopeClause),
+// mounted on /api/inventory further up.
+app.use('/api/inventory/stocktake-templates', require('./routes/stocktake-templates'));
 app.use('/api/inventory', require('./routes/inventory'));
 // Phase 2B — read-only Analytics + Reports (inherits the warehouse-scope
 // middleware mounted on /api/inventory above; /analytics/* + /reports/* paths
@@ -773,16 +785,15 @@ try { app.use('/api/erp', require('./routes/erp/zatca')); } catch(e){ console.wa
 try { app.use('/api/erp', require('./routes/erp/reports/ar-aging')); } catch(e){ console.warn('[mod:ar-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/reports/ap-aging')); } catch(e){ console.warn('[mod:ap-aging]', e.message); }
 try { app.use('/api/erp', require('./routes/erp/periods'));            } catch(e){ console.warn('[mod:periods]', e.message); }
+try { app.use('/api/erp/sales-posting', require('./routes/erp/sales-posting')); } catch(e){ console.warn('[mod:sales-posting]', e.message); }
 // v7.x SECURITY (RBAC) — financial/admin modules are gated to an elevated role
 // at the mount point (default-deny for cashier/employee). requireRole fails
 // closed: an empty/unknown role normalizes to the least-privileged 'cashier'.
 const { requireRole } = require('./middleware/auth');
 // V5 Enterprise modules (Real-Estate / Contracts / WorkOrders / AP-AR / Approval Matrix)
 try { app.use('/api/properties', requireRole('admin','manager'), require('./routes/properties')); } catch(e){ console.warn('[mod:properties]', e.message); }
-try { app.use('/api/contracts', requireRole('admin','manager'), require('./routes/contracts')); } catch(e){ console.warn('[mod:contracts]', e.message); }
 try { app.use('/api/work-orders', requireRole('admin','manager'), require('./routes/work-orders')); } catch(e){ console.warn('[mod:work-orders]', e.message); }
 try { app.use('/api/ap-invoices', requireRole('admin','manager'), require('./routes/ap-invoices')); } catch(e){ console.warn('[mod:ap-inv]', e.message); }
-try { app.use('/api/ar-invoices', requireRole('admin','manager'), require('./routes/ar-invoices')); } catch(e){ console.warn('[mod:ar-inv]', e.message); }
 try { app.use('/api/approval-matrix', requireRole('admin','manager'), require('./routes/approval-matrix')); } catch(e){ console.warn('[mod:matrix]', e.message); }
 try { app.use('/api/budgets', requireRole('admin','manager'), require('./routes/budgets')); } catch(e){ console.warn('[mod:budgets]', e.message); }
 try { app.use('/api/anomalies', requireRole('admin','manager'), require('./routes/anomalies')); } catch(e){ console.warn('[mod:anomalies]', e.message); }
@@ -1208,6 +1219,116 @@ async function runMigrations() {
     await require('./db/migrations/analytics/schema').apply(db, (m) => console.log('[analytics-schema]', m));
   } catch (e) {
     console.error('[DB] analytics schema FAILED (analytics reads may 500):', e.message.substring(0, 160));
+  }
+
+  // The counterparty dimension on gl_entries — additive columns + indexes.
+  // A failure here leaves the party silently absent, which lib/glPosting.js
+  // then REFUSES to degrade past (it throws rather than dropping a party from
+  // a line that carries one), so a broken migration surfaces as a loud posting
+  // error instead of a quietly partyless ledger.
+  try {
+    await require('./db/migrations/party-dimension/schema').apply(db, (m) => console.log('[party-schema]', m));
+  } catch (e) {
+    console.error('[DB] party dimension FAILED:', e.message.substring(0, 160));
+  }
+
+  // Unify the two payables accounts and backfill the party. One-shot, gated,
+  // resumable — the owner runs nothing.
+  const PARTY_KEY = 'PartyDimensionBootstrap_v1';
+  try {
+    const [done] = await db.query(
+      'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [PARTY_KEY]);
+    if (!done.length) {
+      const out = await require('./lib/partyDimension/bootstrap')
+        .bootstrap(db, require('./lib/glPosting'), (m) => console.log(m));
+      const r = out.reclassified || {};
+      console.log('[party] bootstrap done — reclassified ' + (r.moved || 0) + ' supplier(s)' +
+        (r.unallocated ? ', unallocated ' + r.unallocated : '') +
+        (r.journal ? ' (JE ' + r.journal + ')' : '') +
+        ' · backfilled ' + ((out.backfill && out.backfill.filled) || 0) + ' line(s)' +
+        ' · unattributed ' + ((out.backfill && out.backfill.unattributed) || 0));
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES (?, '1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'", [PARTY_KEY]);
+    }
+  } catch (e) { console.error('[party] bootstrap skipped:', e.message.substring(0, 160)); }
+
+  // «ترحيل المبيعات» — the deferred sales-posting queue. Purely additive: it
+  // creates three new tables and touches nothing existing. A failure here
+  // makes `capture()` a no-op (it swallows ER_NO_SUCH_TABLE by design) rather
+  // than taking the register down.
+  try {
+    await require('./db/migrations/sales-posting/schema').apply(db, (m) => console.log('[sales-posting-schema]', m));
+  } catch (e) {
+    console.error('[DB] sales-posting schema FAILED (queue capture will no-op):', e.message.substring(0, 160));
+  }
+
+  // ── Backfill the queue for sales that predate it ─────────────────────────
+  //
+  // Every historical sale gets a `posted_legacy` row: it already has its own
+  // journal, posted the old way, and must never be re-posted. The point is
+  // not to change anything about them — it is to make the invariant "every
+  // sale has a queue row" true for ALL history, which is what turns the
+  // health check into evidence instead of a statement about recent sales only.
+  //
+  // Batched and resumable: it inserts only rows that are missing, so an
+  // interrupted run resumes on the next boot and a completed one is a no-op.
+  try {
+    const [[pre]] = await db.query(
+      `SELECT COUNT(*) AS n FROM sales s
+        LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+       WHERE q.id IS NULL`);
+    if (Number(pre.n) > 0) {
+      // The `sales` table has grown by addColumnIfMissing over many releases,
+      // so which optional columns exist differs by deployment age. Ask the
+      // schema rather than guessing — a first attempt hard-coded `s.subtotal`
+      // and `s.tax`, which this table has never had, and the whole backfill
+      // was skipped with one swallowed error line.
+      const [cols] = await db.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sales'`);
+      const has = new Set(cols.map((c) => String(c.COLUMN_NAME)));
+      const col = (name, fallback) => (has.has(name) ? 's.' + name : fallback);
+
+      // Legacy rows carry only the invoice total. net/tax are left at 0
+      // deliberately: these rows are `posted_legacy`, their journals were
+      // written years ago by the old path, and nothing will ever re-post them
+      // — so a reconstructed split would be a guess dressed as a fact. The
+      // gross is recorded because it is the one number that is unambiguous.
+      const grossExpr = has.has('total_final') ? 's.total_final'
+        : (has.has('total') ? 's.total' : '0');
+
+      let done = 0;
+      for (let guard = 0; guard < 500; guard++) {     // 500 × 2000 = 1M sales ceiling
+        const [r] = await db.query(
+          `INSERT IGNORE INTO sales_posting_queue
+             (source_type, source_id, business_day, calendar_date, brand_id, branch_id,
+              net_amount, tax_amount, gross_amount, cogs_amount, status, invoice_number, posted_at)
+           SELECT 'sale', s.id,
+                  DATE(s.order_date - INTERVAL 4 HOUR),   -- default day_close_time
+                  DATE(s.order_date),
+                  ${col('brand_id', 'NULL')}, ${col('branch_id', 'NULL')},
+                  0, 0, COALESCE(${grossExpr}, 0), 0,
+                  'posted_legacy', ${col('invoice_number', 'NULL')}, s.order_date
+             FROM sales s
+             LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+            WHERE q.id IS NULL
+            LIMIT 2000`);
+        if (!r.affectedRows) break;
+        done += r.affectedRows;
+      }
+      console.log('[sales-posting] backfilled ' + done + ' historical sale(s) as posted_legacy');
+    }
+    const [[gap]] = await db.query(
+      `SELECT COUNT(*) AS n FROM sales s
+        LEFT JOIN sales_posting_queue q ON q.source_type = 'sale' AND q.source_id = s.id
+       WHERE q.id IS NULL`);
+    // THE INVARIANT. Must be zero forever — a sale with no queue row is a sale
+    // no batch will ever pick up.
+    if (Number(gap.n) === 0) console.log('[sales-posting] invariant OK — every sale has a queue row');
+    else console.error('[sales-posting] *** ' + gap.n + ' SALE(S) HAVE NO QUEUE ROW ***');
+  } catch (e) {
+    console.error('[sales-posting] backfill skipped:', e.message.substring(0, 160));
   }
 
   // Closure-stream capability declarations (db/migrations/capability-seeds/*.json)
@@ -4477,6 +4598,18 @@ async function runMigrations() {
     }
   }
 
+  // ─── gl_journals (reference_type, reference_id) — a scan on EVERY sale ───
+  // `reference_id` had no index at all, yet the checkout looks its own journal
+  // up by reference on every single sale: services/order-to-cash/InvoiceService.js
+  // does `SELECT id FROM gl_journals WHERE reference_type='Sale' AND reference_id=?`
+  // inside `linkPosSale`, which runs in the sale's own transaction. So a full
+  // table scan of a monotonically growing ledger sat on the hot path, getting
+  // slower with every journal ever posted. routes/sales.js's void/return path
+  // (:2605) and the journals list filter (routes/erp.js:2226) hit the same
+  // predicate. Not unique — a reference legitimately maps to several journals
+  // (an invoice posts its revenue and COGS legs as two).
+  await addIndexIfMissing('gl_journals', 'ix_glj_ref', 'reference_type, reference_id');
+
   // ─── v6.4.3 — De-duplicate menu items + UNIQUE (brand_id, name) ───
   // Older deployments accumulated duplicate menu rows when the same item
   // was imported twice (each import generates a fresh Date.now() id, so
@@ -5426,6 +5559,61 @@ async function runMigrations() {
   // reconciliation (existing-DB top-up; fresh DBs get them from the CREATE above).
   await addColumnIfMissing('inv_stocktakes', 'snapshot_seq', 'BIGINT DEFAULT 0');
   await addColumnIfMissing('inv_stocktake_items', 'counted_seq', 'BIGINT DEFAULT 0');
+
+  // ─── نماذج الجرد المحفوظة — saved stocktake templates (routes/stocktake-
+  // templates.js, mounted at /api/inventory/stocktake-templates) ────────────────
+  // The owner's ask: a NAMED, reusable set of the materials he counts
+  // periodically — create it, pick it, edit it, reuse it. Server-backed on
+  // purpose: a localStorage template dies with the tablet, and he swaps tills.
+  //
+  // A template is ONLY a name + an ORDERED list of inv_items ids + an optional
+  // warehouse scope. IT HOLDS NO QUANTITY OF ANY KIND — no counted qty, no
+  // "last counted", no system qty. BLIND COUNT is a hard contract on this
+  // surface (see routes/inventory-stocktakes.js's header and the blind-count
+  // spec in StocktakeDialog.test.tsx), so there is deliberately no column a
+  // future change could leak the previous count through.
+  //
+  // Scope MATCHES inv_stocktakes above (warehouse_id + brand/branch derived from
+  // the warehouse row) with ONE intentional difference: warehouse_id is NULLABLE
+  // = "usable from any warehouse". A count DOCUMENT must name its warehouse; a
+  // reusable CHECKLIST need not, and the POS never picks one by hand (it resolves
+  // one at submit time), so pinning every template would hide it on the next till.
+  //
+  // Additive and fully isolated — touches no existing table. createTableIfMissing
+  // no-ops once the table exists, so this is safe on every boot.
+  await createTableIfMissing('inv_stocktake_templates', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_templates (
+      id VARCHAR(60) PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      warehouse_id VARCHAR(50) NULL,
+      brand_id VARCHAR(50) NULL,
+      branch_id VARCHAR(50) NULL,
+      created_by VARCHAR(100),
+      updated_by VARCHAR(100),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_stkt_wh (warehouse_id),
+      INDEX idx_stkt_creator (created_by),
+      INDEX idx_stkt_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  // item_name / unit are a SNAPSHOT used only as the fallback label when the
+  // inv_items row has been hard-deleted; the route prefers the LIVE name so a
+  // renamed material shows its current name. UNIQUE(template_id,item_id) makes a
+  // duplicated pick impossible at the storage layer, not just in the handler.
+  await createTableIfMissing('inv_stocktake_template_items', `
+    CREATE TABLE IF NOT EXISTS inv_stocktake_template_items (
+      id VARCHAR(60) PRIMARY KEY,
+      template_id VARCHAR(60) NOT NULL,
+      item_id VARCHAR(50) NOT NULL,
+      item_name VARCHAR(200),
+      unit VARCHAR(50),
+      sort_order INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uq_stkt_item (template_id, item_id),
+      INDEX idx_stkti_tpl (template_id, sort_order),
+      INDEX idx_stkti_item (item_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 
   // ─── Phase 4A — Item Master (ADDITIVE on inv_items; never drop/rename, sales/
   // purchases/production read it) + per-warehouse replenishment rules ───────────
@@ -6443,28 +6631,9 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // 4) Contract Invoice Schedules (جدولة الفواتير الدورية)
-  await createTableIfMissing('contract_invoice_schedules', `
-    CREATE TABLE contract_invoice_schedules (
-      id VARCHAR(40) PRIMARY KEY,
-      contract_id VARCHAR(40) NOT NULL,
-      due_date DATE NOT NULL,
-      amount DECIMAL(14,4) NOT NULL,
-      vat_amount DECIMAL(14,4) DEFAULT 0,
-      total_amount DECIMAL(14,4) NOT NULL,
-      currency VARCHAR(8) DEFAULT 'SAR',
-      period_from DATE,
-      period_to DATE,
-      status ENUM('scheduled','generated','invoiced','paid','overdue','cancelled') DEFAULT 'scheduled',
-      invoice_id VARCHAR(40),
-      generated_at DATETIME,
-      paid_at DATETIME,
-      notes TEXT,
-      INDEX idx_contract (contract_id),
-      INDEX idx_due (due_date, status),
-      INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+  // 4) was contract_invoice_schedules — recurring B2B billing, retired with the
+  //    contracts ROUTE. The `contracts` table above stays: routes/properties.js
+  //    still reads it for lease/unit linkage.
 
   // 5) Assets (الأصول الثابتة — معدات/مركبات/أجهزة للصيانة)
   await createTableIfMissing('assets', `
@@ -6638,60 +6807,10 @@ async function runMigrations() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 
-  // 10) Customer Invoices (فواتير العملاء — للإيجار / خدمات / مبيعات)
-  await createTableIfMissing('customer_invoices', `
-    CREATE TABLE customer_invoices (
-      id VARCHAR(40) PRIMARY KEY,
-      code VARCHAR(40) UNIQUE,
-      customer_id VARCHAR(40),
-      customer_name VARCHAR(200),
-      vat_number VARCHAR(40),
-      invoice_type ENUM('rental','service','goods','recurring') DEFAULT 'rental',
-      contract_id VARCHAR(40),
-      schedule_id VARCHAR(40),
-      issue_date DATE NOT NULL,
-      due_date DATE,
-      brand_id VARCHAR(40),
-      branch_id VARCHAR(40),
-      cost_center_id VARCHAR(40),
-      property_id VARCHAR(40),
-      property_unit_id VARCHAR(40),
-      currency VARCHAR(8) DEFAULT 'SAR',
-      subtotal DECIMAL(14,4) DEFAULT 0,
-      vat_amount DECIMAL(14,4) DEFAULT 0,
-      total_amount DECIMAL(14,4) DEFAULT 0,
-      paid_amount DECIMAL(14,4) DEFAULT 0,
-      balance_amount DECIMAL(14,4) DEFAULT 0,
-      status ENUM('draft','issued','sent','partially_paid','paid','overdue','cancelled') DEFAULT 'draft',
-      zatca_status ENUM('pending','submitted','accepted','rejected') DEFAULT 'pending',
-      zatca_uuid VARCHAR(80),
-      gl_journal_id VARCHAR(60),
-      attachments LONGTEXT,
-      notes TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      created_by VARCHAR(80),
-      INDEX idx_customer (customer_id),
-      INDEX idx_contract (contract_id),
-      INDEX idx_brand (brand_id),
-      INDEX idx_due (due_date, status),
-      INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-
-  await createTableIfMissing('customer_invoice_lines', `
-    CREATE TABLE customer_invoice_lines (
-      id VARCHAR(40) PRIMARY KEY,
-      invoice_id VARCHAR(40) NOT NULL,
-      description VARCHAR(400),
-      quantity DECIMAL(10,4) DEFAULT 1,
-      uom VARCHAR(20),
-      unit_price DECIMAL(12,4),
-      vat_pct DECIMAL(5,2) DEFAULT 15,
-      line_total DECIMAL(14,4),
-      account_id VARCHAR(40),
-      INDEX idx_invoice (invoice_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+  // 10) was customer_invoices + customer_invoice_lines — the manual/rental AR
+  //     invoice pair behind the deleted /api/ar-invoices route. ar_documents is
+  //     the single AR source of truth; scripts/order-to-cash/backfill.js still
+  //     imports these tables where an existing database has them.
 
   // 11) Approval Policies (مصفوفة سياسات الموافقة المتقدمة)
   await createTableIfMissing('approval_policies', `
@@ -7385,6 +7504,283 @@ async function runMigrations() {
     }
     if (totalRescued > 0) console.log('[v5.10.80] name-rescued report_section for ' + totalRescued + ' accounts');
   } catch (e) { console.error('[v5.10.80] name-rescue:', e.message); }
+
+  // ── Relocate custody accounts out of the INVENTORY subtree ───────────────
+  //
+  // The owner's report: «العهدة تحت بند المخزون». He was right.
+  //
+  // routes/custody.js and a hand-copy in routes/erp.js both created employee
+  // custody accounts as `1130x` parented under `113`. But `113` is INVENTORY —
+  // lib/glPosting.js:44-45 states the mapping (111 Cash · 112 AR · 113
+  // Inventory · 114 Prepayments · 115 Custody · 116 Input VAT) and
+  // CORE_ACCOUNTS parents 1200/1210/1220/1230 (the warehouses) under `113`.
+  // So عهدة sat as a sibling of the warehouses in the tree, and the balance
+  // sheet followed, because the prefix table above maps `113%` → inventory.
+  // The name-rescue then flipped report_section back to receivables every
+  // boot — which is the recurring "re-derived … 1 mis-tagged" log, and why
+  // the tree and the balance sheet disagreed with each other.
+  //
+  // Both creators are fixed (custody is `115`). This moves what already
+  // exists. It changes ONLY `parent_id` — no code is renumbered, so not a
+  // single gl_entries row, journal, or amount is touched; renumbering would
+  // rewrite account_code across posted history and is deliberately left to
+  // the explicit /gl/accounts/:id/move endpoint.
+  //
+  // Runs once, gated on a settings key, and is a no-op on a chart that never
+  // had the defect.
+  try {
+    const [done] = await db.query(
+      "SELECT setting_value FROM settings WHERE setting_key = 'CustodyOutOfInventory_v1' LIMIT 1");
+    if (!done.length) {
+      // Candidates: named like custody/advance, and currently reachable from
+      // the inventory group `113` (either directly under it or under `1130`).
+      const [cands] = await db.query(
+        `SELECT a.id, a.code, a.name_ar, a.parent_id, p.code AS parent_code
+           FROM gl_accounts a
+           LEFT JOIN gl_accounts p ON p.id = a.parent_id
+          WHERE (a.name_ar LIKE '%عهدة%' OR a.name_ar LIKE '%عهد %' OR a.name_ar LIKE '%سلفة%'
+                 OR a.name_ar LIKE '%سلف %' OR a.name_en LIKE '%custody%' OR a.name_en LIKE '%advance%')
+            AND (p.code = '113' OR p.code LIKE '113%')`);
+      if (cands.length) {
+        // Resolve (or create) the custody group 115 without importing the
+        // route module here — boot must not depend on router load order.
+        let groupId = null;
+        const [g] = await db.query("SELECT id FROM gl_accounts WHERE code = '115' LIMIT 1");
+        if (g.length) groupId = g[0].id;
+        else {
+          const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
+          groupId = 'GL-115';
+          await db.query(
+            `INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_folder, report_section)
+             VALUES (?,?,?,?,?,?,1,?)`,
+            [groupId, '115', 'العهد والسلف', 'asset', p11.length ? p11[0].id : null, p11.length ? 3 : 2, 'receivables']);
+        }
+        let moved = 0;
+        for (const c of cands) {
+          if (c.id === groupId) continue;       // never re-parent the group into itself
+          await db.query(
+            "UPDATE gl_accounts SET parent_id = ?, report_section = 'receivables' WHERE id = ?",
+            [groupId, c.id]);
+          console.log('[custody-fix] ' + c.code + ' «' + (c.name_ar || '') + '» : ' +
+                      (c.parent_code || '?') + ' (مخزون) → 115 العهد والسلف');
+          moved++;
+        }
+        // Depth changed for everything that moved.
+        try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+        console.log('[custody-fix] relocated ' + moved + ' custody account(s) out of the inventory subtree');
+      }
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES ('CustodyOutOfInventory_v1','1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'");
+    }
+  } catch (e) { console.error('[custody-fix]', e.message); }
+
+  // ── Merge the DUPLICATE inventory group ──────────────────────────────────
+  //
+  // The owner's report: «لماذا هناك اثنان من المخزون في الشجرة».
+  //
+  // CAUSE (fixed separately, in routes/erp.js): two boot migrations held
+  // opposite beliefs and both ran on every start. `_repairInventoryClassification`
+  // CREATED `112 المخزون` and dragged inventory-named accounts under it; then
+  // the v5.11.14 block above moved the real inventory codes 1200/1210/1220/1230
+  // to `113`. Two groups named المخزون, regenerated on every restart. That
+  // helper now targets `113`, so the duplicate stops being re-created — this
+  // block cleans up what previous boots already made.
+  //
+  // `113` is the survivor, and not by preference: lib/glPosting.js is the
+  // authority that WRITES every journal, and its CORE_ACCOUNTS parents the
+  // warehouses under `113` (header map at :44-45 — 112 = AR · 113 = Inventory).
+  //
+  // WHAT THIS DOES AND DELIBERATELY DOES NOT DO:
+  //   • moves inventory-named CHILDREN of `112` to `113` — re-parenting is one
+  //     of only two operations that cannot corrupt posted history.
+  //   • renames `112` to its true meaning ONLY IF it carries no posted entries.
+  //     `gl_entries.account_name` is a frozen snapshot, so old journals keep
+  //     their original label either way.
+  //   • NEVER renumbers a code. `gl_entries.account_code` is denormalised
+  //     across all posted history and the account statement matches on
+  //     `account_id OR account_code`, so a reused code drags foreign history
+  //     into a report.
+  //   • NEVER deactivates. An inactive account is silently dropped from the
+  //     income statement, balance sheet and cash flow — and excluded from the
+  //     year-end closing entry, which is idempotent by id and would misstate
+  //     retained earnings unrecoverably.
+  //   • NEVER deletes. Only three real FKs exist; ~18 columns reference
+  //     accounts as unconstrained strings and would dangle silently.
+  //
+  // If `112` holds posted entries, this REFUSES to rename it and logs the
+  // balance instead: reclassifying money that has already been posted is an
+  // accountant's journal entry, not a migration's UPDATE.
+  try {
+    const [done] = await db.query(
+      "SELECT setting_value FROM settings WHERE setting_key = 'InventoryDuplicateMerge_v1' LIMIT 1");
+    if (!done.length) {
+      const [a112] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '112' LIMIT 1");
+      const [a113] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '113' LIMIT 1");
+      if (a112.length && a113.length) {
+        const id112 = a112[0].id, id113 = a113[0].id;
+        const nm112 = String(a112[0].name_ar || '');
+        // Only act when 112 is actually mislabelled as inventory. On a chart
+        // where 112 is already AR there is nothing to merge and this is a no-op.
+        if (/مخزون/.test(nm112)) {
+          const [kids] = await db.query(
+            "SELECT id, code, name_ar FROM gl_accounts WHERE parent_id = ?", [id112]);
+          let moved = 0;
+          for (const k of kids) {
+            if (!/مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material/i.test(k.name_ar || '')) continue;
+            await db.query(
+              "UPDATE gl_accounts SET parent_id = ?, report_section = 'inventory' WHERE id = ?", [id113, k.id]);
+            console.log('[inv-merge] ' + k.code + ' «' + (k.name_ar || '') + '» : 112 → 113 (' + (a113[0].name_ar || '') + ')');
+            moved++;
+          }
+          const [[cnt]] = await db.query(
+            "SELECT COUNT(*) AS n FROM gl_entries WHERE account_id = ?", [id112]);
+          if (Number(cnt.n) === 0) {
+            await db.query(
+              "UPDATE gl_accounts SET name_ar = 'ذمم العملاء', report_section = 'receivables' WHERE id = ?", [id112]);
+            console.log('[inv-merge] 112 renamed «' + nm112 + '» → «ذمم العملاء» (no posted entries — safe)');
+          } else {
+            console.warn('[inv-merge] 112 «' + nm112 + '» KEPT: it carries ' + cnt.n +
+              ' posted entries. Renaming it would relabel posted money. It needs a ' +
+              'reclassification journal entry approved by an accountant — not a migration.');
+          }
+          try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+          console.log('[inv-merge] moved ' + moved + ' inventory account(s) from 112 to 113');
+        }
+      }
+      await db.query(
+        "INSERT INTO settings (setting_key, setting_value) VALUES ('InventoryDuplicateMerge_v1','1') " +
+        "ON DUPLICATE KEY UPDATE setting_value = '1'");
+    }
+  } catch (e) { console.error('[inv-merge]', e.message); }
+
+  // ── Bilingual inventory names + SKUs ─────────────────────────────────────
+  //
+  // The owner's report, with a screenshot of /app/inventory/items: the Arabic
+  // name column holds ENGLISH text — «Cup Holder 2», «A-31 Cold Drinks 30oz
+  // 900ML Laser Logo Black» — the English column shows «الاسم الإنجليزي مفقود»,
+  // and the SKU column shows «–». The English name is right; it is in the
+  // wrong column, and the right column is empty.
+  //
+  // This runs the repair unattended so nobody has to execute a script against
+  // production. The repair itself lives in lib/inventory/bilingualNames.js —
+  // shared verbatim with the CLI, because two copies of a migration are two
+  // migrations that will disagree.
+  //
+  // Writes FOUR columns and no others: name, name_en, sku, sku_norm. Never
+  // touches a row that already has Arabic, never overwrites a human-typed
+  // name_en, never reissues an existing SKU. Row-by-row by primary key.
+  //
+  // A word the dictionary does not know stays ENGLISH rather than being
+  // transliterated — «كب هولدر» is not Arabic, it is noise nobody can search.
+  // Those rows keep name_en === name, which is exactly the fingerprint the
+  // candidate rule uses to pick them back up on a later run once the
+  // dictionary has grown. Bump the version suffix below to force that re-run.
+  //
+  // Failure here must never keep the restaurant from opening: the whole block
+  // is caught, and a row that fails is skipped rather than aborting the rest.
+  //
+  // _v2: the first production run translated only 24 of 194 items fully —
+  // 115 partial, 48 untranslated — because the dictionary knew PACKAGING and
+  // the catalogue is a restaurant's. The food vocabulary was added and the
+  // version bumped so every row is reconsidered. The partial rows are reached
+  // through `name_en`, which still holds the pristine English; see the
+  // candidate rule in lib/inventory/bilingualNames.js.
+  //
+  // _v3: the _v2 log showed `untranslated 0` but 58 partial and 23 with an
+  // unverified word order. The 23 were nearly all one shape — «Pistachio
+  // Sauce» → «فستق صلصة» — so the head-noun flip now performs that reorder
+  // instead of only reporting it, `Box` stopped being treated as a unit, and
+  // the vocabulary the log printed was added.
+  const INV_NAMES_KEY = 'InventoryBilingualNames_v3';
+  try {
+    const [done] = await db.query(
+      'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1', [INV_NAMES_KEY]);
+    if (!done.length) {
+      const bilingual = require('./lib/inventory/bilingualNames');
+      const [rows] = await db.query(bilingual.SELECT_SQL);
+      const r = bilingual.planBilingualNames(rows);
+      const s = r.stats;
+      if (r.plan.length) {
+        const res = await bilingual.applyPlan(db, r.plan);
+        console.log('[inv-names] ' + res.updated + '/' + s.planned + ' item(s) fixed — ' +
+          'English moved to name_en, Arabic written, ' + s.newSkus + ' SKU(s) issued' +
+          (s.repairs ? ' (' + s.repairs + ' re-translated from a previous partial run)' : ''));
+        console.log('[inv-names] fully translated ' + s.clean +
+          ' · partial ' + s.partial + ' · word-order unverified ' + s.wordOrderRisk +
+          ' · untranslated ' + s.needsReview);
+        // The vocabulary the dictionary still lacks. Logged, not just stored:
+        // a settings row nobody can read is not evidence, and this is the list
+        // that tells the next dictionary pass exactly what to add.
+        if (r.vocabulary.length) {
+          console.log('[inv-names] missing vocabulary (' + r.vocabulary.length + '): ' +
+            r.vocabulary.slice(0, 150).join(' '));
+        }
+        if (r.review.length) {
+          console.log('[inv-names] untranslated names: ' +
+            r.review.slice(0, 40).map((p) => p.newNameEn).join(' | '));
+        }
+        if (r.ordering.length) {
+          console.log('[inv-names] word order to check: ' +
+            r.ordering.slice(0, 25).map((p) => p.newNameEn + ' → ' + p.newNameAr).join(' | '));
+        }
+        if (res.failures.length) {
+          console.warn('[inv-names] ' + res.failures.length + ' row(s) failed: ' +
+            res.failures.slice(0, 5).map((f) => f.name + ' (' + f.error + ')').join(', '));
+        }
+        // Persist what a human still needs to look at, so the health screen can
+        // show it instead of it living only in a boot log nobody reads.
+        if (r.review.length || r.ordering.length || r.vocabulary.length) {
+          await db.query(
+            'INSERT INTO settings (setting_key, setting_value) VALUES (?, ?) ' +
+            'ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)',
+            [INV_NAMES_KEY + '_review', JSON.stringify({
+              untranslated: r.review.map((p) => p.newNameEn).slice(0, 200),
+              wordOrder: r.ordering.map((p) => ({ en: p.newNameEn, ar: p.newNameAr })).slice(0, 200),
+              vocabulary: r.vocabulary.slice(0, 400),
+            })]);
+        }
+      } else {
+        console.log('[inv-names] no items need bilingual repair (' +
+          s.alreadyArabic + ' already Arabic, ' + s.humanEnglish + ' have a typed English name)');
+      }
+      await db.query(
+        'INSERT INTO settings (setting_key, setting_value) VALUES (?, \'1\') ' +
+        'ON DUPLICATE KEY UPDATE setting_value = \'1\'', [INV_NAMES_KEY]);
+    }
+  } catch (e) { console.error('[inv-names]', e.message); }
+
+  // Standing health line — runs every boot, migration or not.
+  //
+  // The one-shot above prints a rich report exactly once and then never again,
+  // so its output scrolls out of the log window and the catalogue's real state
+  // becomes unknowable without a DB session. This is two counts and a line:
+  // it answers "is the catalogue bilingual yet" on any deploy, forever.
+  try {
+    // The defect is a name with NO Arabic at all. A name that merely CONTAINS
+    // Latin is usually correct — «A-31», «30oz», «900ML» are supplier codes and
+    // measurements that must survive verbatim, and «Sante», «Davinci» are brand
+    // names. A first version counted any Latin character and reported 153 of
+    // 195 as broken, which was alarming and wrong.
+    // The Arabic class is written as an explicit code-point range, passed as a
+    // parameter. `[\p{Arabic}]` is accepted by MySQL's parser and then matches
+    // almost nothing — it reported 3 of 19 known-Arabic names as Arabic, and
+    // bare `\p{Arabic}` fails outright with an interval-syntax error. A regex
+    // that silently under-matches is worse than one that throws.
+    const AR = '[؀-ۿ]';
+    const [[h]] = await db.query(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN name_en IS NULL OR TRIM(name_en) = '' THEN 1 ELSE 0 END) AS no_en,
+              SUM(CASE WHEN sku IS NULL OR TRIM(sku) = '' THEN 1 ELSE 0 END) AS no_sku,
+              SUM(CASE WHEN name NOT REGEXP ? THEN 1 ELSE 0 END) AS no_arabic,
+              SUM(CASE WHEN name REGEXP ? AND name REGEXP '[A-Za-z]' THEN 1 ELSE 0 END) AS mixed
+         FROM inv_items`, [AR, AR]);
+    if (Number(h.total) > 0) {
+      console.log('[inv-health] ' + h.total + ' items · no Arabic name ' + h.no_arabic +
+        ' · missing English ' + h.no_en + ' · missing SKU ' + h.no_sku +
+        ' · Arabic with Latin codes/brands ' + h.mixed + ' (expected — measurements and brands stay)');
+    }
+  } catch (e) { console.error('[inv-health]', e.message); }
 
   // Per-item override for waste GL routing. NULL = use reason→account map.
   await addColumnIfMissing('inv_items', 'waste_gl_account_id', 'VARCHAR(50) NULL');

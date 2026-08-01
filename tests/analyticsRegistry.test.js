@@ -186,7 +186,9 @@ test('the full promised metric dictionary is present', () => {
     'vat_amount', 'net_incl_vat', 'invoice_total', 'orders', 'guests',
     'qty_sold', 'qty_returned', 'qty_net', 'avg_ticket', 'avg_items_per_order',
     'discount_pct', 'voids_count', 'voids_value', 'returns_count',
-    'returns_value', 'cogs', 'gross_profit', 'margin_pct', 'payments_in',
+    'returns_value', 'returns_vat', 'sales_before_discount',
+    'net_product_sales', 'net_product_sales_ex_vat', 'statement_variance',
+    'cogs', 'gross_profit', 'margin_pct', 'payments_in',
     'refunds_out', 'net_collections', 'tips_total', 'fees_total',
     'rounding_total', 'till_expected_cash', 'till_counted', 'till_variance',
     'item_contribution_pct', 'attach_rate', 'modifiers_per_item', 'growth',
@@ -213,6 +215,37 @@ test('dimension ids are unique', () => {
     ok(!seen.has(d.id), `duplicate dimension id ${d.id}`);
     seen.add(d.id);
   }
+});
+
+/* ── a redefined metric must stay DETECTABLE by a stale consumer ────────────
+ *
+ * `net_product_sales` was redefined (v1 → v2). A saved view and a scheduled
+ * export both store METRIC IDS, not definitions, so an old view keeps asking
+ * for the same id and now receives a different number. That is acceptable —
+ * v1 was a three-basis subtraction that reconciled to nothing — but only if
+ * the change is DETECTABLE rather than silent. Two things make it so, and both
+ * are one careless edit away from being lost, so both are pinned here:
+ *
+ *   1. `version` is bumped, and routes/analytics/metadata.js:65 projects it to
+ *      every client, so a stale consumer can compare rather than guess;
+ *   2. an ex-VAT twin exists, so anyone who actually wanted the ex-VAT figure
+ *      has an id to move to instead of being silently re-based.
+ */
+test('a redefined metric carries version > 1 so a stale saved view is detectable', () => {
+  const m = metrics.byId['net_product_sales'];
+  ok(m, 'net_product_sales missing');
+  ok(m.version > 1, 'net_product_sales was redefined — its version must be bumped past 1');
+});
+test('every metric declares an integer version (metadata projects it verbatim)', () => {
+  for (const m of metrics.METRICS) {
+    ok(Number.isInteger(m.version) && m.version >= 1, `metric "${m.id}" has no integer version`);
+  }
+});
+test('the redefined incl-VAT metric keeps an ex-VAT twin to move to', () => {
+  ok(
+    metrics.byId['net_product_sales_ex_vat'],
+    'net_product_sales_ex_vat missing — a consumer that wanted ex-VAT has nowhere to go',
+  );
 });
 
 console.log(`\nAnalytics registry: ${_passed}/${_total} passed, ${_failed} failed`);

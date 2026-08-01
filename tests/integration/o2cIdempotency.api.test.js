@@ -32,7 +32,7 @@ const PW = 'Itest@12345';
 const ADMIN = 'itest_idem_admin';
 const CUST = 'ITEST-IDEM-CUST';
 let pass = 0, fail = 0; const fails = [];
-const made = { payments: [], invoices: [], orders: [] }; // for cleanup
+const made = { payments: [], invoices: [] }; // for cleanup
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 240) : ''); } }
 
 function call(method, p, token, body, headers = {}) {
@@ -58,7 +58,7 @@ const journalsFor = async (refId) =>
   Number((await db.query('SELECT COUNT(*) c FROM gl_journals WHERE reference_id=?', [refId]))[0][0].c);
 
 async function cleanup() {
-  const ids = [...made.payments, ...made.invoices, ...made.orders];
+  const ids = [...made.payments, ...made.invoices];
   for (const id of ids) {
     // GL first (entries cascade off journals), then events, allocations, lines, docs.
     const [js] = await db.query("SELECT id FROM gl_journals WHERE reference_id = ?", [id]).catch(() => [[]]);
@@ -69,10 +69,8 @@ async function cleanup() {
     await db.query('DELETE FROM ar_events WHERE entity_id = ?', [id]).catch(() => {});
     await db.query('DELETE FROM ar_payment_allocations WHERE payment_id = ? OR ar_document_id = ?', [id, id]).catch(() => {});
     await db.query('DELETE FROM ar_document_lines WHERE document_id = ?', [id]).catch(() => {});
-    await db.query('DELETE FROM sales_order_lines WHERE order_id = ?', [id]).catch(() => {});
     await db.query('DELETE FROM customer_payments WHERE id = ?', [id]).catch(() => {});
     await db.query('DELETE FROM ar_documents WHERE id = ?', [id]).catch(() => {});
-    await db.query('DELETE FROM sales_orders WHERE id = ?', [id]).catch(() => {});
   }
   await db.query('DELETE FROM customers WHERE id = ?', [CUST]).catch(() => {});
   await db.query('DELETE FROM users WHERE username = ?', [ADMIN]).catch(() => {});

@@ -1,16 +1,14 @@
 // Sales Analytics Hub — "cashiers" page (hub-gated: analytics.employees.view).
 //
 // One per-cashier query drives everything: the KPI row (orders / net / avg
-// ticket from the query totals), a per-cashier table whose discount/void/return
+// ticket from the query totals) and a per-cashier table whose discount/void
 // rate cells carry the warning cellTone above the CLIENT-SIDE P75 of the
-// column, and a top-cashiers-by-net bar chart. Wave 4: a cashier row drills to
-// the orders segment with the cashier pinned via the shared `cashierId` param.
-import { lazy, Suspense, useMemo, type ReactElement } from "react";
+// column. Wave 4: a cashier row drills to the orders segment with the cashier
+// pinned via the shared `cashierId` param.
+import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, ShoppingBag, Ticket } from "lucide-react";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
+import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
@@ -41,7 +39,6 @@ const METRICS = [
   "discount_rate_by_cashier",
   "void_rate_by_cashier",
 ] as const;
-const TOP_N = 10;
 
 // The TopBar ExportMenu asks this page's registry entry for its export shape.
 setPageExportRequest(SEGMENT, () => ({
@@ -49,23 +46,6 @@ setPageExportRequest(SEGMENT, () => ({
   dimensions: ["cashier"],
   sort: [{ by: "net_ex_vat", dir: "desc" }],
 }));
-
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -136,8 +116,6 @@ interface CashierRow {
 
 export default function Cashiers() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -242,16 +220,6 @@ export default function Cashiers() {
     ];
   }, [t, thresholds]);
 
-  const topCashiers = useMemo(
-    () =>
-      cashierRows
-        .filter((r) => r.net != null)
-        .slice()
-        .sort((a, b) => (b.net as number) - (a.net as number))
-        .slice(0, TOP_N),
-    [cashierRows],
-  );
-
   if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
   const loadError = registry.error ?? query.error;
   if (loadError) {
@@ -294,37 +262,8 @@ export default function Cashiers() {
         })}
       </div>
 
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t("salesReports.metrics.net_ex_vat")}
-              subtitle={t("salesReports.dims.cashier")}
-              isEmpty={topCashiers.length === 0}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.cashier")}`}
-              tableColumns={[
-                { key: "label", label: t("salesReports.dims.cashier") },
-                { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
-              ]}
-              tableRows={topCashiers.map((r) => ({
-                label: r.label,
-                netText: r.net == null ? "—" : formatCurrency(r.net),
-              }))}
-            >
-              <R.BarChart data={topCashiers} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterCurrency(value)} />
-                <R.Bar dataKey="net" name={t("salesReports.metrics.net_ex_vat")} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-              </R.BarChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
-
+      {/* No chart here: reports are decision tables — charts live on the
+          dashboard. The net-by-cashier ranking is the table's default sort. */}
       <DataTable<CashierRow>
         columns={columns}
         rows={cashierRows}

@@ -2,19 +2,47 @@
 //
 // KPI row: vat_amount + the order-header extras (fees/rounding/tips — tips is
 // frequently not tracked historically and renders "—" with an explain note),
-// a stacked bar of VAT by category per day, and a by-rate table.
+// and the by-rate table. Reports are decision tables — the VAT-by-category
+// trend chart lives on the dashboard, not here.
+//
+// THE FILING SECTION, and why it had to be added
+//   This page used to show the SALES side only: `vat_amount` by rate, headed
+//   "VAT". That is not the figure a VAT return carries. Every refund the branch
+//   issued still had its VAT sitting inside that number, so the page OVERSTATED
+//   the period's liability by the whole of `returns_vat` — in a month with one
+//   large refund, materially, and in the direction that costs the owner money.
+//
+//   The filing table below states both sides and their difference, per tax
+//   category and rate, which is the shape a return is filled in from:
+//
+//     taxable base (ex-VAT)   VAT on sales   returns base   VAT on returns   net base   net VAT
+//
+//   `net_vat` and `net_product_sales_ex_vat` are REGISTRY metrics with their own
+//   equations and mutation coverage, not arithmetic done in this file: a figure
+//   that goes on a government return does not get computed in a React component.
+//
+//   Sales sit on the `line` fact and returns on the `return` fact; both express
+//   vat_category and vat_rate, so one request answers the whole table and
+//   QueryService merges the two facts on the dimension key.
 import { useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { Coins, HandCoins, Landmark, ReceiptText, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import { buildFiltersBody, displayMetric, setPageExportRequest, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+
+const SEGMENT = "taxes";
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: ["vat_amount", "net_ex_vat"],
+  dimensions: ["vat_rate"],
+  sort: [{ by: "vat_amount", dir: "desc" }],
+}));
 
 function kpiValue(result: AnalyticsResult | undefined, id: string): number | null {
   if (!result) return null;
@@ -38,27 +66,36 @@ interface RateRow {
   net_ex_vat: number | null;
 }
 
+/** One line of the filing table: a (category, rate) pair, both sides of it. */
+interface FilingRow {
+  key: string;
+  category: string;
+  rate: string;
+  net_ex_vat: number | null;
+  vat_amount: number | null;
+  returns_net: number | null;
+  returns_vat: number | null;
+  net_product_sales_ex_vat: number | null;
+  net_vat: number | null;
+}
+
+const FILING_METRICS = [
+  "net_ex_vat",
+  "vat_amount",
+  "returns_net",
+  "returns_vat",
+  "net_product_sales_ex_vat",
+  "net_vat",
+] as const;
+
 export default function Taxes() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
-
-  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({ metrics: ["vat_amount", "fees_total", "rounding_total", "tips_total"], dimensions: [], ...base }),
     [base],
-  );
-  const dayCategoryBody = useMemo<AnalyticsQueryBody>(
-    () => ({
-      metrics: ["vat_amount"],
-      dimensions: [dayDim, "vat_category"],
-      sort: [{ by: dayDim, dir: "asc" }],
-      ...base,
-    }),
-    [base, dayDim],
   );
   const rateBody = useMemo<AnalyticsQueryBody>(
     () => ({
@@ -70,9 +107,27 @@ export default function Taxes() {
     [base],
   );
 
+  // The filing table: sales (line fact) and returns (return fact) in ONE
+  // request, grouped by category × rate. Both facts express both dimensions;
+  // QueryService merges them on the dimension key, so a (category, rate) that
+  // had only returns still appears — a refund of something not sold this month
+  // is exactly the case a hand-joined table drops.
+  const filingBody = useMemo<AnalyticsQueryBody>(
+    () => ({
+      metrics: [...FILING_METRICS],
+      dimensions: ["vat_category", "vat_rate"],
+      sort: [{ by: "vat_amount", dir: "desc" }],
+      // A category × rate grid is tiny, but DEFAULT_LIMIT is 50 and a truncated
+      // TAX table is not a thing that may happen silently.
+      limit: 200,
+      ...base,
+    }),
+    [base],
+  );
+
   const kpis = useAnalyticsQuery("taxes-kpis", kpiBody);
-  const byDayCategory = useAnalyticsQuery("taxes-day-category", dayCategoryBody);
   const byRate = useAnalyticsQuery("taxes-rate", rateBody);
+  const filing = useAnalyticsQuery("taxes-filing", filingBody);
 
   if (byRate.isPending) return <LoadingState />;
   if (byRate.isError) return <ErrorState error={byRate.error} onRetry={() => byRate.refetch()} />;
@@ -87,21 +142,24 @@ export default function Taxes() {
 
   const incomplete = byRate.data?.meta?.completeness?.complete === false;
 
-  // Pivot day×category rows into one chart row per day with a value per category.
-  const categories: Array<{ key: string; label: string }> = [];
-  const byDayMap = new Map<string, Record<string, unknown>>();
-  for (const r of byDayCategory.data?.rows ?? []) {
-    const dayLabel = r.labels[0] ?? String(r.keys[0] ?? "—");
-    const catKey = String(r.keys[1] ?? "—");
-    const catLabel = r.labels[1] ?? catKey;
-    if (!categories.some((c) => c.key === catKey)) categories.push({ key: catKey, label: catLabel });
-    const entry = byDayMap.get(dayLabel) ?? { label: dayLabel };
-    entry[catKey] = displayMetric(r, "vat_amount");
-    byDayMap.set(dayLabel, entry);
-  }
-  const dayChartRows = [...byDayMap.values()];
-
   const tipsMasked = kpiValue(kpis.data, "tips_total") == null;
+
+  const filingRows: FilingRow[] = (filing.data?.rows ?? []).map((r, i) => ({
+    key: `${String(r.keys[0] ?? "")}|${String(r.keys[1] ?? "")}|${i}`,
+    category: r.labels[0] ?? String(r.keys[0] ?? "—"),
+    rate: r.labels[1] ?? String(r.keys[1] ?? "—"),
+    net_ex_vat: displayMetric(r, "net_ex_vat"),
+    vat_amount: displayMetric(r, "vat_amount"),
+    returns_net: displayMetric(r, "returns_net"),
+    returns_vat: displayMetric(r, "returns_vat"),
+    net_product_sales_ex_vat: displayMetric(r, "net_product_sales_ex_vat"),
+    net_vat: displayMetric(r, "net_vat"),
+  }));
+
+  // The period totals come from the server's ROLLUP, never from adding up the
+  // rows on screen: the two differ the moment a limit bites, and a VAT total
+  // that silently excludes a truncated row is the worst number on the page.
+  const filingTotals = filing.data?.totals;
 
   const rateColumns: ColumnDef<RateRow>[] = [
     { id: "rate", header: t("salesReports.dims.vat_rate"), accessor: (r) => r.label, pinStart: true, width: 140 },
@@ -165,42 +223,6 @@ export default function Taxes() {
         })}
       </div>
 
-      {dayChartRows.length > 0 && (
-        <ChartCard
-          title={`${t("salesReports.metrics.vat_amount")} — ${t("salesReports.dims.vat_category")}`}
-          tableLabel={t("salesReports.dims.vat_category")}
-          tableColumns={[
-            { key: "label", label: t(`salesReports.dims.${dayDim}`) },
-            ...categories.map((c) => ({ key: c.key, label: c.label })),
-          ]}
-          tableRows={dayChartRows.map((row) => {
-            const out: Record<string, unknown> = { label: row.label };
-            for (const c of categories) {
-              const v = row[c.key];
-              out[c.key] = typeof v === "number" ? formatCurrency(v) : "—";
-            }
-            return out;
-          })}
-        >
-          <BarChart data={dayChartRows}>
-            <CartesianGrid stroke={palette.grid} vertical={false} />
-            <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-            <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-            <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-            <Legend />
-            {categories.map((c, i) => (
-              <Bar
-                key={c.key}
-                dataKey={c.key}
-                name={c.label}
-                stackId="vat"
-                fill={palette.series[i % palette.series.length]}
-              />
-            ))}
-          </BarChart>
-        </ChartCard>
-      )}
-
       <DataTable<RateRow>
         columns={rateColumns}
         rows={rateRows}
@@ -210,6 +232,75 @@ export default function Taxes() {
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
       />
+
+      <article className="surface p-5" data-testid="vat-filing">
+        <header className="mb-1">
+          <h3 className="text-base font-extrabold text-slate-900">{t("salesReports.filing.title")}</h3>
+          <p className="mt-0.5 text-xs font-bold text-slate-500">{t("salesReports.filing.note")}</p>
+        </header>
+
+        {filing.isError ? (
+          <ErrorState error={filing.error} onRetry={() => filing.refetch()} />
+        ) : filing.isPending ? (
+          <LoadingState rows={4} />
+        ) : filingRows.length === 0 ? (
+          <EmptyState title={t("salesReports.states.empty")} />
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse text-start">
+              <thead className="text-[11px] font-extrabold text-slate-400">
+                <tr>
+                  <th scope="col" className="px-3 py-2 text-start">
+                    {t("salesReports.dims.vat_category")}
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-start">
+                    {t("salesReports.dims.vat_rate")}
+                  </th>
+                  {FILING_METRICS.map((m) => (
+                    <th key={m} scope="col" dir="ltr" className="px-3 py-2 text-end">
+                      {t(`salesReports.metrics.${m}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filingRows.map((r) => (
+                  <tr key={r.key} className="border-b border-slate-100 last:border-0">
+                    <td className="px-3 py-2 text-sm font-bold text-slate-700">{r.category}</td>
+                    <td className="px-3 py-2 text-sm font-bold text-slate-700">{r.rate}</td>
+                    {FILING_METRICS.map((m) => (
+                      <td key={m} dir="ltr" className="px-3 py-2 text-end text-sm font-bold tabular-nums text-slate-600">
+                        {r[m] == null ? "—" : formatCurrency(r[m]!)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+              {filingTotals && (
+                <tfoot>
+                  <tr data-testid="vat-filing-total" className="border-t-2 border-slate-300 bg-slate-100">
+                    <td colSpan={2} className="px-3 py-2.5 text-sm font-extrabold text-slate-900">
+                      {t("salesReports.report.totalRow")}
+                    </td>
+                    {FILING_METRICS.map((m) => {
+                      const v = filingTotals[m];
+                      return (
+                        <td
+                          key={m}
+                          dir="ltr"
+                          className="px-3 py-2.5 text-end text-sm font-extrabold tabular-nums text-slate-900"
+                        >
+                          {typeof v === "number" && Number.isFinite(v) ? formatCurrency(v) : "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        )}
+      </article>
     </section>
   );
 }

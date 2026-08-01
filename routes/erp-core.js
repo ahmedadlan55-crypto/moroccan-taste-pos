@@ -17,6 +17,7 @@
  * journal-writing endpoints.
  */
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — waste must actually deduct warehouse stock + carry a document number.
@@ -29,6 +30,7 @@ const { nextDocNumber } = require('../lib/docNumber');
 // and deduct warehouse stock. Sibling modules right next to the mount are gated
 // with requireRole('admin','manager').
 const requireCapability = require('../middleware/requireCapability');
+const coaTree = require('../lib/coa/tree');
 const trialBalanceEngine = require('../lib/reports/trialBalance');
 const warehouseScopeLib = require('../lib/warehouseScope');
 
@@ -1607,7 +1609,7 @@ router.post('/royalty-runs/:id/approve', requireCapability('royalty.manage'), as
           ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
           : String(d || '').slice(0, 10));
         const post = await gl.postJournal(conn, {
-          journalDate: ymd(run.run_date) || new Date().toISOString().slice(0, 10),
+          journalDate: ymd(run.run_date) || acctDate.journalDate(),
           description: 'Royalty accrual — ' + (run.period_start || '') + ' to ' + (run.period_end || ''),
           referenceType: 'RoyaltyRun',
           referenceId: req.params.id,
@@ -1982,7 +1984,7 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
 
     if (total > 0) {
       const post = await gl.postJournal(db, {
-        journalDate: wasteDate || new Date().toISOString().slice(0, 10),
+        journalDate: acctDate.toAccountingDate(wasteDate || undefined),
         description: 'Waste — ' + (reason || 'other'),
         referenceType: 'WasteEntry',
         referenceId: id,
@@ -2152,7 +2154,7 @@ router.post('/purchase-receipts', requireCapability('purchases.create'), async (
       brandId: brandId || null
     });
     const post = await gl.postJournal(db, {
-      journalDate: receiptDate || new Date().toISOString().slice(0, 10),
+      journalDate: acctDate.toAccountingDate(receiptDate || undefined),
       description: 'Purchase receipt ' + rcpNumber,
       referenceType: 'PurchaseReceipt',
       referenceId: id,
@@ -2247,7 +2249,7 @@ router.get('/reports/trial-balance', requireCapability('finance.reports.view'), 
  *   (shows detail + group totals).
  *   groupBy: 'account' (default) | 'type' | 'brand' | 'branch' | 'cost_center'
  */
-router.get('/reports/pnl', async (req, res) => {
+router.get('/reports/pnl', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     // v5.10.4 — added showZero ('1' to include accounts with no movement)
     const { from, to, branch, brand, costCenter, groupBy, showZero } = req.query;
@@ -2317,8 +2319,9 @@ router.get('/reports/pnl', async (req, res) => {
     if (includeZero && (!groupBy || groupBy === 'account')) {
       const seen = new Set(mapped.map(r => r.accountId));
       const [allAcc] = await db.query(
-        `SELECT id, code, name_ar, type FROM gl_accounts
-         WHERE is_active = 1 AND type IN ('revenue','expense') ORDER BY code`
+        `SELECT id, code, name_ar, type FROM gl_accounts a
+          WHERE is_active = 1 AND type IN ('revenue','expense')
+          ORDER BY ${coaTree.ORDER_BY('a')}`
       );
       const stubs = allAcc
         .filter(a => !seen.has(a.id))
@@ -2356,7 +2359,7 @@ router.get('/reports/pnl', async (req, res) => {
  *   Liabilities = Σ(credit − debit) for liability accounts
  *   Equity   = Σ(credit − debit) for equity accounts + current-period retained earnings
  */
-router.get('/reports/balance-sheet', async (req, res) => {
+router.get('/reports/balance-sheet', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { asOf, branch, brand } = req.query;
     const dim = await _dimCols();
@@ -2428,7 +2431,7 @@ router.get('/reports/balance-sheet', async (req, res) => {
  *   Quick profitability breakdown by dimension (brand/branch/cost_center).
  *   Returns Revenue - Expenses per dimension value.
  */
-router.get('/reports/profitability', async (req, res) => {
+router.get('/reports/profitability', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { from, to, dimension } = req.query;
     const dim = await _dimCols();
@@ -2515,7 +2518,7 @@ router.use(require('./erp/reports/equity-changes'));
  * GET /erp/reports/inventory-valuation?warehouse=&brand=
  * Shows current stock × avg_cost per item, grouped by warehouse.
  */
-router.get('/reports/inventory-valuation', async (req, res) => {
+router.get('/reports/inventory-valuation', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { warehouse, brand } = req.query;
     // Schema probe (documented): warehouse_stock only exists on installs

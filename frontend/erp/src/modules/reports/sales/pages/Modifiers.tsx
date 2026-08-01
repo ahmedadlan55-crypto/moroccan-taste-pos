@@ -5,11 +5,9 @@
 // the KPI row): historical rows carry combo choices only and price_delta is
 // null historically, so meta.completeness drives the
 // states.notAvailableHistorically banner.
-import { lazy, Suspense, useMemo, type ReactElement } from "react";
+import { useMemo } from "react";
 import { Layers, Percent, Sigma } from "lucide-react";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
+import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
@@ -19,6 +17,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -39,22 +38,14 @@ const KIND_METRICS = ["modifier_qty", "modifier_lines"] as const;
 /** The one modifier dimension in the registry: modifier_kind (m.kind). */
 const DIMS = ["modifier_kind"] as const;
 
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+// The per-kind breakdown is the exportable grain: the KPI ratios are
+// cross-fact and dimensionless (see KIND_METRICS note above).
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...KIND_METRICS],
+  dimensions: [...DIMS],
+  sort: [{ by: "modifier_qty", dir: "desc" }],
+}));
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -107,8 +98,6 @@ interface KindRow {
 
 export default function Modifiers() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
 
@@ -221,39 +210,7 @@ export default function Modifiers() {
         })}
       </div>
 
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t("salesReports.metrics.modifier_qty")}
-              subtitle={t("salesReports.dims.modifier_kind")}
-              isEmpty={kindRows.every((r) => r.qty == null)}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t("salesReports.metrics.modifier_qty")} — ${t("salesReports.dims.modifier_kind")}`}
-              tableColumns={[
-                { key: "label", label: t("salesReports.dims.modifier_kind") },
-                { key: "qtyText", label: t("salesReports.metrics.modifier_qty") },
-                { key: "linesText", label: t("salesReports.metrics.modifier_lines") },
-              ]}
-              tableRows={kindRows.map((r) => ({
-                label: r.label,
-                qtyText: r.qty == null ? "—" : formatNumber(r.qty),
-                linesText: r.lines == null ? "—" : formatNumber(r.lines),
-              }))}
-            >
-              <R.BarChart data={kindRows} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterNumber(value)} />
-                <R.Bar dataKey="qty" name={t("salesReports.metrics.modifier_qty")} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-              </R.BarChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
-
+      {/* No chart here: reports are decision tables; charts live on the dashboard. */}
       <DataTable<KindRow>
         columns={columns}
         rows={kindRows}

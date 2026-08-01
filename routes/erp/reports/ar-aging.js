@@ -22,6 +22,7 @@
 
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
 
 function _bucket(days) {
   if (days <= 30)  return '0-30';
@@ -37,7 +38,7 @@ function _daysBetween(a, b) {
   return Math.max(0, Math.floor((bMs - aMs) / 86400000));
 }
 
-router.get('/reports/ar-aging', async (req, res) => {
+router.get('/reports/ar-aging', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const asOfDate = req.query.asOfDate || new Date().toISOString().slice(0, 10);
     const brandId = req.query.brandId || '';

@@ -96,11 +96,9 @@ export const ALL_CAPS = [
   "customers.edit",
   "customers.deactivate",
   "customers.merge",
-  "sales_orders.view",
-  "sales_orders.create",
-  "sales_orders.confirm",
-  "sales_orders.fulfill",
   "invoices.view",
+  // Still in the catalog with the manual invoice form gone: it also guards
+  // POST /order-to-cash/invoices/:id/cancel, which the invoice DETAIL uses.
   "invoices.create",
   "invoices.issue",
   "credit.override",
@@ -161,6 +159,10 @@ export const ALL_CAPS = [
   // own key rather than renaming 'accounting.reports.view' everywhere,
   // per this file's own stated policy of never renaming existing keys.
   "finance.reports.view",
+  // Posting a sales batch writes to the GENERAL LEDGER, which the backend
+  // gates on finance.gl.post — a different act from reading a report, and so
+  // a different capability. routes/erp/sales-posting.js enforces it.
+  "finance.gl.post",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",
   "accounting.journals.create",

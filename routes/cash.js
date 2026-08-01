@@ -685,14 +685,34 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
     if (r.length) return { id: r[0].id, code: r[0].code, name: r[0].name_ar };
   }
   let code = '5205', name = 'مصروفات أخرى';
-  if (recipientType === 'supplier')      { code = '2101'; name = 'حسابات الموردين'; }
+  // ── ONE payables control account ────────────────────────────────────────
+  //
+  // This used to route supplier payments to `2101 حسابات الموردين` while the
+  // ENTIRE V2 procurement cycle (lib/procurement/accounts.js) posts to `2100`.
+  // Two accounts for one liability: the invoice landed on 2100, its payment on
+  // 2101, and neither balance was the supplier's real position. The owner's
+  // ask — one control account «ذمم دائنة», suppliers told apart by a dimension
+  // — is exactly this fix.
+  //
+  // 2100 wins because procurement already owns it and the posted history sits
+  // there. Reclassifying what is already on 2101 is a one-shot BALANCED
+  // journal at boot (server.js), never a rewrite of posted rows.
+  if (recipientType === 'supplier')      { code = '2100'; name = 'ذمم دائنة'; }
   else if (recipientType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
   const [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
   let id;
   if (r.length) id = r[0].id;
-  else {
+  else if (recipientType === 'supplier') {
+    // NEVER auto-create the payables control account. Minting it on demand is
+    // how 2101 came to exist: a missing account silently became a NEW account,
+    // parented wherever the tree happened to allow, and the liability split in
+    // two without anyone deciding to. If it is absent the chart is wrong, and
+    // the honest response is to say so rather than invent one.
+    const err = new Error('حساب الذمم الدائنة (' + code + ') غير موجود في دليل الحسابات');
+    err.code = 'ap_account_missing'; err.status = 500; throw err;
+  } else {
     id = 'GL-' + code;
-    const type = recipientType === 'supplier' ? 'liability' : (recipientType === 'employee' ? 'asset' : 'expense');
+    const type = recipientType === 'employee' ? 'asset' : 'expense';
     const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code[0]]);
     await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
       [id, code, name, type, p.length ? p[0].id : null, 3]);

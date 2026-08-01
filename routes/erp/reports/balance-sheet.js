@@ -25,6 +25,8 @@
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
+const requireCapability = require('../../../middleware/requireCapability');
+const coaTree = require('../../../lib/coa/tree');
 const { todayYmd } = require('../../../lib/expiryPolicy');
 
 // v5.10.79 — Canonical IFRS-conventional ordering inside each Balance
@@ -537,7 +539,7 @@ function _buildCoaTree(allAccounts, balMap, includeZero, netIncome) {
   return result;
 }
 
-router.get('/reports/balance-sheet-ifrs', async (req, res) => {
+router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { asOfDate, compareDate, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';
@@ -562,7 +564,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       "       a.report_section " +
       "FROM gl_accounts a " +
       "WHERE " + LEAF_ACCOUNT_WHERE + " " +
-      "ORDER BY a.code"
+      "ORDER BY " + coaTree.ORDER_BY('a')
     );
     // Full CoA (folders + leaves) for the hierarchical tree view.
     const [allAccountsForTree] = await db.query(
@@ -572,7 +574,7 @@ router.get('/reports/balance-sheet-ifrs', async (req, res) => {
       "       a.report_section " +
       "FROM gl_accounts a " +
       "WHERE a.is_active = 1 " +
-      "ORDER BY a.code"
+      "ORDER BY " + coaTree.ORDER_BY('a')
     );
 
     // Detect dimension columns once so the brand/branch filters degrade

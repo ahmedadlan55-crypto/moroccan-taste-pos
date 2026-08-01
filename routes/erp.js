@@ -9,6 +9,7 @@ const COA_TEMPLATE = require('../db/coa-template.json');
 const { guardDeveloper } = require('../lib/transactionGuards');
 // FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
 const requireCapability = require('../middleware/requireCapability');
+const coaTree = require('../lib/coa/tree');
 // Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
@@ -81,6 +82,7 @@ router.use(require('./erp/projects'));
 router.use(require('./erp/audit-logs'));
 router.use(require('./erp/purchase-reports'));
 router.use(require('./erp/branches-full'));
+router.use(require('./erp/menu-options'));
 router.use(require('./erp/vat'));
 
 // v5.17.2 — Financial reports: each report in its own sub-file. Every
@@ -443,18 +445,20 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
         // parent group (every row gets a deterministic order, the file
         // sequence is preserved). Update mode does this too because the
         // user said: "I want the same order as the file."
-        const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
-        let displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
-        if (displayOrder == null) {
-          const parentKey = String(parentId || '__ROOT__');
-          positionByParent[parentKey] = (positionByParent[parentKey] || 0) + 1;
-          displayOrder = positionByParent[parentKey];
-        }
-
         // v5.10.50 — parent resolution: NAME first, code as fallback.
         // v5.10.53 — code lookup now consults fileCodeToTargetId first,
         // so a parent referenced by its NEW code (which is currently in
         // temp form thanks to Phase A) still resolves correctly.
+        //
+        // ORDER MATTERS — this block MUST stay above the display_order block
+        // below. It used to sit after it, while the display_order fallback
+        // read `parentId` to group rows by parent. `let` is not hoisted with a
+        // value, so that read hit the temporal dead zone and threw
+        // `ReferenceError: Cannot access 'parentId' before initialization` —
+        // caught by the outer handler and returned as a bare HTTP 500. It fired
+        // on exactly the case the comment below calls the EXPECTED one (an
+        // empty «الترتيب» cell), so the import endpoint was broken for the
+        // scenario it was written for.
         let parentId = null;
         function resolveParentByCode(pc){
           return fileCodeToTargetId[pc] || byCode[pc] || null;
@@ -467,9 +471,23 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
           }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-not-found:' + parentName }); }
         } else if (parentCode) {
-          const r = resolveParentByCode(parentCode);
-          if (r) { parentId = r; parentByCode++; }
+          const resolved = resolveParentByCode(parentCode);
+          if (resolved) { parentId = resolved; parentByCode++; }
           else { parentMissing++; errors.push({ id, code, reason: 'parent-code-not-found:' + parentCode }); }
+        }
+
+        // v5.10.51 — read the "الترتيب" cell. Empty/0/non-number → null
+        // (means: leave existing display_order alone OR fall back to bottom).
+        // v5.10.55 — when null, auto-derive from file row position within
+        // parent group (every row gets a deterministic order, the file
+        // sequence is preserved). Update mode does this too because the
+        // user said: "I want the same order as the file."
+        const orderRaw = r['الترتيب'] != null ? r['الترتيب'] : (r.order != null ? r.order : r.displayOrder);
+        let displayOrder = (orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw))) ? null : Number(orderRaw);
+        if (displayOrder == null) {
+          const parentKey = String(parentId || '__ROOT__');
+          positionByParent[parentKey] = (positionByParent[parentKey] || 0) + 1;
+          displayOrder = positionByParent[parentKey];
         }
 
         // v5.10.54 — NEW priority: name+level → id → plain name → code.
@@ -796,15 +814,22 @@ router.post('/gl/accounts/:id/move', requireCapability('finance.accounts.manage'
       // Apply main update
       const [mainClash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newCode, id]);
       if (mainClash.length) throw new Error('تعارض كود: ' + newCode + ' موجود مسبقًا');
-      const newLevel = newParent ? (Number(newParent.level) + 1) : 1;
       await conn.query(
-        'UPDATE gl_accounts SET code = ?, parent_id = ?, level = ? WHERE id = ?',
-        [newCode, parentId || null, newLevel, id]);
+        'UPDATE gl_accounts SET code = ?, parent_id = ? WHERE id = ?',
+        [newCode, parentId || null, id]);
       await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newCode, id]);
       renumbered.push({ id, oldCode: acc.code, newCode });
 
-      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ')');
-      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null };
+      // Levels are DERIVED, and a move changes the depth of the whole subtree.
+      // This route used to set the moved node's own level and stop, so every
+      // descendant kept the depth it had under its old parent — the codes
+      // cascaded (above) but the levels did not. Re-deriving the subtree inside
+      // the same transaction is the only way a move can leave the chart
+      // self-consistent.
+      const levels = await coaTree.recomputeLevels(conn, { rootId: id });
+
+      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ', levels ' + levels.updated + ')');
+      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null, levelsUpdated: levels.updated };
     });
     res.json({ success: true, ...result });
   } catch (e) {
@@ -829,35 +854,46 @@ router.post('/gl/accounts', requireCapability('finance.accounts.manage'), async 
 
     if (id) {
       const [existing] = await db.query('SELECT id FROM gl_accounts WHERE id = ?', [id]);
+      // `level` is DERIVED — the request body's value is deliberately ignored.
+      // It used to be written straight through as `level || 1`, so the client
+      // decided how deep an account was; a stale or hand-crafted payload could
+      // put a level-4 account at level 1 and the trial balance would report a
+      // mismatch nobody could explain. `recomputeLevels` below is the only
+      // writer, and it derives from the actual parent chain.
       if (existing.length) {
         if (hasFolderFlag) {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, activeInt, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, folderInt, activeInt, id]
           );
         } else {
           await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, level=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, level || 1, activeInt, id]
+            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_active=COALESCE(?, is_active) WHERE id=?',
+            [code, nameAr, nameEn || '', type, parentId || null, activeInt, id]
           );
         }
+        // The parent may have changed, which moves this node AND every
+        // descendant to a new depth.
+        await coaTree.recomputeLevels(db, { rootId: id });
         return res.json({ success: true, id });
       }
     }
 
     const newId = id || 'GL-' + Date.now();
     const newActive = hasActiveFlag ? activeInt : 1; // new accounts default active
+    // Insert at a placeholder depth, then derive — same reason as above.
     if (hasFolderFlag) {
       await db.query(
         'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder, is_active) VALUES (?,?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, folderInt, newActive]
+        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, folderInt, newActive]
       );
     } else {
       await db.query(
         'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, level || 1, newActive]
+        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, newActive]
       );
     }
+    await coaTree.recomputeLevels(db, { rootId: newId });
 
     // v5.10.46 — auto-promote the parent to a folder when a child is
     // inserted under it at L3+ (parent.level >= 2 means new child is L3+).
@@ -901,7 +937,7 @@ router.delete('/gl/accounts/:id', requireCapability('finance.accounts.manage'), 
 // flow (preview modal + replace-mode + cascade rename). 150 accounts,
 // 6 IFRS-aligned roots: Assets / Liabilities / Equity / Revenue /
 // COGS / Operating & Admin Expenses.
-router.get('/gl/coa-template', async (req, res) => {
+router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), async (req, res) => {
   res.json({ success: true, accounts: COA_TEMPLATE });
 });
 
@@ -1116,21 +1152,41 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'111',name:'النقدية والبنوك',type:'asset',parent:'11',level:3},
       {code:'11101',name:'عهدة الكاشير / صناديق نقاط البيع (POS)',type:'asset',parent:'111',level:4},
       {code:'11102',name:'الحسابات البنكية الجارية',type:'asset',parent:'111',level:4},
-      {code:'112',name:'المخزون',type:'asset',parent:'11',level:3},
-      {code:'11201',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'112',level:4},
-      {code:'11202',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'112',level:4},
-      {code:'11203',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'112',level:4},
-      {code:'11204',name:'مخزون المنتجات تحت التشغيل (WIP)',type:'asset',parent:'112',level:4},
-      {code:'11205',name:'مخزون المنتجات التامة (Finished Goods)',type:'asset',parent:'112',level:4},
-      {code:'113',name:'الذمم المدينة والأرصدة',type:'asset',parent:'11',level:3},
-      {code:'11301',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'113',level:4},
-      {code:'11302',name:'سلف ومقدمات الموظفين',type:'asset',parent:'113',level:4},
-      {code:'11303',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'113',level:4},
-      // v5.10.61 — مخصص الديون المشكوك في تحصيلها (contra-asset under 113).
-      // Recognized by name keyword "مخصص" + the contra-classification
-      // logic added in the Balance Sheet build below.
-      {code:'1131',name:'مخصص الديون المشكوك في تحصيلها',type:'asset',parent:'113',level:4},
-      {code:'114',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
+      // ── CURRENT-ASSET FAMILIES — aligned to lib/glPosting.js:44-45 ──
+      //
+      // This block used to be the REVERSE of the posting engine, and that was
+      // the source of the owner's «اثنان من المخزون»: the seed put Inventory at
+      // 112 and Receivables at 113, while lib/glPosting.js — the module that
+      // actually WRITES every journal — parents the warehouses (1200/1210/
+      // 1220/1230) under 113 and AR (1150) under 112. Any chart touched by
+      // both ended up with an inventory group in each.
+      //
+      // The canonical map, from lib/glPosting.js:44-45:
+      //   111 Cash & Bank · 112 AR · 113 Inventory · 114 Prepayments ·
+      //   115 Custody · 116 Input VAT
+      //
+      // Safe to change: /gl/seed is a hard no-op once ANY account exists (the
+      // COUNT guard above), so this can never rewrite a live chart — it only
+      // decides what a FRESH install is born with.
+      {code:'112',name:'ذمم العملاء',type:'asset',parent:'11',level:3},
+      {code:'11201',name:'ذمم تطبيقات التوصيل (جاهز، هنقرستيشن..)',type:'asset',parent:'112',level:4},
+      // Contra-asset under AR. Recognised by the name keyword «مخصص» plus the
+      // contra-classification logic in the Balance Sheet build below.
+      {code:'1121',name:'مخصص الديون المشكوك في تحصيلها',type:'asset',parent:'112',level:4},
+      {code:'113',name:'المخزون',type:'asset',parent:'11',level:3},
+      {code:'11301',name:'مخزون المواد الخام (البن، الحليب، المنكهات)',type:'asset',parent:'113',level:4},
+      {code:'11302',name:'مخزون المنتجات الجاهزة (المخبوزات، الحلويات)',type:'asset',parent:'113',level:4},
+      {code:'11303',name:'مخزون مواد التغليف والتعبئة (الأكواب، الأكياس)',type:'asset',parent:'113',level:4},
+      {code:'11304',name:'مخزون المنتجات تحت التشغيل (WIP)',type:'asset',parent:'113',level:4},
+      {code:'11305',name:'مخزون المنتجات التامة (Finished Goods)',type:'asset',parent:'113',level:4},
+      {code:'114',name:'المصروفات المدفوعة مقدمًا',type:'asset',parent:'11',level:3},
+      {code:'11401',name:'إيجارات مدفوعة مقدماً',type:'asset',parent:'114',level:4},
+      // 115 = Custody. routes/custody.js creates employee custody accounts as
+      // 115x under this group — seeding it means the first custody entry finds
+      // a real home instead of minting one wherever it lands.
+      {code:'115',name:'العهد والسلف',type:'asset',parent:'11',level:3},
+      {code:'11501',name:'سلف ومقدمات الموظفين',type:'asset',parent:'115',level:4},
+      {code:'116',name:'ضريبة المدخلات',type:'asset',parent:'11',level:3},
       {code:'12',name:'الأصول الثابتة',type:'asset',parent:'1',level:2},
       {code:'121',name:'معدات وآلات الكافيه',type:'asset',parent:'12',level:3},
       {code:'122',name:'أجهزة نقاط البيع والأنظمة',type:'asset',parent:'12',level:3},
@@ -1148,6 +1204,14 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'21203',name:'فواتير منافع مستحقة',type:'liability',parent:'212',level:4},
       {code:'213',name:'الضرائب',type:'liability',parent:'21',level:3},
       {code:'21301',name:'ضريبة القيمة المضافة المستحقة (VAT)',type:'liability',parent:'213',level:4},
+      // 215 — the parent lib/glPosting.js CORE_ACCOUNTS declares for
+      // ROYALTY_PAYABLE (2310) and PLATFORM_PAYABLE (2320). It was absent from
+      // this seed, so `ensureCoreAccounts` — which walks UP looking for the
+      // declared parent and gives up when none of the prefixes exist — created
+      // both as parentless ROOTS. ADR 0002 recorded exactly this drift on the
+      // live chart. Every aggregator commission the register posts credits
+      // 2320, so this is not a hypothetical branch.
+      {code:'215',name:'مستحقات الامتياز والمنصات',type:'liability',parent:'21',level:3},
       // ═══ 3 حقوق الملكية ═══
       {code:'3',name:'حقوق الملكية',type:'equity',parent:null,level:1},
       {code:'31',name:'رأس المال',type:'equity',parent:'3',level:2},
@@ -1177,22 +1241,37 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'5113',name:'تكلفة مواد التعبئة والتغليف',type:'expense',parent:'511',level:4},
       {code:'512',name:'الهالك والتوالف',type:'expense',parent:'51',level:3},
       {code:'5121',name:'هالك المواد الغذائية والبن',type:'expense',parent:'512',level:4},
+      // ── 521/522/523 belong to the POSTING engine, not to opex ──
+      //
+      // The seed used to name 521 «الرواتب والأجور», 522 «الإيجارات والمنافع»
+      // and 523 «التشغيل والصيانة». But lib/glPosting.js CORE_ACCOUNTS parents
+      // its waste accounts under 521 (WASTE_EXPENSE 5200, WASTE_RAW 5121,
+      // WASTE_FINISHED 5122, WASTE_EXPIRED 5123, WASTE_SPILL 5124,
+      // WASTE_RETURNS 5125), stock/production variance under 522
+      // (STOCK_VARIANCE 5300, PRODUCTION_VARIANCE 5420) and purchase price
+      // variance under 523 (PPV 5350). Those parents are created automatically
+      // on the first posted journal — so on a chart seeded the old way, every
+      // waste entry in the business landed under «الرواتب والأجور».
+      //
+      // The families the posting engine owns keep their numbers; payroll, rent
+      // and maintenance move to 526/527/528, which nothing else claims.
       {code:'52',name:'المصروفات التشغيلية',type:'expense',parent:'5',level:2},
-      {code:'521',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
-      // v5.10.61 — sub-accounts under 521 so payroll postings can be
-      // segregated by role/function (matches the granularity of 522/523/524).
-      {code:'5211',name:'رواتب الإدارة والمحاسبة',type:'expense',parent:'521',level:4},
-      {code:'5212',name:'رواتب الكاشيرز والباريستا',type:'expense',parent:'521',level:4},
-      {code:'5213',name:'رواتب الإنتاج (الباستري)',type:'expense',parent:'521',level:4},
-      {code:'5214',name:'مكافآت وحوافز',type:'expense',parent:'521',level:4},
-      {code:'5215',name:'تأمينات اجتماعية (GOSI)',type:'expense',parent:'521',level:4},
-      {code:'522',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
-      {code:'5221',name:'إيجارات الفروع',type:'expense',parent:'522',level:4},
-      {code:'5222',name:'الكهرباء والماء',type:'expense',parent:'522',level:4},
-      {code:'5223',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'522',level:4},
-      {code:'523',name:'التشغيل والصيانة',type:'expense',parent:'52',level:3},
-      {code:'5231',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'523',level:4},
-      {code:'5232',name:'أدوات النظافة والتعقيم',type:'expense',parent:'523',level:4},
+      {code:'521',name:'الهدر والتوالف',type:'expense',parent:'52',level:3},
+      {code:'522',name:'فروقات الجرد والإنتاج',type:'expense',parent:'52',level:3},
+      {code:'523',name:'فروق أسعار المشتريات',type:'expense',parent:'52',level:3},
+      {code:'526',name:'الرواتب والأجور',type:'expense',parent:'52',level:3},
+      {code:'5261',name:'رواتب الإدارة والمحاسبة',type:'expense',parent:'526',level:4},
+      {code:'5262',name:'رواتب الكاشيرز والباريستا',type:'expense',parent:'526',level:4},
+      {code:'5263',name:'رواتب الإنتاج (الباستري)',type:'expense',parent:'526',level:4},
+      {code:'5264',name:'مكافآت وحوافز',type:'expense',parent:'526',level:4},
+      {code:'5265',name:'تأمينات اجتماعية (GOSI)',type:'expense',parent:'526',level:4},
+      {code:'527',name:'الإيجارات والمنافع',type:'expense',parent:'52',level:3},
+      {code:'5271',name:'إيجارات الفروع',type:'expense',parent:'527',level:4},
+      {code:'5272',name:'الكهرباء والماء',type:'expense',parent:'527',level:4},
+      {code:'5273',name:'اشتراكات الإنترنت والاتصالات',type:'expense',parent:'527',level:4},
+      {code:'528',name:'التشغيل والصيانة',type:'expense',parent:'52',level:3},
+      {code:'5281',name:'صيانة مكائن القهوة والمعدات',type:'expense',parent:'528',level:4},
+      {code:'5282',name:'أدوات النظافة والتعقيم',type:'expense',parent:'528',level:4},
       {code:'524',name:'التسويق والعمولات',type:'expense',parent:'52',level:3},
       {code:'5241',name:'عمولات تطبيقات التوصيل',type:'expense',parent:'524',level:4},
       {code:'5242',name:'الحملات الإعلانية والتسويق',type:'expense',parent:'524',level:4},
@@ -1207,6 +1286,20 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
       {code:'532',name:'الرسوم الحكومية والتراخيص',type:'expense',parent:'53',level:3},
       {code:'533',name:'العمولات البنكية ورسوم شبكات الدفع',type:'expense',parent:'53',level:3},
       {code:'534',name:'مصروفات الضيافة والنثريات',type:'expense',parent:'53',level:3},
+      // ═══ 6 مصروفات أخرى — the family CORE_ACCOUNTS points at ═══
+      //
+      // lib/glPosting.js declares parent '6' for OVERHEAD_APPLIED (5410) and
+      // PLATFORM_COMMISSION (5500), and parent '651' for FRANCHISE_FEE (6100).
+      // Neither existed in this seed, and `ensureCoreAccounts` walks UP the
+      // parent code looking for an ancestor — when none of '6' / (nothing) is
+      // found it gives up and inserts the account as a PARENTLESS ROOT.
+      //
+      // ADR 0002 recorded exactly this on the live chart: 5410, 5500 and 6100
+      // sitting as stray roots beside «الأصول» and «الإيرادات». 5500 is not
+      // theoretical — the register credits it on every aggregator order.
+      {code:'6',name:'مصروفات أخرى',type:'expense',parent:null,level:1},
+      {code:'65',name:'الامتياز والتحميلات',type:'expense',parent:'6',level:2},
+      {code:'651',name:'رسوم الامتياز',type:'expense',parent:'65',level:3},
     ];
 
     // Build a code→id map so parent references work
@@ -1232,22 +1325,37 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
 // whose parent_id chain is anchored at code 12 (الأصول الثابتة) instead of
 // 112 (المخزون). Idempotent. Also exported as a helper so server.js can
 // run it once at boot for self-healing on existing deployments.
+// THE CAUSE OF «لماذا هناك اثنان من المخزون في الشجرة».
+//
+// This helper used to resolve — and CREATE — `112 المخزون`, then drag every
+// inventory-named account under it. It runs at EVERY BOOT (server.js:3413).
+//
+// Later in the SAME boot, server.js:4893 (v5.11.14) runs with the opposite
+// belief. Its own comment states that `112` is «الذمم المدينة / AR in the new
+// chart» and it moves the inventory codes 1200/1210/1220/1230 to `113` and AR
+// `1150` to `112`.
+//
+// So one boot created an inventory group at `112` and then moved inventory to
+// `113`. Two groups named المخزون, re-created on every single restart. It was
+// never a historical accident to be cleaned up once — it was a standing
+// contradiction between two migrations.
+//
+// `113` wins, and not by preference: `lib/glPosting.js` is the authority that
+// actually WRITES journals — every sale, purchase, waste entry and till
+// movement — and its CORE_ACCOUNTS parents 1200/1210/1220/1230 under `113`
+// with the header map at :44-45 (112 = AR · 113 = Inventory · 115 = Custody).
+// server.js:4893 already agrees with it. This helper was the only dissenter.
+const INVENTORY_GROUP_CODE = '113';
+
 async function _repairInventoryClassification(db) {
   const repaired = [];
-  // Resolve target parent (112 المخزون). If missing, try to create it under 11.
-  let [p112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112'");
-  let target112Id = p112.length ? p112[0].id : null;
-  if (!target112Id) {
-    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-    if (p11.length) {
-      target112Id = 'GL-112';
-      await db.query(
-        "INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)",
-        [target112Id, '112', 'المخزون', 'asset', p11[0].id, 3]
-      );
-    }
-  }
-  if (!target112Id) return { ok: false, reason: 'no-parent-112', repaired };
+  // Resolve the inventory group. It is NEVER created here: creating a group
+  // from a repair helper is exactly how the second one appeared. If the chart
+  // has no `113`, this reports that and does nothing — a missing group is a
+  // seeding problem, not something a classification pass should paper over.
+  const [pInv] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [INVENTORY_GROUP_CODE]);
+  const target112Id = pInv.length ? pInv[0].id : null;
+  if (!target112Id) return { ok: false, reason: 'no-inventory-group-' + INVENTORY_GROUP_CODE, repaired };
 
   // Find candidates: name contains inventory keywords AND parent chain leads to code 12
   const inventoryRegex = /(مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material)/i;
@@ -1259,20 +1367,28 @@ async function _repairInventoryClassification(db) {
     if (depth > 10) return null;
     const a = byId[id]; if (!a) return null;
     if (a.code === '12') return '12';
-    if (a.code === '112') return '112';
+    if (a.code === INVENTORY_GROUP_CODE) return INVENTORY_GROUP_CODE;
     if (!a.parent_id) return a.code;
     return ancestorCode(a.parent_id, depth + 1);
   }
   for (const a of allAcc) {
     if (!inventoryRegex.test(a.name_ar || '')) continue;
-    if (a.code === '112') continue;            // skip the target parent itself
-    if (String(a.code).startsWith('112')) continue; // already correct
+    if (a.code === INVENTORY_GROUP_CODE) continue;            // the target itself
+    if (String(a.code).startsWith(INVENTORY_GROUP_CODE)) continue; // already correct
     const anc = ancestorCode(a.parent_id);
+    // Narrow by design: only rescues accounts stranded under `12` (fixed
+    // assets). It deliberately does NOT sweep the whole chart — an
+    // inventory-NAMED account can legitimately sit elsewhere (a provision, a
+    // clearing account), and a boot-time pass that re-parents on a name match
+    // alone is how accounts started migrating on their own.
     if (anc === '12') {
-      // Misclassified — re-parent to 112
       await db.query("UPDATE gl_accounts SET parent_id = ? WHERE id = ?", [target112Id, a.id]);
       repaired.push({ id: a.id, code: a.code, name: a.name_ar, oldParent: a.parent_id, newParent: target112Id });
     }
+  }
+  // Depth changed for anything that moved.
+  if (repaired.length) {
+    try { await coaTree.recomputeLevels(db); } catch (_) {}
   }
   return { ok: true, repaired };
 }
@@ -1542,11 +1658,16 @@ async function _repairCoaByPrefix(db) {
     }
 
     const currentParentCode = acc.parent_id ? (byId[acc.parent_id] || {}).code || null : null;
-    const expectedLevel = preferredParent.code.length + 1
-                       || (Number(preferredParent.level) || 1) + 1;
-    // Use the preferred parent's level + 1 — more reliable than code.length
-    // for non-strict numeric codes.
-    const targetLevel = (Number(preferredParent.level) || 1) + 1;
+    // `expectedLevel` was computed here and never used — and `A || B` on two
+    // numbers only ever picks B when A is 0, so it was not even the fallback it
+    // looked like. Deleted.
+    //
+    // targetLevel is still written below so this helper's own before/after
+    // report stays truthful, but it is no longer the last word: every caller
+    // ends with coaTree.recomputeLevels(), which re-derives depth from the
+    // final tree. Writing a level here and deriving it there cannot disagree,
+    // because the derive always runs after the last re-parent.
+    const targetLevel = (Number(preferredParent.level) || coaTree.DEPTH_BASE) + 1;
 
     const parentChanged = (acc.parent_id !== preferredParent.id);
     const levelChanged  = (Number(acc.level) !== targetLevel);
@@ -1577,7 +1698,14 @@ async function _repairCoaByPrefix(db) {
     }
   }
 
-  return { repaired, skipped };
+  // Derive every level from the tree this helper just rewrote. Without this,
+  // an account re-parented above could leave its own DESCENDANTS at the depth
+  // they had under the old parent — the helper only ever touched the node it
+  // moved. Runs on the same `db` handle it was given, so inside a caller's
+  // transaction it is part of that transaction.
+  const levels = await coaTree.recomputeLevels(db);
+
+  return { repaired, skipped, levelsDerived: levels.updated };
 }
 // Export so server.js / boot scripts can run it idempotently if needed.
 router._repairCoaByPrefix = _repairCoaByPrefix;
@@ -1642,12 +1770,26 @@ const _COA_ROOT_TYPE_BY_CODE = {
   '1': 'asset', '2': 'liability', '3': 'equity', '4': 'revenue', '5': 'expense'
 };
 
-function _coaComputeDepth(byId, a, seen) {
-  if (!a || !a.parent_id) return 0;
-  if (seen.has(a.id)) return 0;
-  seen.add(a.id);
-  const p = byId[a.parent_id];
-  return p ? _coaComputeDepth(byId, p, seen) + 1 : 0;
+// THE BUG THE OWNER REPORTED AS "a problem with account levels".
+//
+// This returned **0** for a root, while every other level writer and reader in
+// the system says **1** (`_repairCoaByPrefix` :1513, `_coaFixRootsAndOrphans`
+// :1987, and lib/reports/trialBalance.js). `POST /gl/deep-repair` ran BOTH in
+// one transaction — an early step set roots to 1, then `_coaAutoFixLevels`
+// recomputed 0-based — so a single click shifted every account in the chart
+// down one level. The trial balance then flagged `levelMismatch` on EVERY
+// account, and because that feeds `isClean`, the whole report rendered
+// «غير سليم» even though the ledger arithmetic was perfect.
+//
+// Now a thin adapter over the one 1-based, cycle-safe implementation in
+// lib/coa/tree.js — the same one the trial balance uses, so the two can no
+// longer disagree. The old `seen` parameter is accepted and ignored: the
+// shared walk carries its own cycle protection.
+function _coaComputeDepth(byId, a) {
+  if (!a || !a.id) return coaTree.DEPTH_BASE;
+  const rows = Array.isArray(byId) ? byId : Object.values(byId || {});
+  const { depth } = coaTree.computeDepths(rows, new Map(rows.map((r) => [r.id, r])));
+  return depth.get(a.id) || coaTree.DEPTH_BASE;
 }
 
 // Snapshot of integrity issues. Used before/after deep-repair to
@@ -1690,17 +1832,15 @@ async function _coaDiagnoseSnapshot(db) {
   const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
   const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
   let levelMismatch = 0, cycles = 0;
+  // One tree walk for the whole chart, not one per account: the shared
+  // computeDepths already memoizes across the entire set and reports cycle
+  // members itself, so the per-account ancestry crawl below is only kept for
+  // its 50-hop guard on data the walk would classify as a cycle anyway.
+  const { depth: depthMap, cycleMembers } = coaTree.computeDepths(
+    allAccs, new Map(allAccs.map((r) => [r.id, r])));
   for (const a of allAccs) {
-    const seen = new Set();
-    let walker = a, hops = 0, cycled = false;
-    while (walker && walker.parent_id) {
-      if (seen.has(walker.id)) { cycled = true; break; }
-      seen.add(walker.id);
-      walker = byId[walker.parent_id] || null;
-      if (++hops > 50) break;
-    }
-    if (cycled) { cycles++; continue; }
-    const d = _coaComputeDepth(byId, a, new Set());
+    if (cycleMembers.has(a.id)) { cycles++; continue; }
+    const d = depthMap.get(a.id) || coaTree.DEPTH_BASE;
     if (Number(a.level || 0) !== d) levelMismatch++;
   }
   out.levelMismatch = levelMismatch;
@@ -2016,26 +2156,25 @@ async function _coaFixRootsAndOrphansByPrefix(db) {
   return fixed;
 }
 
+// Promote dangling-parent orphans to roots, then re-derive every level from
+// the actual tree. Two behaviour changes, both deliberate:
+//
+//   • an orphan promoted to a root gets level **1**, not 0. It IS a root once
+//     its dangling parent_id is cleared, and a root is level 1 everywhere else
+//     in the system. Writing 0 here is what seeded the whole 0-vs-1 mess.
+//   • levels come from lib/coa/tree.js `recomputeLevels`, the same walk the
+//     trial balance uses, so `diagnostics.levelMismatches` can finally reach
+//     empty instead of listing the entire chart after every repair.
 async function _coaAutoFixLevels(db) {
-  let orphansPromoted = 0, levelsCorrected = 0;
   const [orphans] = await db.query(
     `SELECT a.id FROM gl_accounts a
       WHERE a.parent_id IS NOT NULL
         AND a.parent_id NOT IN (SELECT id FROM (SELECT id FROM gl_accounts) p)`);
   for (const o of orphans) {
-    await db.query('UPDATE gl_accounts SET parent_id = NULL, level = 0 WHERE id = ?', [o.id]);
-    orphansPromoted++;
+    await db.query('UPDATE gl_accounts SET parent_id = NULL WHERE id = ?', [o.id]);
   }
-  const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
-  const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-  for (const a of allAccs) {
-    const d = _coaComputeDepth(byId, a, new Set());
-    if (Number(a.level || 0) !== d) {
-      await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
-      levelsCorrected++;
-    }
-  }
-  return { orphansPromoted, levelsCorrected };
+  const { updated } = await coaTree.recomputeLevels(db);
+  return { orphansPromoted: orphans.length, levelsCorrected: updated };
 }
 
 // v5.10.43 — defense in depth: even if the boot migration failed, this
@@ -2114,13 +2253,9 @@ router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), asy
       const typeFixes = await _coaAlignTypeWithParent(conn);
       console.log('[deep-repair] step 5: alignTypeWithParent → ' + (typeFixes ? typeFixes.length : 0) + ' types corrected');
 
-      lastStep = 'autoFixLevels';
-      const lvl = await _coaAutoFixLevels(conn);
-      console.log('[deep-repair] step 6: autoFixLevels → ' + lvl.orphansPromoted + ' orphans promoted, ' + lvl.levelsCorrected + ' levels corrected');
-
       lastStep = 'recomputeBalances';
       const balRecomp = await _coaRecomputeBalances(conn);
-      console.log('[deep-repair] step 7: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
+      console.log('[deep-repair] step 6: recomputeBalances → ' + balRecomp + ' balances rebuilt from gl_entries');
 
       // v5.10.44 — last-resort topology guarantee. If any account is still
       // in the wrong root subtree after the smart helpers, force-reparent
@@ -2128,11 +2263,22 @@ router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), asy
       // hierarchical-but-wrong.
       lastStep = 'bruteForceTopology';
       const brute = await _coaBruteForceRootTopology(conn);
-      console.log('[deep-repair] step 7.5: bruteForceTopology → ' + brute.moved.length + ' force-reparented, missingRoots=[' + (brute.missingRoots || []).join(',') + ']');
+      console.log('[deep-repair] step 7: bruteForceTopology → ' + brute.moved.length + ' force-reparented, missingRoots=[' + (brute.missingRoots || []).join(',') + ']');
 
       lastStep = 'forceFolderConsistency';
       const folderFixes = await _coaForceFolderConsistency(conn);
       console.log('[deep-repair] step 8: forceFolderConsistency → roots=' + folderFixes.roots + ' parents=' + folderFixes.parents);
+
+      // ── LEVELS LAST. This ordering is the fix, not a tidy-up. ──
+      // `autoFixLevels` used to run BEFORE `bruteForceTopology`, which
+      // re-parents accounts — so every level it had just computed was stale the
+      // moment the transaction committed. Combined with the old 0-based depth
+      // helper, one click on "deep repair" left the entire chart one level off
+      // and made the trial balance render «غير سليم». Derive depth only after
+      // the last step that can move a node.
+      lastStep = 'autoFixLevels';
+      const lvl = await _coaAutoFixLevels(conn);
+      console.log('[deep-repair] step 9: autoFixLevels → ' + lvl.orphansPromoted + ' orphans promoted, ' + lvl.levelsCorrected + ' levels corrected (1-based)');
 
       // v5.10.44 — final independent verification: walk every account's
       // parent chain and list any whose reachable root still doesn't
@@ -2533,6 +2679,45 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     const [p] = await db.query('SELECT * FROM accounting_periods WHERE id=?', [req.params.id]);
     if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
     const period = p[0];
+
+    // ── «ترحيل المبيعات» guard ────────────────────────────────────────────
+    // The SECOND close implementation. routes/erp/periods.js carries the same
+    // guard; putting it on only one makes the bypass a matter of knowing which
+    // URL to call.
+    //
+    // Sealing a period whose sales have not reached the ledger produces a
+    // trial balance that looks finished and is wrong. Only on a real close —
+    // `soft_closed` is a review state, and reopening must never be blocked.
+    if (status === 'closed' && period.status !== 'closed') {
+      try {
+        await require('./erp/sales-posting').assertNoUnpostedSales(db, {
+          from: period.start_date, to: period.end_date,
+          brandId: period.brand_id, branchId: period.branch_id });
+      } catch (guardErr) {
+        if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
+          const wantsForce = req.body && req.body.force === true;
+          const reason = String((req.body && req.body.reason) || '').trim();
+          const mayOverride = await requireCapability
+            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
+          if (!wantsForce || !mayOverride || reason.length < 10) {
+            return res.status(409).json({
+              success: false, error: 'UNPOSTED_SALES_IN_PERIOD',
+              message: guardErr.message,
+              unpostedCount: guardErr.unpostedCount,
+              firstDay: guardErr.firstDay, lastDay: guardErr.lastDay,
+              link: '/accounting/sales-posting?from=' + (guardErr.firstDay || '') +
+                    '&to=' + (guardErr.lastDay || ''),
+              overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
+            });
+          }
+          const stranded = await require('./erp/sales-posting').strandUnposted(db,
+            { from: period.start_date, to: period.end_date });
+          console.warn('[period.lock] FORCED close of ' + req.params.id + ' by ' + username +
+            ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
+        } else { throw guardErr; }
+      }
+    }
+
     if (period.status === 'closed' && status !== 'closed') {
       // Re-opening a hard-closed period requires a force flag (audit safety).
       if (!req.body || req.body.force !== true) {
@@ -3054,25 +3239,14 @@ router.post('/gl/repair', requireCapability('finance.accounts.manage'), async (r
         const personName = entry.account_name.replace(/عهدة\s*/, '').trim();
         if (personName) {
           try {
-            // Ensure parent account exists
-            const parentCode = '1130';
-            const [parentRow] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [parentCode]);
-            let parentId = null;
-            if (!parentRow.length) {
-              const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' OR code = '113' ORDER BY code DESC LIMIT 1");
-              parentId = p11.length ? p11[0].id : null;
-              await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-                ['GL-1130', '1130', 'عهد الموظفين', 'asset', parentId, 3]);
-              parentId = 'GL-1130';
-            } else { parentId = parentRow[0].id; }
-            // Create child account
-            const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
-            let nextCode = '11301';
-            if (children.length) { nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0) + 1); }
-            const newId = 'GL-' + nextCode;
-            await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-              [newId, nextCode, entry.account_name, 'asset', parentId, 4]);
-            accId = newId;
+            // A SECOND custody-account creator, a hand-copy of the one in
+            // routes/custody.js — and it carried the same defect: code `1130`
+            // parented under `113`, which is INVENTORY per the canonical map in
+            // lib/glPosting.js:44-45. That is why the owner saw «العهدة تحت
+            // بند المخزون». Both creators now go through ONE implementation
+            // (custody is `115`), so they cannot drift apart again.
+            const acc = await require('./custody').createCustodyUserGLAccount(personName);
+            accId = acc.id;
             created++;
           } catch(e) { /* Production: removed debug log */ }
         }
@@ -3254,7 +3428,7 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 //   • unbalancedJournals: posted journals where SUM(debit) ≠ SUM(credit)
 //   • orphanEntries: entries pointing at deleted accounts
 //   • missingCoreAccounts: required core accounts (CASH/INVENTORY/COGS…) absent
-router.get('/gl/diagnose', async (req, res) => {
+router.get('/gl/diagnose', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
     const CORE_CODES = ['1110','1120','1150','1200','2100','2210','3100','4100','5100','5200','5300'];
 
@@ -3310,22 +3484,18 @@ router.get('/gl/diagnose', async (req, res) => {
     const missingCoreAccounts = CORE_CODES.filter(c => !presentSet.has(c));
 
     // Computed levels: walk parent chain and compare against stored level
+    // A THIRD private 0-based depth walk used to live here. It reported
+    // `levelMismatch` against a base of 0 while the stored levels are 1-based,
+    // so /gl/diagnose listed the entire chart as mismatched — the diagnostic
+    // itself was the thing that was wrong. One shared 1-based walk now.
     const [allAccs] = await db.query('SELECT id, code, name_ar, parent_id, level FROM gl_accounts');
-    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-    const computeDepth = function(a, seen) {
-      if (!a || !a.parent_id) return 0;
-      if (seen.has(a.id)) return -1; // cycle
-      seen.add(a.id);
-      const p = byId[a.parent_id];
-      if (!p) return 0;  // orphan; treat as root
-      const d = computeDepth(p, seen);
-      return d < 0 ? d : d + 1;
-    };
+    const { depth: _depthMap, cycleMembers: _cycleSet } = coaTree.computeDepths(
+      allAccs, new Map(allAccs.map((r) => [r.id, r])));
     const levelMismatch = [];
     const cycles = [];
     for (const a of allAccs) {
-      const d = computeDepth(a, new Set());
-      if (d < 0) { cycles.push({ id: a.id, code: a.code, name_ar: a.name_ar }); continue; }
+      if (_cycleSet.has(a.id)) { cycles.push({ id: a.id, code: a.code, name_ar: a.name_ar }); continue; }
+      const d = _depthMap.get(a.id) || coaTree.DEPTH_BASE;
       if (Number(a.level || 0) !== d) {
         levelMismatch.push({ id: a.id, code: a.code, name_ar: a.name_ar, storedLevel: a.level, computedLevel: d });
       }
@@ -3475,23 +3645,13 @@ router.post('/gl/auto-fix', requireCapability('finance.accounts.manage'), async 
       result.orphansPromoted++;
     }
 
-    // 2. Recompute levels for everyone
-    const [allAccs] = await db.query('SELECT id, parent_id, level FROM gl_accounts');
-    const byId = {}; allAccs.forEach(a => { byId[a.id] = a; });
-    const depth = function(a, seen) {
-      if (!a || !a.parent_id) return 0;
-      if (seen.has(a.id)) return 0;
-      seen.add(a.id);
-      const p = byId[a.parent_id];
-      return p ? depth(p, seen) + 1 : 0;
-    };
-    for (const a of allAccs) {
-      const d = depth(a, new Set());
-      if (Number(a.level || 0) !== d) {
-        await db.query('UPDATE gl_accounts SET level = ? WHERE id = ?', [d, a.id]);
-        result.levelsCorrected++;
-      }
-    }
+    // 2. Recompute levels for everyone.
+    // A FOURTH private 0-based depth walk used to live here — and unlike the
+    // diagnostic one, this endpoint WRITES. Every account it "corrected" was
+    // pushed one level too shallow, which is one of the ways the chart ended up
+    // 0-based in the first place. One shared 1-based derive now.
+    const levels = await coaTree.recomputeLevels(db);
+    result.levelsCorrected += levels.updated;
 
     res.json({ success: true, ...result });
   } catch(e) {

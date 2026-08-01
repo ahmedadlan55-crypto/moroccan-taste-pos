@@ -35,15 +35,28 @@ export function formatQty(value: number | null | undefined, unit?: string): stri
   return unit ? `${n} ${unit}` : n;
 }
 
-// Arabic month/day names, LATIN digits (numberingSystem 'latn'), GREGORIAN
-// calendar (financial documents use Gregorian dates, never Hijri).
-const _dateTime = new Intl.DateTimeFormat("ar", {
+// DATE POLICY (owner's instruction): every date in the product renders in
+// ENGLISH — English month names AND Latin digits — regardless of UI language.
+//
+// It used to be `Intl.DateTimeFormat("ar", …)`, which gave Latin digits but
+// ARABIC month names ("28 يوليو 2026"). Mixing an Arabic month name into a
+// financial document that a bank, an auditor or ZATCA may read is a
+// readability problem, and it made the same date look different depending on
+// which screen you opened.
+//
+// `en-GB` is the deliberate choice over `en-US`: day-first ("28 Jul 2026")
+// matches how dates are written in Saudi, and a spelled month can never be
+// misread the way 03/04 can.
+//
+// GREGORIAN is pinned explicitly — financial documents are never Hijri.
+const _dateTime = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "medium",
   timeStyle: "short",
   numberingSystem: "latn",
   calendar: "gregory",
+  hour12: false,
 });
-const _date = new Intl.DateTimeFormat("ar", { dateStyle: "medium", numberingSystem: "latn", calendar: "gregory" });
+const _date = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", numberingSystem: "latn", calendar: "gregory" });
 
 function _parse(value: string | null | undefined): Date | null {
   if (!value) return null;

@@ -29,7 +29,7 @@
  *  • Online-only: without a connection the dialog shows «الجرد يتطلب اتصالًا».
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Circle, ClipboardCheck, Printer, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, ClipboardCheck, Printer, Trash2 } from "lucide-react";
 import { usePos } from "@/state/store";
 import {
   createStocktakeV2,
@@ -39,7 +39,12 @@ import {
   startStocktakeV2,
   stkIdempotencyKey,
   submitStocktakeV2,
+  listStocktakeTemplates,
+  createStocktakeTemplate,
+  updateStocktakeTemplate,
+  deleteStocktakeTemplate,
   type InvItem,
+  type StocktakeTemplate,
 } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
 import { printHtml } from "@/lib/receipt";
@@ -48,7 +53,8 @@ import { translateApiError } from "@/i18n/errorCodes";
 import { stocktakeDialog as stocktakeDialogAr } from "@/i18n/dictionaries/ar/stocktakeDialog";
 import { stocktakeDialog as stocktakeDialogEn } from "@/i18n/dictionaries/en/stocktakeDialog";
 import { Dialog } from "../Dialog";
-import { Button, EmptyState, ErrorBanner, Skeleton, cn } from "../ui";
+import { Button, EmptyState, ErrorBanner, Skeleton } from "../ui";
+import { ItemMultiPicker } from "../ItemMultiPicker";
 
 // ── Shared helpers (also used by RequisitionsDialog — keep signatures stable) ─
 
@@ -205,8 +211,12 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
 
   const [items, setItems] = useState<InvItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CstLine[]>(() => loadCart());
+  const [templates, setTemplates] = useState<StocktakeTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  /** Ticked-but-not-yet-inserted ids — see insertStaged(). */
+  const [staged, setStaged] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [step, setStep] = useState<Step>("entry");
   const [busy, setBusy] = useState(false);
@@ -248,10 +258,17 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     if (!open) return;
     setStep("entry");
     setResult(null);
-    setQuery("");
     setCart(loadCart()); // draft survives close/reopen (stocktake-persistent-cart)
     setNotes(""); // notes are NOT persisted — every open starts from a blank note
     if (online) void fetchItems();
+    // Saved sheets load alongside the items, and their failure is NOT the
+    // cashier's problem: an empty list just means the picker behaves as before.
+    setTemplateId("");
+    if (online) {
+      void listStocktakeTemplates()
+        .then(setTemplates)
+        .catch(() => setTemplates([]));
+    }
   }, [open, online, fetchItems]);
 
   const mutateCart = useCallback((fn: (c: CstLine[]) => CstLine[]) => {
@@ -264,19 +281,6 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
 
   // Search: Arabic-normalized match on name/id. Results include items already
   // in the cart — picked state is derived from `inCartIds` below and rendered
-  // as a checkmark, so a row stays visible and toggleable after being picked
-  // (mirrors ComboDialog's toggleOption UX).
-  const matches = useMemo(() => {
-    if (!items) return [];
-    const qn = normalizeArabic(query);
-    if (!qn) return items;
-    return items.filter(
-      (i) => normalizeArabic(i.name || "").includes(qn) || normalizeArabic(i.id || "").includes(qn),
-    );
-  }, [items, query]);
-
-  const inCartIds = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
-
   function addItem(item: InvItem) {
     mutateCart((c) => {
       if (c.some((x) => x.id === item.id)) return c;
@@ -318,12 +322,90 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     mutateCart((c) => c.filter((_, i) => i !== idx));
   }
 
-  /** Search-result row toggle — ComboDialog's toggleOption semantics: already
-   *  in the cart → remove; otherwise → add. */
-  function toggleItem(item: InvItem) {
-    const idx = cart.findIndex((c) => c.id === item.id);
-    if (idx >= 0) removeLine(idx);
-    else addItem(item);
+  // ── نماذج الجرد — saved count sheets ────────────────────────────────────
+  // Loading one REPLACES the sheet, so it runs through the same add/remove
+  // helpers the picker uses rather than writing `cart` directly: a template
+  // that shares materials with the current sheet must not wipe quantities the
+  // cashier has already counted for them.
+  const activeTemplate = useMemo(() => templates.find((x) => x.id === templateId) ?? null, [templates, templateId]);
+
+  function applyTemplate(id: string) {
+    setTemplateId(id);
+    if (!id) return;
+    const tpl = templates.find((x) => x.id === id);
+    if (!tpl || !items) return;
+    const wanted = new Set(tpl.itemIds);
+    for (const line of [...cart]) {
+      if (!wanted.has(line.id)) removeLine(cart.findIndex((c) => c.id === line.id));
+    }
+    const have = new Set(cart.map((c) => c.id));
+    for (const itemId of tpl.itemIds) {
+      if (have.has(itemId)) continue;
+      const item = items.find((i) => i.id === itemId);
+      if (item) addItem(item);
+    }
+    pushToast("info", t("stocktakeDialog.templates.applied", { count: tpl.itemIds.length }));
+  }
+
+  async function saveTemplate() {
+    if (!cart.length) return pushToast("error", t("stocktakeDialog.templates.emptyCart"));
+    const itemIds = cart.map((c) => c.id);
+    setSavingTemplate(true);
+    try {
+      if (activeTemplate?.canEdit) {
+        const updated = await updateStocktakeTemplate(activeTemplate.id, { itemIds });
+        setTemplates((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+        pushToast("success", t("stocktakeDialog.templates.updated", { name: updated.name }));
+      } else {
+        const name = (window.prompt(t("stocktakeDialog.templates.namePrompt")) || "").trim();
+        if (!name) return pushToast("error", t("stocktakeDialog.templates.nameRequired"));
+        const created = await createStocktakeTemplate({ name, itemIds });
+        setTemplates((list) => [...list, created]);
+        setTemplateId(created.id);
+        pushToast("success", t("stocktakeDialog.templates.saved", { name: created.name }));
+      }
+    } catch {
+      pushToast("error", t("stocktakeDialog.templates.saveFailed"));
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function removeTemplate() {
+    if (!activeTemplate || !window.confirm(t("stocktakeDialog.templates.confirmDelete"))) return;
+    setSavingTemplate(true);
+    try {
+      await deleteStocktakeTemplate(activeTemplate.id);
+      setTemplates((list) => list.filter((x) => x.id !== activeTemplate.id));
+      setTemplateId("");
+      pushToast("success", t("stocktakeDialog.templates.deleted"));
+    } catch {
+      pushToast("error", t("stocktakeDialog.templates.saveFailed"));
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  // ── The picker's staging area ────────────────────────────────────────────
+  // Selection is TRANSIENT and lives here, not in the sheet: ticking a row must
+  // not commit it, or the cashier cannot change their mind, and every committed
+  // row stays on screen as a chip forever.
+  const inSheet = useMemo(() => new Set(cart.map((c) => c.id)), [cart]);
+  /** What the picker may still offer — anything already counted is gone from it. */
+  const pickable = useMemo(() => (items ? items.filter((i) => !inSheet.has(i.id)) : null), [items, inSheet]);
+
+  function insertStaged(ids: string[] = staged) {
+    if (!items || ids.length === 0) return;
+    let added = 0;
+    for (const id of ids) {
+      if (inSheet.has(id)) continue; // defensive: the sheet is the authority
+      const item = items.find((i) => i.id === id);
+      if (!item) continue;
+      addItem(item);
+      added++;
+    }
+    setStaged([]);
+    pushToast("success", t("stocktakeDialog.picker.inserted", { count: added }));
   }
 
   function clearCart() {
@@ -426,62 +508,70 @@ export function StocktakeDialog({ open, onClose }: { open: boolean; onClose: () 
     <div className="flex flex-col gap-3">
       {loadError ? <ErrorBanner message={loadError} onRetry={() => void fetchItems()} /> : null}
 
-      {/* Search + results */}
+      {/* SAVED COUNT SHEETS. The owner counts the same materials on a cycle;
+          rebuilding that list by hand every time was the whole complaint behind
+          «امكانيا انشاء وحفظ نموذج جرد». Loading a template REPLACES the picker
+          selection (and therefore the sheet), so it is offered above the picker,
+          where the sheet is decided — not buried in a menu. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+        <label className="sr-only" htmlFor="stk-template">
+          {t("stocktakeDialog.templates.label")}
+        </label>
+        <select
+          id="stk-template"
+          data-testid="stocktake-template-select"
+          className="field min-h-11 min-w-0 flex-1 text-xs font-extrabold sm:max-w-[16rem]"
+          value={templateId}
+          onChange={(e) => applyTemplate(e.target.value)}
+          disabled={!templates.length}
+        >
+          <option value="">{templates.length ? t("stocktakeDialog.templates.placeholder") : t("stocktakeDialog.templates.none")}</option>
+          {templates.map((tpl) => (
+            <option key={tpl.id} value={tpl.id}>
+              {tpl.name} — {t("stocktakeDialog.templates.itemCount", { count: tpl.itemCount })}
+            </option>
+          ))}
+        </select>
+        <Button size="sm" variant="secondary" onClick={() => void saveTemplate()} disabled={savingTemplate}>
+          {activeTemplate?.canEdit ? t("stocktakeDialog.templates.update") : t("stocktakeDialog.templates.save")}
+        </Button>
+        {activeTemplate?.canDelete ? (
+          <Button size="sm" variant="secondary" onClick={() => void removeTemplate()} disabled={savingTemplate}>
+            {t("stocktakeDialog.templates.remove")}
+          </Button>
+        ) : null}
+      </div>
+
+      {/* ITEM PICKER — opens the FULL list on focus, multi-select.
+          The old control was a plain search box whose results were gated on
+          `query.trim()`, so nothing appeared until the cashier typed: to build
+          a sheet of thirty materials you had to remember and type thirty names.
+          The owner asked for this repeatedly. The picker owns the opening,
+          filtering, keyboard and chips; this dialog keeps owning the CART, so
+          the blind-count rules below are untouched. */}
       <div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("stocktakeDialog.search.placeholder")}
-            aria-label={t("stocktakeDialog.search.ariaLabel")}
-            className="field min-h-11 w-full"
-            disabled={!items}
-          />
-        </div>
+        {/* STAGE, then INSERT. The picker used to commit on every tick, and it
+            listed everything already in the sheet as a selected chip — so after
+            picking 189 materials the chip strip filled the dialog and the sheet
+            those materials had gone into was pushed off the bottom, invisible.
+            Now: tick freely, press «إدراج», and they drop into the sheet AND
+            leave the list (the picker is fed only what is NOT in the sheet), so
+            it shrinks as the work progresses instead of growing. */}
+        <ItemMultiPicker
+          items={pickable}
+          selectedIds={staged}
+          onChange={setStaged}
+          onCommit={insertStaged}
+          commitTestId="stocktake-insert"
+          commitLabel={t("stocktakeDialog.picker.insert", { count: staged.length })}
+          label={t("stocktakeDialog.search.ariaLabel")}
+          placeholder={t("stocktakeDialog.search.placeholder")}
+        />
         {items === null && !loadError ? (
           <div className="mt-2 space-y-2">
             <Skeleton className="h-11" />
             <Skeleton className="h-11" />
           </div>
-        ) : null}
-        {items && query.trim() ? (
-          <ul className="scrollbar-thin mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm" role="listbox" aria-label={t("stocktakeDialog.search.resultsAriaLabel")}>
-            {matches.length === 0 ? (
-              <li className="px-4 py-3 text-center text-xs font-bold text-slate-400">{t("stocktakeDialog.search.noResults")}</li>
-            ) : (
-              matches.slice(0, 50).map((i) => {
-                const low = (Number(i.stock) || 0) <= (Number(i.minStock) || 0);
-                const isPicked = inCartIds.has(i.id);
-                return (
-                  <li key={i.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleItem(i)}
-                      aria-pressed={isPicked}
-                      className={cn(
-                        "btn-press flex min-h-11 w-full items-center gap-2 border-b px-4 py-2 text-start transition",
-                        isPicked
-                          ? "border-teal-500 bg-teal-50 text-teal-700"
-                          : "border-slate-100 hover:bg-slate-50",
-                      )}
-                    >
-                      {isPicked ? (
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden />
-                      ) : (
-                        <Circle className="h-4 w-4 shrink-0 text-slate-300" aria-hidden />
-                      )}
-                      <span className="min-w-0 flex-1 text-sm font-bold text-ink">{i.name}</span>
-                      {/* BLIND: current stock is NOT echoed here as a countable figure —
-                          only a low-stock hint color, exactly like legacy shows unit. */}
-                      <span className={cn("shrink-0 text-[11px] font-bold", low ? "text-red-500" : "text-slate-400")}>{i.unit || ""}</span>
-                    </button>
-                  </li>
-                );
-              })
-            )}
-          </ul>
         ) : null}
       </div>
 

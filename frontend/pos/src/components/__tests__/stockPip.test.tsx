@@ -13,7 +13,7 @@
  *      measured height.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { Catalog, CatalogItem, MenuAvailabilityMap } from "@/lib/types";
 import { ProductGrid } from "../ProductGrid";
 import {
@@ -119,93 +119,48 @@ const CATALOG: Catalog = {
 };
 
 function renderGrid(onAdd = vi.fn()) {
-  render(<ProductGrid catalog={CATALOG} loading={false} category={null} query="" onAdd={onAdd} />);
-  return onAdd;
+  return render(<ProductGrid catalog={CATALOG} loading={false} category={null} query="" onAdd={onAdd} />);
 }
 
-const cardFor = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
 
-describe("the pip on the card", () => {
-  it("renders NOTHING while everything is fine", () => {
-    publishAvailability({ M1: avail(), M2: avail() });
+
+/**
+ * THE GRID NO LONGER PAINTS THIS VERDICT.
+ *
+ * The blocks that used to live here rendered the pip THROUGH ProductGrid and
+ * asserted the «نفد» pill, the muted card, and the overlay geometry. They were
+ * correct about the component and wrong about the shop: the verdict is computed
+ * from RAW STOCK, and on this menu every sellable row is built from a recipe, so
+ * it marked nearly the whole grid unavailable while every one of those items was
+ * sellable. The owner, running the register, asked for it to stop.
+ *
+ * resolveStockState and StockPip stay tested above and remain in the tree for a
+ * menu that actually sells shelf goods. What is pinned now is the absence.
+ */
+describe("the product grid paints no raw-stock verdict", () => {
+  it("renders no pip even when the board says an item is out", () => {
+    publishAvailability({ M1: { mode: "mto", makeable: 0, isOutOfStock: true, isLowStock: false, blockerCount: 1, hasRecipe: true }, M2: avail() });
     renderGrid();
     expect(screen.queryByTestId("stock-pip")).not.toBeInTheDocument();
   });
 
-  it("an amber count for a low item, on that card only", () => {
-    publishAvailability({ M1: avail({ isLowStock: true, makeable: 3 }) });
+  it("renders no pip when the board says an item is low", () => {
+    publishAvailability({ M1: { mode: "mto", makeable: 2, isOutOfStock: false, isLowStock: true, blockerCount: 0, hasRecipe: true }, M2: avail() });
     renderGrid();
-    const pips = screen.getAllByTestId("stock-pip");
-    expect(pips).toHaveLength(1);
-    expect(pips[0]).toHaveAttribute("data-stock", "low");
-    expect(pips[0]).toHaveTextContent("3");
-    expect(pips[0]!.className).toContain("amber");
+    expect(screen.queryByTestId("stock-pip")).not.toBeInTheDocument();
   });
 
-  it("a «نفد» pill + a muted card when the item is unavailable", () => {
-    publishAvailability({ M1: avail({ isOutOfStock: true, makeable: 0 }) });
-    renderGrid();
-    const pip = screen.getByTestId("stock-pip");
-    expect(pip).toHaveAttribute("data-stock", "out");
-    expect(pip).toHaveTextContent("نفد");
-    for (const cls of OUT_OF_STOCK_CARD_CLASS.split(" ")) {
-      expect(cardFor("شاي مغربي").className).toContain(cls);
-    }
-    expect(cardFor("طاجين لحم").className).not.toContain("grayscale");
+  it("leaves the card fully legible — no dimming, no greyscale", () => {
+    publishAvailability({ M1: { mode: "mto", makeable: 0, isOutOfStock: true, isLowStock: false, blockerCount: 1, hasRecipe: true } });
+    const { container } = renderGrid();
+    expect(container.querySelector(OUT_OF_STOCK_CARD_CLASS.split(" ").map((c) => "." + c).join(", "))).toBeNull();
   });
 
-  it("degrades to warehouseQty with no availability published at all", () => {
-    render(
-      <ProductGrid
-        catalog={{ ...CATALOG, items: [item({ id: "M1", warehouseQty: 0 })] }}
-        loading={false}
-        category={null}
-        query=""
-        onAdd={vi.fn()}
-      />,
-    );
-    expect(screen.getByTestId("stock-pip")).toHaveAttribute("data-stock", "out");
-  });
-});
-
-describe("WARN, NEVER BLOCK — the server is the authority", () => {
-  it("an out-of-stock card is NOT disabled and still adds when tapped", () => {
-    publishAvailability({ M1: avail({ isOutOfStock: true, makeable: 0 }) });
-    const onAdd = renderGrid();
-    const card = cardFor("شاي مغربي");
-    expect(card).toBeEnabled();
-    fireEvent.click(card);
+  it("still adds the item when tapped — the sell path is untouched", () => {
+    publishAvailability({ M1: { mode: "mto", makeable: 0, isOutOfStock: true, isLowStock: false, blockerCount: 1, hasRecipe: true } });
+    const onAdd = vi.fn();
+    renderGrid(onAdd);
+    fireEvent.click(screen.getByRole("button", { name: /شاي مغربي/ }));
     expect(onAdd).toHaveBeenCalledTimes(1);
-    expect(onAdd.mock.calls[0]![0]).toMatchObject({ id: "M1" });
-  });
-});
-
-// ── 3. The virtualizer contract ─────────────────────────────────────────────
-describe("the pip cannot disturb the windowed grid", () => {
-  it("is a SPAN, not a button — the windowing spec counts buttons per row", () => {
-    publishAvailability({ M1: avail({ isOutOfStock: true }), M2: avail({ isLowStock: true, makeable: 1 }) });
-    renderGrid();
-    for (const pip of screen.getAllByTestId("stock-pip")) {
-      expect(pip.tagName).toBe("SPAN");
-    }
-    // Two items, two cards, and STILL exactly two buttons in the grid.
-    expect(screen.getAllByRole("button")).toHaveLength(2);
-  });
-
-  it("is an absolutely-positioned OVERLAY, so it adds no height to the card", () => {
-    publishAvailability({ M1: avail({ isOutOfStock: true }) });
-    renderGrid();
-    const pip = screen.getByTestId("stock-pip");
-    expect(pip.className).toContain("absolute");
-    // …and it is a SIBLING of the add button, not a child: nesting it would
-    // change the card's accessible name and the parity specs anchor on that.
-    expect(within(cardFor("شاي مغربي")).queryByTestId("stock-pip")).toBeNull();
-    expect(cardFor("شاي مغربي")).toHaveAccessibleName(/^شاي مغربي/);
-  });
-
-  it("the muted class is pure paint — no box-model property", () => {
-    // opacity/filter cannot move layout. A padding/border/size change here
-    // would make the virtualizer re-measure the row and jump the scroll.
-    expect(OUT_OF_STOCK_CARD_CLASS).toBe("opacity-60 grayscale");
   });
 });

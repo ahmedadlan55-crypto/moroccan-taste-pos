@@ -53,9 +53,20 @@ async function statement(customerId, opts = {}, conn = db) {
       WHERE pa.customer_id = ? AND pa.reversed = 0 AND cp.payment_date BETWEEN ? AND ?`,
     [customerId, from, to]);
 
+  // Stable order. Sorting on the date alone left same-day rows in whatever
+  // order MySQL happened to return them, so the running-balance column could
+  // differ between two identical requests for the same period — and a customer
+  // reconciling against a statement he printed yesterday would see different
+  // intermediate balances today. Ties break invoice → debit note → credit note
+  // → payment (what raises the balance before what lowers it), then by
+  // reference, so the sequence is a function of the data and nothing else.
+  const KIND_ORDER = { invoice: 0, debit_note: 1, credit_note: 2, payment: 3 };
   const rows = docs.concat(pays)
     .map((r) => ({ date: calc.ymd(r.d), ref: r.ref, kind: r.kind, amount: money(r.amount) }))
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    .sort((a, b) =>
+      String(a.date).localeCompare(String(b.date))
+      || (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9)
+      || String(a.ref ?? '').localeCompare(String(b.ref ?? '')));
   let running = opening;
   const lines = rows.map((r) => { running = money(running + r.amount); return Object.assign({}, r, { balance: running }); });
   return { customerId, from, to, opening, closing: running, lines };

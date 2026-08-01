@@ -132,6 +132,43 @@ describe("reprintHtmlFromInvoice", () => {
   });
 });
 
+/** A reprint must name the person who MADE the sale, never whoever happens to
+ *  be standing at the till. `sales` has no name column (db/schema.sql:148-189),
+ *  so routes/sales.js resolves it at read time from the SALE'S OWN
+ *  `sales.username` (lib/displayName.js: users.full_name →
+ *  settings.user_meta → username) and sends it as `cashierName`. The third
+ *  argument here is only the last-resort fallback for a sale that carries
+ *  none. */
+describe("reprint names the ORIGINAL seller, not the reprinting cashier", () => {
+  it("the invoice's own cashierName wins over the reprinting cashier", () => {
+    // "أحمد الكاشير" sold it; "سارة" is reprinting.
+    const html = reprintHtmlFromInvoice(invoice(), null, "سارة المناوبة");
+    expect(html).toContain("أحمد الكاشير");
+    expect(html).not.toContain("سارة المناوبة");
+  });
+
+  it("it is a NAME on paper, never the login id the sale row stores", () => {
+    // invoice().username is "pos_cash1" — the login id. It must not reach paper
+    // while a resolved name exists; that substitution IS the owner's complaint.
+    const html = reprintHtmlFromInvoice(invoice(), null, "سارة المناوبة");
+    expect(html).not.toContain("pos_cash1");
+  });
+
+  it("falls back to the caller's value only when the server resolved nothing", () => {
+    const html = reprintHtmlFromInvoice(invoice({ cashierName: "" }), null, "أحمد عدلان");
+    expect(html).toContain("أحمد عدلان");
+  });
+
+  it("no name anywhere ⇒ no served-by band at all, and nothing fabricated", () => {
+    // This asserted `not.toContain("الكاشير:")` — a label the template no
+    // longer emits under ANY condition, so it passed no matter what the code
+    // did. Pinned against the string the receipt ACTUALLY prints now.
+    const html = reprintHtmlFromInvoice(invoice({ cashierName: "" }), null, "");
+    expect(html).not.toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain("Served by");
+  });
+});
+
 describe("needsApprovalGate — RequireManagerApprovalForVoid opt-out", () => {
   it("privileged roles never see the dialog", () => {
     expect(needsApprovalGate("void", true, true)).toBe(false);

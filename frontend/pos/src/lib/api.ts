@@ -677,7 +677,19 @@ export interface InvoiceDetail {
   // ar_documents.version for this sale's O2C projection — required as
   // expectedVersion on a return create (null under the same conditions as lineId).
   version: number | null;
+  /** The PERSON who made this sale, resolved server-side from the sale's OWN
+   *  `sales.username` (routes/sales.js → lib/displayName.js: users.full_name →
+   *  settings.user_meta → username). A reprint pulled up by a different cashier
+   *  therefore still names the original seller. Worst case it IS the login id —
+   *  never blank, never fabricated. */
   cashierName: string;
+  /** Employee number, when the owner set one in settings.user_meta. Has no
+   *  users-table equivalent, so it is '' far more often than not — a consumer
+   *  must HIDE the field rather than print "أحمد عدلان, 2004". The server has
+   *  always returned it (routes/sales.js response block); it was simply never
+   *  declared here, so no screen could reach it. Optional to keep every
+   *  existing InvoiceDetail literal (tests, fixtures) compiling. */
+  cashierEmpNo?: string;
   branchName: string;
   branchAddress: string;
   branchCompanyName: string;
@@ -686,6 +698,11 @@ export interface InvoiceDetail {
   currency: string;
   companyPhone: string;
   companyEmail: string;
+  /** Brand logo when the sale has one, else the company logo — the server
+   *  already resolves that precedence (routes/sales.js:2495). Declared here
+   *  because the reprint was rebuilding identity with `logo: ""` and so the
+   *  ORIGINAL receipt printed the shop's logo while its own reprint did not. */
+  receiptLogo?: string;
   receiptFooter: string;
   crNumber: string;
   nationalAddress: string;
@@ -1357,4 +1374,94 @@ export function _resetRaisedReturns(): void {
   } catch {
     /* ignore */
   }
+}
+
+
+/**
+ * Unwrap the { success, data } envelope.
+ *
+ * `request()` returns the RAW body (`return body as T`), and this repo uses two
+ * response shapes: some routes answer a bare payload (GET /api/inventory/items),
+ * others the envelope (routes/stocktake-templates.js `_ok`). Forgetting which is
+ * which has already cost a production outage today — the channel catalog stored
+ * the envelope as if it were the catalog and emptied the register. So the
+ * unwrapping is EXPLICIT and shape-checked here rather than assumed at each call
+ * site, and a payload that is neither shape yields the fallback instead of a
+ * `.find is not a function` crash inside a dialog.
+ */
+function unwrapEnvelope<T>(body: unknown, isValid: (v: unknown) => boolean, fallback: T): T {
+  if (isValid(body)) return body as T;
+  const inner = (body as { data?: unknown } | null)?.data;
+  if (isValid(inner)) return inner as T;
+  return fallback;
+}
+
+// ── نماذج الجرد — saved stocktake templates ─────────────────────────────────
+// A named, reusable set of the materials the owner counts periodically. He
+// creates it once at the till, then picks it, edits it and reuses it instead of
+// re-finding thirty items by hand every cycle.
+// Server: routes/stocktake-templates.js, mounted at
+// /api/inventory/stocktake-templates (deliberately NOT under /inventory/v2 —
+// that prefix is 503'd by the V2 write gate whenever WAREHOUSE_V2_ENABLED is
+// off, and a register must still be able to save its own count sheet then).
+
+export interface StocktakeTemplateItem {
+  itemId: string;
+  name: string;
+  unit?: string | null;
+}
+
+export interface StocktakeTemplate {
+  id: string;
+  name: string;
+  warehouseId: string | null;
+  itemIds: string[];
+  items: StocktakeTemplateItem[];
+  itemCount: number;
+  createdBy: string;
+  createdAt: string;
+  /** Server-decided, never inferred client-side: yours, or you are a manager. */
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+/**
+ * "Is this the PAYLOAD, or the envelope around it?"
+ *
+ * `typeof v === "object"` is not enough — `{ success, data }` is an object too,
+ * so a loose check happily returns the envelope and the caller reads `undefined`
+ * off it. Every payload on these routes carries an `id`; the envelope does not.
+ */
+const isTemplateObject = (v: unknown): boolean =>
+  !!v && typeof v === "object" && !Array.isArray(v) && typeof (v as { id?: unknown }).id === "string";
+
+export async function listStocktakeTemplates(): Promise<StocktakeTemplate[]> {
+  const body = await request<unknown>("/api/inventory/stocktake-templates");
+  return unwrapEnvelope<StocktakeTemplate[]>(body, Array.isArray, []);
+}
+
+export async function createStocktakeTemplate(input: { name: string; itemIds: string[] }): Promise<StocktakeTemplate> {
+  const body = await request<unknown>("/api/inventory/stocktake-templates", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return unwrapEnvelope<StocktakeTemplate>(body, isTemplateObject, {} as StocktakeTemplate);
+}
+
+export async function updateStocktakeTemplate(
+  id: string,
+  input: { name?: string; itemIds?: string[] },
+): Promise<StocktakeTemplate> {
+  const body = await request<unknown>(`/api/inventory/stocktake-templates/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return unwrapEnvelope<StocktakeTemplate>(body, isTemplateObject, {} as StocktakeTemplate);
+}
+
+export async function deleteStocktakeTemplate(id: string): Promise<{ id: string }> {
+  const body = await request<unknown>(`/api/inventory/stocktake-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  return unwrapEnvelope<{ id: string }>(body, isTemplateObject, { id });
 }

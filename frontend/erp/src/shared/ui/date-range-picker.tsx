@@ -12,14 +12,24 @@ import { Select } from "./select";
 
 /* ── preset math ─────────────────────────────────────────────── */
 
+// Every preset before this change was a TO-DATE window ending today. That is
+// the wrong shape for accounting: a close, a VAT return and a management review
+// all report on a period that has ENDED, and reconstructing "last month" by
+// hand — two date fields, both off-by-one-prone — was the most common thing
+// anyone did in this bar. The three CLOSED periods sit next to their to-date
+// siblings so the pairing is legible: mtd / lastMonth, qtd / lastQuarter,
+// ytd / lastYear.
 export const DATE_RANGE_PRESETS = [
   "today",
   "yesterday",
   "last7",
   "last30",
   "mtd",
+  "lastMonth",
   "qtd",
+  "lastQuarter",
   "ytd",
+  "lastYear",
   "custom",
 ] as const;
 
@@ -71,10 +81,27 @@ export function computePresetRange(
       return { from: shiftDays(today, -29), to: today };
     case "mtd":
       return { from: toISO(new Date(t.getFullYear(), t.getMonth(), 1)), to: today };
+    // The closed periods use day 0 of the FOLLOWING month as the end date —
+    // Date normalises it to the last day of the month before, so February and
+    // a leap year need no special case and no month-length table.
+    case "lastMonth":
+      return {
+        from: toISO(new Date(t.getFullYear(), t.getMonth() - 1, 1)),
+        to: toISO(new Date(t.getFullYear(), t.getMonth(), 0)),
+      };
     case "qtd":
       return { from: toISO(new Date(t.getFullYear(), Math.floor(t.getMonth() / 3) * 3, 1)), to: today };
+    case "lastQuarter": {
+      const firstOfThisQuarter = Math.floor(t.getMonth() / 3) * 3;
+      return {
+        from: toISO(new Date(t.getFullYear(), firstOfThisQuarter - 3, 1)),
+        to: toISO(new Date(t.getFullYear(), firstOfThisQuarter, 0)),
+      };
+    }
     case "ytd":
       return { from: `${t.getFullYear()}-01-01`, to: today };
+    case "lastYear":
+      return { from: `${t.getFullYear() - 1}-01-01`, to: `${t.getFullYear() - 1}-12-31` };
   }
 }
 

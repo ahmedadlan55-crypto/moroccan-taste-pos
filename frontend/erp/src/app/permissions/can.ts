@@ -96,10 +96,6 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "customers.edit": SALESROLES,
   "customers.deactivate": MGR,
   "customers.merge": MGR,
-  "sales_orders.view": SALESROLES,
-  "sales_orders.create": SALESROLES,
-  "sales_orders.confirm": [...ADM, "manager", "sales"],
-  "sales_orders.fulfill": MGR,
   "invoices.view": [...ADM, "manager", "cashier", "sales", "accountant", "finance"],
   "invoices.create": [...ADM, "manager", "cashier", "sales", "accountant"],
   "invoices.issue": FIN,
@@ -180,6 +176,12 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // (db/migrations/finance/capabilities.js grants it to
   // admin/manager/accountant/finance/auditor — same set as FIN_READ).
   "finance.reports.view": FIN_READ,
+  // Posting a sales batch WRITES to the general ledger. The backend grants
+  // finance.gl.post to admin/manager/accountant/finance (db/migrations/finance/
+  // capabilities.js ROLE_GRANTS) — auditor deliberately excluded: an auditor
+  // reads the books, it does not post to them. Mirrored exactly, because a nav
+  // gate that is wider than the server gate offers a button that 403s.
+  "finance.gl.post": [...ADM, "manager", "accountant", "finance"],
   // ── Accounting write caps (E1) — reverse is tighter (excludes plain accountant) ──
   "accounting.accounts.manage": FIN,
   "accounting.journals.create": FIN,

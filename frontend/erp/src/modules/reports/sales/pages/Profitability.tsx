@@ -1,32 +1,38 @@
 // Sales Analytics Hub — "profitability" page (cap-gated by the hub on
 // analytics.cost.view; this file renders only when the cap is held).
 //
-// Per-item cost/profit/margin plus the menu-engineering quadrant: a scatter of
-// qty_sold × margin_pct with ReferenceLines at the MEDIANS, classifying items
-// as Stars / Plowhorses / Puzzles / Dogs (labels from
-// salesReports.profitability.quadrants.*).
+// Per-item cost/profit/margin plus the menu-engineering quadrant: every item is
+// classified against the MEDIAN qty_sold and margin_pct as a Star / Plowhorse /
+// Puzzle / Dog (labels from salesReports.profitability.quadrants.*) and that
+// class is carried as a table column. Reports are decision tables here — the
+// quadrant scatter that used to sit above the table belongs on the dashboard.
 import { useMemo } from "react";
-import {
-  CartesianGrid,
-  ReferenceLine,
-  Scatter,
-  ScatterChart,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { Coins, Percent, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import {
+  buildFiltersBody,
+  displayMetric,
+  setPageExportRequest,
+  type AnalyticsQueryBody,
+  type AnalyticsResult,
+} from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+import { isCostUndefined } from "../lib/cost";
 
+const SEGMENT = "profitability";
 const METRICS = ["qty_sold", "net_ex_vat", "cogs", "gross_profit", "margin_pct"] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape.
+setPageExportRequest(SEGMENT, () => ({
+  metrics: [...METRICS],
+  dimensions: ["menu_item"],
+  sort: [{ by: "net_ex_vat", dir: "desc" }],
+}));
 
 const fmtPct = (v: number) => `${formatNumber(v)}%`;
 
@@ -56,6 +62,8 @@ interface ItemRow {
   profit: number | null;
   margin: number | null;
   cls: QuadrantClass | null;
+  /** Sold, but with no cost ever defined — see ../lib/cost. */
+  costUndefined: boolean;
 }
 
 /** Median of a non-empty sorted-copy sample. */
@@ -81,8 +89,6 @@ const QUADRANT_BADGE: Record<QuadrantClass, "success" | "warning" | "info" | "da
 export default function Profitability() {
   const t = useT();
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
   const QUADRANT_LABEL: Record<QuadrantClass, string> = {
@@ -113,22 +119,38 @@ export default function Profitability() {
   if (byItem.isPending) return <LoadingState />;
   if (byItem.isError) return <ErrorState error={byItem.error} onRetry={() => byItem.refetch()} />;
 
-  const raw: ItemRow[] = (byItem.data?.rows ?? []).map((r) => ({
-    key: String(r.keys[0] ?? ""),
-    label: r.labels[0] ?? String(r.keys[0] ?? "—"),
-    qty: displayMetric(r, "qty_sold"),
-    net: displayMetric(r, "net_ex_vat"),
-    cogs: displayMetric(r, "cogs"),
-    profit: displayMetric(r, "gross_profit"),
-    margin: displayMetric(r, "margin_pct"),
-    cls: null,
-  }));
+  const raw: ItemRow[] = (byItem.data?.rows ?? []).map((r) => {
+    const qtySold = displayMetric(r, "qty_sold");
+    const cost = displayMetric(r, "cogs");
+    // An item with no recipe and no manual cost snapshots 0.00, which reads as
+    // margin 100%. Blank the three cost columns rather than print a number the
+    // system cannot stand behind.
+    const unknownCost = isCostUndefined(qtySold, cost);
+    return {
+      key: String(r.keys[0] ?? ""),
+      label: r.labels[0] ?? String(r.keys[0] ?? "—"),
+      qty: qtySold,
+      net: displayMetric(r, "net_ex_vat"),
+      cogs: unknownCost ? null : cost,
+      profit: unknownCost ? null : displayMetric(r, "gross_profit"),
+      margin: unknownCost ? null : displayMetric(r, "margin_pct"),
+      cls: null,
+      costUndefined: unknownCost,
+    };
+  });
   if (raw.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
-  // ── quadrant classification at the medians (plottable points only) ──
-  const plottable = raw.filter((r) => r.qty != null && r.margin != null);
-  const medQty = plottable.length > 0 ? median(plottable.map((r) => r.qty as number)) : 0;
-  const medMargin = plottable.length > 0 ? median(plottable.map((r) => r.margin as number)) : 0;
+  // ── quadrant classification at the medians (rows with both inputs only) ──
+  // Uncosted rows are excluded TWICE OVER, and both exclusions matter:
+  //   1. from the sample — a phantom 100% margin drags the median margin up and
+  //      mislabels genuinely good items as Plowhorses;
+  //   2. from classification — its own `margin` is null above, so it can never
+  //      be crowned a Star. Recommending "push this item" on the strength of a
+  //      margin nobody has ever computed is the worst advice this page could
+  //      give, and it is exactly what an unguarded zero produces.
+  const classifiable = raw.filter((r) => r.qty != null && r.margin != null);
+  const medQty = classifiable.length > 0 ? median(classifiable.map((r) => r.qty as number)) : 0;
+  const medMargin = classifiable.length > 0 ? median(classifiable.map((r) => r.margin as number)) : 0;
   const items: ItemRow[] = raw.map((r) => {
     if (r.qty == null || r.margin == null) return r;
     const highQty = r.qty >= medQty;
@@ -136,16 +158,13 @@ export default function Profitability() {
     const cls: QuadrantClass = highQty ? (highMargin ? "star" : "plowhorse") : highMargin ? "puzzle" : "dog";
     return { ...r, cls };
   });
+  const uncostedItems = items.filter((r) => r.costUndefined);
 
   const meta = byItem.data?.meta;
   // Honest banner: masked/incomplete cost provenance (cogs masked, or the
   // completeness flag) — margins over that window are not fully cost-backed.
   const costCaveat =
     meta?.completeness?.complete === false || (meta?.maskedMetrics ?? []).includes("cogs");
-
-  const scatterPoints = items
-    .filter((r) => r.qty != null && r.margin != null)
-    .map((r) => ({ x: r.qty as number, y: r.margin as number, name: r.label, cls: r.cls }));
 
   const columns: ColumnDef<ItemRow>[] = [
     { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, width: 180 },
@@ -169,7 +188,19 @@ export default function Profitability() {
       id: "cogs",
       header: t("salesReports.metrics.cogs"),
       accessor: (r) => r.cogs,
-      cell: (r) => (r.cogs == null ? "—" : formatCurrency(r.cogs)),
+      cell: (r) =>
+        r.costUndefined ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span>—</span>
+            <Badge tone="warning" title={t("salesReports.itemSales.costUndefinedHint")}>
+              {t("salesReports.itemSales.costUndefined")}
+            </Badge>
+          </span>
+        ) : r.cogs == null ? (
+          "—"
+        ) : (
+          formatCurrency(r.cogs)
+        ),
       numeric: true,
       sortable: true,
     },
@@ -188,7 +219,7 @@ export default function Profitability() {
       cell: (r) => (r.margin == null ? "—" : fmtPct(r.margin)),
       numeric: true,
       sortable: true,
-      cellTone: (r) => (r.cls ? QUADRANT_TONE[r.cls] : undefined),
+      cellTone: (r) => (r.costUndefined ? "warning" : r.cls ? QUADRANT_TONE[r.cls] : undefined),
     },
     {
       id: "class",
@@ -215,6 +246,24 @@ export default function Profitability() {
         </div>
       )}
 
+      {/* The KPI cards below sum the WHOLE window, so an uncosted item is
+          invisible there — its zero cost just reads as profit. Name the count
+          explicitly, or the four headline numbers overstate the business by an
+          amount nobody can see. */}
+      {uncostedItems.length > 0 && (
+        <div
+          data-testid="uncosted-notice"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          <span>
+            {t("salesReports.profitability.uncostedItems", {
+              count: formatNumber(uncostedItems.length),
+            })}
+          </span>
+          <span className="font-medium">{t("salesReports.itemSales.costUndefinedHint")}</span>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {KPIS.map((k) => {
           const label = t(`salesReports.metrics.${k.id}`);
@@ -234,58 +283,6 @@ export default function Profitability() {
           );
         })}
       </div>
-
-      {scatterPoints.length > 0 && (
-        <ChartCard
-          title={`${t("salesReports.metrics.margin_pct")} × ${t("salesReports.metrics.qty_sold")}`}
-          subtitle={`${QUADRANT_LABEL.star} / ${QUADRANT_LABEL.plowhorse} / ${QUADRANT_LABEL.puzzle} / ${QUADRANT_LABEL.dog}`}
-          height={320}
-          tableLabel={t("salesReports.dims.menu_item")}
-          tableColumns={[
-            { key: "name", label: t("salesReports.dims.menu_item") },
-            { key: "x", label: t("salesReports.metrics.qty_sold") },
-            { key: "y", label: t("salesReports.metrics.margin_pct") },
-            { key: "cls", label: t("salesReports.pages.profitability.title") },
-          ]}
-          tableRows={scatterPoints.map((p) => ({
-            name: p.name,
-            x: formatNumber(p.x),
-            y: fmtPct(p.y),
-            cls: p.cls ? QUADRANT_LABEL[p.cls] : "—",
-          }))}
-        >
-          <ScatterChart margin={{ top: 16, bottom: 8 }}>
-            <CartesianGrid stroke={palette.grid} />
-            <XAxis
-              type="number"
-              dataKey="x"
-              name={t("salesReports.metrics.qty_sold")}
-              reversed={rtl.xAxisReversed}
-              stroke={palette.axis}
-              tickFormatter={rtl.tickFormatterNumber}
-              tick={{ fontSize: 11 }}
-            />
-            <YAxis
-              type="number"
-              dataKey="y"
-              name={t("salesReports.metrics.margin_pct")}
-              orientation={rtl.dir === "rtl" ? "right" : "left"}
-              stroke={palette.axis}
-              tickFormatter={rtl.tickFormatterNumber}
-              tick={{ fontSize: 11 }}
-            />
-            <RechartsTooltip
-              contentStyle={rtl.tooltipStyle}
-              cursor={{ strokeDasharray: "3 3" }}
-              formatter={(v) => rtl.tickFormatterNumber(v)}
-            />
-            {/* Median cross-hairs: the quadrant boundaries. */}
-            <ReferenceLine x={medQty} stroke={palette.axis} strokeDasharray="4 4" />
-            <ReferenceLine y={medMargin} stroke={palette.axis} strokeDasharray="4 4" />
-            <Scatter data={scatterPoints} fill={palette.series[0]} />
-          </ScatterChart>
-        </ChartCard>
-      )}
 
       <DataTable<ItemRow>
         columns={columns}

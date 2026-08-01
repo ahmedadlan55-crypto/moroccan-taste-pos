@@ -25,7 +25,7 @@ import { getEngine, type EngineStatus, type OfflineEngine } from "@/lib/offline"
 import { useLocalizedName, useOptionalT, useT } from "@/i18n/I18nProvider";
 import { cartTotals, DEFAULT_VAT_RATE_PCT, effectiveUnitPrice, round6 } from "@/lib/cartMath";
 import { pruneQuickPicks, recordPick } from "@/lib/quickPicks";
-import { getAvailabilitySnapshot, publishAvailability, resolveStockState } from "@/components/StockPip";
+import { publishAvailability } from "@/components/StockPip";
 import { ulid } from "@/lib/ulid";
 import { ComboDialog, type ComboFinalizeResult } from "@/components/dialogs/ComboDialog";
 import type {
@@ -53,7 +53,7 @@ function pickUnit(item: CatalogItem, unitCode?: string | null): CatalogUnit | nu
 function buildCartLine(item: CatalogItem, unit: CatalogUnit | null, enteredQty: number): CartLine {
   const factor = unit ? Number(unit.factor) || 1 : 1;
   return {
-    // effectiveUnitPrice, NOT `basePrice ?? price`: the server always ships
+    // effectiveUnitPrice, NOT `basePrice ?? price`: the server ALWAYS ships
     // basePrice, so that fallback never fired and every channel price list /
     // per-channel override was discarded — the card advertised the channel
     // price while this line charged the base one.
@@ -95,6 +95,21 @@ function getDeviceId(): string {
 // The selected channel survives reloads (legacy kept pos_active_channel_id the
 // same way). null = the implicit base channel «الأساسي».
 const CHANNEL_KEY = "pos_v2_channel_id";
+/**
+ * Set by loadCatalogForChannel the moment the SERVER rejects a stored channel,
+ * so the heal survives a query that then fails outright. Module scope on
+ * purpose: the fetch runs outside React and must be able to clear storage
+ * before any component re-renders.
+ */
+let channelQuarantined: string | null = null;
+function quarantineChannel(id: string): void {
+  channelQuarantined = id;
+  try {
+    localStorage.removeItem(CHANNEL_KEY);
+  } catch {
+    /* private mode — React state below still returns the till to base */
+  }
+}
 function getStoredChannelId(): string | null {
   try {
     return localStorage.getItem(CHANNEL_KEY) || null;
@@ -145,6 +160,26 @@ function rememberShiftId(id: string | null): void {
 }
 
 /**
+ * Accept BOTH shapes and return a real catalog, or null if it is neither.
+ *
+ * Tolerant on purpose, in both directions: the envelope is what the server
+ * sends today (routes/pos-v2.js:1027), while a bare catalog is what every test
+ * harness has always stubbed — and, more importantly, what a device may already
+ * be holding in its IndexedDB slot from before this fix. Recognising a catalog
+ * by `items` being an array (rather than trusting `success`) is what lets the
+ * same function REPAIR a poisoned cache instead of only preventing new ones.
+ */
+export function unwrapCatalog(payload: unknown): Catalog | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as { items?: unknown; data?: unknown };
+  if (Array.isArray(p.items)) return payload as Catalog;
+  if (p.data && typeof p.data === "object" && Array.isArray((p.data as { items?: unknown }).items)) {
+    return p.data as Catalog;
+  }
+  return null;
+}
+
+/**
  * A catalog load that also says WHICH channel's prices it actually carries.
  * `loadCatalogForChannel` degrades to the base/cached copy when a channel fetch
  * fails; without these two fields that degradation was invisible — the selector
@@ -155,6 +190,21 @@ export interface ChannelLoadedCatalog extends LoadedCatalog {
   servedChannelId: string | null;
   /** A channel WAS selected but its price list could not be served. */
   channelPricesUnavailable: boolean;
+  /**
+   * The SERVER's own verdict that this channel is gone or switched off — a 422
+   * from _loadActiveChannel (routes/pos-v2.js:352, «قناة البيع غير موجودة» /
+   * «غير نشطة»), or a 404.
+   *
+   * This is the ONLY trustworthy signal that a stored channel should be
+   * dropped, and the distinction is the whole safety story. "Absent from
+   * catalog.channels[]" is NOT trustworthy: the server ships `channels: []` on
+   * a plain 200 whenever its own channels query throws (pos-v2.js:964-972,
+   * "Loud fallback: the catalog still serves the grid; the switcher is empty").
+   * Healing off that empty list would move EVERY till on the fleet from channel
+   * prices to base prices on one transient DB error — a pricing incident
+   * manufactured by the thing meant to prevent one.
+   */
+  channelRejected: boolean;
 }
 
 /**
@@ -183,7 +233,7 @@ export interface ChannelLoadedCatalog extends LoadedCatalog {
 async function loadCatalogForChannel(channelId: string | null): Promise<ChannelLoadedCatalog> {
   if (!channelId) {
     const base = await loadCatalog();
-    return { ...base, servedChannelId: null, channelPricesUnavailable: false };
+    return { ...base, servedChannelId: null, channelPricesUnavailable: false, channelRejected: false };
   }
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
@@ -193,23 +243,52 @@ async function loadCatalogForChannel(channelId: string | null): Promise<ChannelL
     if (!res.ok) {
       // Surfaced as a real, coded error so the 401 branch below can see it —
       // an expired session must never masquerade as "channel prices missing".
-      throw new CatalogError(
+      const err = new CatalogError(
         res.status === 401 ? "SESSION_EXPIRED" : "CATALOG_LOAD_FAILED",
         `HTTP ${res.status}`,
       );
+      // 422 is _loadActiveChannel refusing (deleted / deactivated); 404 is the
+      // route gone. Both are the SERVER stating this channel is not sellable —
+      // as opposed to a thrown fetch, which is only ever "not right now".
+      (err as CatalogError & { channelRejected?: boolean }).channelRejected = res.status === 422 || res.status === 404;
+      throw err;
     }
-    const data = (await res.json()) as Catalog;
+    // UNWRAP THE ENVELOPE. routes/pos-v2.js:1027 answers
+    // `{ success: true, data: <catalog> }`. The base path has always unwrapped
+    // it (lib/api.ts:110 `body.data`); this path did not — it cast the envelope
+    // itself to Catalog, and the `as Catalog` silenced the very type error that
+    // would have caught it. Every SUCCESSFUL channel selection therefore
+    // produced a catalog whose `items`, `channels` and `paymentMethods` were
+    // all undefined: an empty product grid, no channel picker (App gates it on
+    // channels.length), and the payment dialog falling back to built-in tender
+    // types. That is the owner's «اخترت قناة فحدثت مشكلة لا تنحل» — and it did
+    // not resolve because the write-through below then stored the envelope in
+    // the shared catalog slot, so every reload and every offline boot served
+    // the poison back and re-poisoned it.
+    const parsed = (await res.json()) as unknown;
+    const data = unwrapCatalog(parsed);
+    if (!data) throw new CatalogError("CATALOG_LOAD_FAILED", "Malformed catalog payload");
     const savedAt = Date.now();
     // Write-through (etag null: the next base load does a full 200 refetch
     // rather than trusting a channel-priced copy against the base ETag).
     await idbPut("catalog", "catalog", { data, etag: null, savedAt }).catch(() => undefined);
-    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false, servedChannelId: channelId, channelPricesUnavailable: false };
+    return { catalog: data, fromCache: false, savedAt, ageMs: 0, stale: false, servedChannelId: channelId, channelPricesUnavailable: false, channelRejected: false };
   } catch (e) {
     if (e instanceof CatalogError && e.code === "SESSION_EXPIRED") throw e;
+    const rejected = (e as { channelRejected?: boolean }).channelRejected === true;
+    // Clear storage HERE, before the fallback — `loadCatalog()` below can itself
+    // throw (CATALOG_OFFLINE with nothing cached), rejecting the query. In that
+    // state the picker is not even rendered (App gates it on channels.length),
+    // so an effect-based heal would never run and the device would boot into the
+    // same dead channel forever. This one line is what makes the fix survive the
+    // worst case.
+    if (rejected) quarantineChannel(channelId);
     // Keep the till alive on whatever we have — but say out loud that these are
-    // NOT the selected channel's prices.
+    // NOT the selected channel's prices. For a REJECTED channel that banner
+    // would be a permanent lie (nothing is coming back), so it is not raised;
+    // the heal below returns the till to base and says so instead.
     const fallback = await loadCatalog();
-    return { ...fallback, servedChannelId: null, channelPricesUnavailable: true };
+    return { ...fallback, servedChannelId: null, channelPricesUnavailable: !rejected, channelRejected: rejected };
   }
 }
 
@@ -377,6 +456,11 @@ export interface PosContextValue {
   /** `channelId` is set but its price list could not be served — the grid is
    *  showing base/cached prices. The UI must not present the channel as active. */
   channelPricesUnavailable: boolean;
+  /** The server rejected the stored channel and the till was returned to base
+   *  prices. Stays until the cashier acknowledges it: a price list changing
+   *  under the register is not something a 5-second toast may deliver. */
+  channelHealed: boolean;
+  dismissChannelHealed: () => void;
   /** Switch channel: refetches the catalog with ?channelId= WITHOUT touching the
    *  cart (legacy preserved the cart across switches — V5.7.11). */
   setChannel: (id: string | null) => void;
@@ -578,10 +662,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         return null; // 404 / 403 / offline / malformed — no opinion, no noise
       }
     },
-    enabled: !!user && engineStatus.online,
-    // Stock moves on a different clock than the menu: often enough that a 86'd
-    // item greys out within a couple of orders, rarely enough that a busy till
-    // is not walking every recipe in the database on the cashier's behalf.
+    // OFF. Nothing consumes this any more (the 86 board is unwired — see
+    // warnIfUnavailable below and ProductGrid's card()), so leaving it on would
+    // walk every recipe in the database every 90s on the cashier's behalf to
+    // produce a number nobody reads. Flip back to
+    // `!!user && engineStatus.online` the day the badge is wanted again.
+    enabled: false,
     refetchInterval: 90_000,
     staleTime: 60_000,
     retry: false,
@@ -735,15 +821,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // notifications. Living in the STORE rather than on the card means a barcode
   // scan and the App-level scan handler warn too, for free.
   const stockWarnedRef = useRef<Set<string>>(new Set());
-  const warnIfUnavailable = useCallback(
-    (item: CatalogItem) => {
-      if (stockWarnedRef.current.has(item.id)) return;
-      if (resolveStockState(item, getAvailabilitySnapshot()).level !== "out") return;
-      stockWarnedRef.current.add(item.id);
-      pushToast("info", trRef.current("productGrid.stock.addedOutOfStock", { name: tnRef.current(item.name, item.nameEn) }));
-    },
-    [pushToast],
-  );
+  // DISABLED for this menu. The verdict behind it is computed from RAW STOCK,
+  // and every sellable row here is built from a recipe rather than held as a
+  // physical unit — so it fired on almost everything the cashier touched while
+  // each of those items was perfectly sellable. A warning that is wrong most of
+  // the time trains the person reading it to ignore the one time it is right.
+  // Left as a no-op rather than ripped out: the endpoint and StockPip stay in
+  // the tree for a menu that actually sells shelf goods.
+  const warnIfUnavailable = useCallback((_item: CatalogItem) => {
+    void stockWarnedRef;
+  }, []);
 
   // ── Combos (العروض) — close/w25-combos ─────────────────────────────────────
   // Tapping a combo card must open the CHOOSER, not add directly (legacy
@@ -1011,6 +1098,52 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const channelPricesUnavailable = catalogQuery.data?.channelPricesUnavailable ?? false;
   const activeChannelId = catalogQuery.data?.servedChannelId ?? null;
 
+  // ── Self-heal: a stored channel the server no longer lists ────────────────
+  // A live incident. The preference above is persisted and re-applied on EVERY
+  // boot with no validation, so a channel that is later deleted or deactivated
+  // leaves the till refetching ?channelId=<dead> forever, always failing, always
+  // degrading to cached prices. And the one control that could clear it hides
+  // the problem: App.tsx renders the picker on «الأساسي» whenever the stored id
+  // is not in channels[], and a <select> fires no change event when you re-pick
+  // the option it already shows. The cashier is told they are on the default,
+  // served prices that are not the default's, and has no action that changes
+  // anything — «مشكلة لا تنحل».
+  //
+  // THE TRIGGER IS THE SERVER'S VERDICT, NOT AN EMPTY LIST.
+  //
+  // The obvious test — "the stored id is not in catalog.channels[]" — is a trap,
+  // and a fleet-wide one. routes/pos-v2.js:964-972 ships `channels: []` on a
+  // plain 200 whenever its own channels query throws ("Loud fallback: the
+  // catalog still serves the grid; the switcher is empty"). Healing off that
+  // would take EVERY till with a channel selected off channel pricing and onto
+  // base pricing, simultaneously, from one transient DB error — inventing the
+  // exact pricing incident this code exists to prevent. `channelRejected` is a
+  // 422/404 from _loadActiveChannel: the server saying this specific channel is
+  // deleted or switched off. Nothing else is acted on.
+  //
+  // And a thrown fetch is NOT a verdict — an outage must never move a till from
+  // channel prices to base prices. That case keeps `channelPricesUnavailable`,
+  // which the header strip now renders, with a manual way back.
+  const healedChannelRef = useRef<string | null>(null);
+  const [channelHealed, setChannelHealed] = useState(false);
+  const dismissChannelHealed = useCallback(() => setChannelHealed(false), []);
+  useEffect(() => {
+    if (!channelId) return;
+    const rejected = channelQuarantined === channelId || catalogQuery.data?.channelRejected === true;
+    if (!rejected) return;
+    if (healedChannelRef.current === channelId) return; // one notice per id
+    healedChannelRef.current = channelId;
+    channelQuarantined = null;
+    // null = the implicit base. Never auto-pick another channel on the cashier's
+    // behalf: choosing a price list for them is the same class of bug.
+    setChannel(null);
+    // Which price list rings up must never change in silence — and a toast that
+    // self-destructs in five seconds is not "telling" anyone. The persistent
+    // strip is the real notice; the toast is only for a cashier who is looking.
+    setChannelHealed(true);
+    pushToast("info", trRef.current("appShell.toast.channelGone"));
+  }, [catalogQuery.data, channelId, setChannel, pushToast]);
+
   // A t()-able PATH, never a raw `.message`. CatalogError carries the code;
   // anything else (a bare TypeError from fetch) resolves to the generic load
   // failure, so this is always a key that exists in both dictionaries.
@@ -1047,6 +1180,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     channelId,
     activeChannelId,
     channelPricesUnavailable,
+    channelHealed,
+    dismissChannelHealed,
     setChannel,
     shiftId,
     shiftLoading: shiftQuery.isLoading,
@@ -1086,12 +1221,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           undo would otherwise be invisible. */}
       <ActionToastStack toasts={actionToasts} onDismiss={dismissToast} />
       {/* Combo chooser — mounted by the provider (addItem owns the intercept),
-          so every host of the store gets the flow with zero wiring.
-
-          basePrice goes through effectiveUnitPrice for exactly the reason
-          buildCartLine does: a combo IS a normal menu row (is_combo=1) and is
-          channel-priced like any other, so `basePrice ?? price` charged the
-          base price under a card advertising the channel one. */}
+          so every host of the store gets the flow with zero wiring. */}
       <ComboDialog
         open={comboItem != null && comboDef != null}
         combo={comboDef}

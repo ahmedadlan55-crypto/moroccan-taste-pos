@@ -320,7 +320,18 @@ export const accounting = {
 
   generalLedger: {
     title: "General Ledger",
-    subtitle: "Account movements with a running balance per account — filterable by scope and period.",
+    subtitle: "Account movements with a running balance per account — search by name or code, filter by category, scope and period.",
+    searchPlaceholder: "Search by account name or code…",
+    shownOf: "Showing {shown} of {total} accounts",
+    clearSearch: "Clear search",
+    noSearchMatch: "No account matches the search — try another name or code.",
+    filteredNotice: "The totals above cover the full scope; the search is currently hiding {hidden} account(s).",
+    accType: {
+      label: "Account category",
+      both: "All",
+      main: "Main only",
+      sub: "Sub only",
+    },
     openingBalance: "Opening balance",
     totalMovements: "Total ({count} movements)",
     accountCount: "Accounts:",

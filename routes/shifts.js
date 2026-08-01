@@ -12,6 +12,12 @@ const jwt = require('jsonwebtoken');
 // approval in routes/cash.js they reuse the storage of.
 const bcrypt = require('bcryptjs');
 const glPosting = require('../lib/glPosting');
+// The ONE authority for "what is this person called". The X/Z shift report
+// names the cashier on paper exactly like the sale receipt does, so it must
+// resolve that name by the same rule (users.full_name → settings.user_meta →
+// username) or the same person prints under two different names on two
+// documents from the same till.
+const displayName = require('../lib/displayName');
 // Unified Sales Analytics — post-commit till-movement projection (non-fatal;
 // absence of the module never blocks a shift open/close).
 let analyticsProjection;
@@ -1466,18 +1472,11 @@ router.get('/:shiftId/full-report', async (req, res) => {
       return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض تقرير هذه الوردية' });
     }
 
-    // 2. Cashier display name from user_meta
-    let cashierName = s.username || '';
-    let cashierEmpNo = '';
-    try {
-      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-      if (meta.length && meta[0].setting_value) {
-        const map = JSON.parse(meta[0].setting_value || '{}');
-        const me = map[s.username] || {};
-        if (me.name)  cashierName  = me.name;
-        if (me.empNo) cashierEmpNo = me.empNo;
-      }
-    } catch (_) { /* cosmetic — display name only; username fallback already set */ }
+    // 2. Cashier display name — same rule as the sale receipt (lib/displayName.js).
+    //    Was user_meta ONLY, which disagreed with users.full_name.
+    const _shiftCashier = await displayName.resolveCashierIdentity(db, s.username);
+    const cashierName = _shiftCashier.name;
+    const cashierEmpNo = _shiftCashier.empNo;
 
     // 3. Branch info (per V5.7.9 receipt extension)
     let branchName = '', branchAddress = '', branchCompanyName = '';
@@ -1658,16 +1657,10 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     if (!(await _canViewShiftReport(user, s.username))) {
       return res.status(403).type('text/plain').send('403 Forbidden — صلاحية غير كافية لعرض تقرير هذه الوردية');
     }
-    let cashierName = s.username || '', cashierEmpNo = '';
-    try {
-      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-      if (meta.length && meta[0].setting_value) {
-        const map = JSON.parse(meta[0].setting_value || '{}');
-        const me = map[s.username] || {};
-        if (me.name)  cashierName  = me.name;
-        if (me.empNo) cashierEmpNo = me.empNo;
-      }
-    } catch (_) { /* cosmetic — display name only; username fallback already set */ }
+    // Same single rule as the sale receipt (lib/displayName.js) — this is the
+    // server-rendered full shift report, printed on the same paper.
+    const _printCashier = await displayName.resolveCashierIdentity(db, s.username);
+    const cashierName = _printCashier.name, cashierEmpNo = _printCashier.empNo;
     let branchName = '', branchAddress = '', branchCompanyName = '';
     try {
       let branchId = s.branch_id;
@@ -1764,7 +1757,10 @@ router.get('/:shiftId/full-report-print', async (req, res) => {
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => (
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const fmt = v => Number(v || 0).toFixed(2);
-    const fmtDt = v => { try { return new Date(v).toLocaleString('ar-SA'); } catch(e) { return v || '—'; } };
+    // en-GB: 'ar-SA' printed the shift's open/close stamps in Arabic-Indic
+    // digits ("١‏/٧‏/٢٠٢٦، ١٢:٠٠:٠٠ ص") on a thermal report whose every other
+    // number is Latin. Day-first Gregorian, Latin digits, matching the app.
+    const fmtDt = v => { try { return new Date(v).toLocaleString('en-GB', { calendar:'gregory', numberingSystem:'latn' }); } catch(e) { return v || '—'; } };
     const fmtDur = ms => {
       if (!ms || ms < 0) return '—';
       const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
@@ -2015,12 +2011,9 @@ router.get('/', async (req, res) => {
 
     const query = 'SELECT shifts.* FROM shifts' + join + ' WHERE ' + where.join(' AND ') + ' ORDER BY shifts.start_time DESC LIMIT 200';
     const [rows] = await db.query(query, params);
-    // Get user display names
-    let userMap = {};
-    try {
-      const [meta] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-      if (meta.length) userMap = JSON.parse(meta[0].setting_value || '{}');
-    } catch(e) { /* cosmetic — display names only; username fallback below */ }
+    // Display names for the whole page — the bulk form of the same one rule
+    // (lib/displayName.js): two queries total, not two per row.
+    const userMap = await displayName.resolveCashierIdentities(db, rows.map(s => s.username));
     res.json(rows.map(s => ({
       id: s.id, username: s.username,
       displayName: (userMap[s.username] && userMap[s.username].name) || s.username,

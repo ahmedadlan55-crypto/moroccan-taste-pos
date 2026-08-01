@@ -4,7 +4,7 @@
 // and optional secondary dimension, top/bottom-N + sort, then RUN — the query
 // fires only for the exact configuration that was run (editing anything
 // re-arms the Run button instead of auto-refetching). Results render in the
-// shared PivotTable with an optional bar-chart toggle.
+// shared PivotTable — reports are decision tables; charts live on the dashboard.
 //
 // The builder config persists in PAGE-LOCAL URL params (b_m CSV, b_d1, b_d2,
 // b_n) read/written directly via useSearchParams — the shared analytics codec
@@ -12,10 +12,9 @@
 //
 // TODO(sales-hub): save-view + schedule wiring lands next wave — the buttons
 // render disabled with a "coming soon" tooltip until then.
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
-import { BarChart3, CalendarClock, Play, Save } from "lucide-react";
+import { CalendarClock, Play, Save } from "lucide-react";
 import {
   Badge,
   Button,
@@ -26,25 +25,40 @@ import {
   NumberInput,
   SegmentedControl,
   Select,
-  Toggle,
   Tooltip,
   type MultiSelectOption,
 } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, stableStringify, type AnalyticsQueryBody } from "../lib/api";
+import {
+  buildFiltersBody,
+  setPageExportRequest,
+  stableStringify,
+  type AnalyticsQueryBody,
+} from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 import { PivotTable, type PivotMeasure } from "../components/PivotTable";
-import { buildTree } from "../lib/pivot";
+import { GroupByControl } from "../components/GroupByControl";
+import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { useListSeparator } from "../lib/listSeparator";
+
+const SEGMENT = "builder";
 
 /** Page-local URL params (NOT part of the shared analytics codec). */
 const P_METRICS = "b_m";
 const P_DIM1 = "b_d1";
 const P_DIM2 = "b_d2";
 const P_N = "b_n";
+
+/**
+ * The planner refuses more than this (lib/analytics/planner.js MAX_METRICS).
+ * The picker used to offer all 51 and let the server say no: selecting them
+ * produced a red "metrics: at most 12 per request" over an empty report, with
+ * no hint of which twelve to keep or that a limit existed at all.
+ */
+export const MAX_METRICS = 12;
 
 const DEFAULT_DIM = "business_day";
 const DEFAULT_N = 10;
@@ -59,15 +73,22 @@ function formatterFor(format: string): (v: number) => string {
 
 export default function Builder() {
   const t = useT();
+  const listSeparator = useListSeparator();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const [searchParams, setSearchParams] = useSearchParams();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const registry = useAnalyticsRegistry();
 
   // ── config (URL-backed) ──
   const metricIds = useMemo(
-    () => (searchParams.get(P_METRICS) ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    () =>
+      (searchParams.get(P_METRICS) ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        // Clamp on READ, not only on change: a saved link or a hand-edited URL
+        // can carry more than the planner accepts, and that request 422s before
+        // the user has touched anything.
+        .slice(0, MAX_METRICS),
     [searchParams],
   );
   const dim1 = searchParams.get(P_DIM1) || DEFAULT_DIM;
@@ -93,15 +114,51 @@ export default function Builder() {
   const effectiveSort = sortMetric && metricIds.includes(sortMetric) ? sortMetric : metricIds[0] ?? NONE;
 
   const knownMetrics = registry.data?.metrics ?? [];
-  const knownDims = (registry.data?.dimensions ?? []).filter((d) => d.groupable);
 
-  const metricOptions: MultiSelectOption[] = knownMetrics.map((m) => ({
-    value: m.id,
-    label: t(`salesReports.metrics.${m.id}`),
-  }));
-  const dimOptions = knownDims.map((d) => ({ value: d.id, label: t(`salesReports.dims.${d.id}`) }));
+  const requestedDims = useMemo(() => (dim2 && dim2 !== dim1 ? [dim1, dim2] : [dim1]), [dim1, dim2]);
 
-  const dimensions = useMemo(() => (dim2 && dim2 !== dim1 ? [dim1, dim2] : [dim1]), [dim1, dim2]);
+  // Every illegal combination is refused HERE, not by a red box after Run.
+  // Three rules, the same ones the Explorer enforces:
+  //   1. at most MAX_METRICS — the planner's own ceiling;
+  //   2. a metric whose fact cannot express the chosen grouping;
+  //   3. a void metric beside an order-population metric (planner.js:356).
+  const { dimensions, dropped } = useMemo(
+    () => reconcile(registry.data, metricIds, requestedDims),
+    [registry.data, metricIds.join("|"), requestedDims.join("|")],
+  );
+
+  const dimConflicts = useMemo(
+    () => metricConflicts(registry.data, knownMetrics.map((m) => m.id), dimensions),
+    [registry.data, knownMetrics.length, dimensions.join("|")],
+  );
+  const contaminated = useMemo(
+    () => voidPopulationConflicts(registry.data, metricIds),
+    [registry.data, metricIds.join("|")],
+  );
+  const atCap = metricIds.length >= MAX_METRICS;
+
+  const metricOptions: MultiSelectOption[] = knownMetrics.map((m) => {
+    const already = metricIds.includes(m.id);
+    const blockedByDim = dimConflicts[m.id];
+    const voidBlock = wouldContaminate(registry.data, metricIds, m.id);
+    let sublabel: string | undefined;
+    if (blockedByDim) {
+      sublabel = `${t("salesReports.groupBy.blockedBy")} ${blockedByDim
+        .map((d) => t(`salesReports.dims.${d}`))
+        .join(listSeparator)}`;
+    } else if (voidBlock.length) {
+      sublabel = t("salesReports.groupBy.voidPopulation");
+    } else if (atCap && !already) {
+      sublabel = t("salesReports.builder.atCap", { max: MAX_METRICS });
+    }
+    return {
+      value: m.id,
+      label: t(`salesReports.metrics.${m.id}`),
+      // Never disable what is already chosen — it would be stuck in the report.
+      disabled: !already && (!!blockedByDim || voidBlock.length > 0 || atCap),
+      sublabel,
+    };
+  });
 
   const body = useMemo<AnalyticsQueryBody>(
     () => ({
@@ -121,9 +178,20 @@ export default function Builder() {
   const canRun = metricIds.length > 0 && dimensions.length > 0;
   const enabled = canRun && ranSig === configSig;
 
-  const result = useAnalyticsQuery("builder", body, { enabled });
+  const result = useAnalyticsQuery(SEGMENT, body, { enabled });
 
-  const [showChart, setShowChart] = useState(false);
+  // Export registration is DYNAMIC here (the shape follows the builder config),
+  // so it re-registers whenever the picked metrics/dimensions/sort change.
+  useEffect(() => {
+    setPageExportRequest(SEGMENT, () => ({
+      metrics: metricIds,
+      dimensions,
+      ...(effectiveSort ? { sort: [{ by: effectiveSort, dir: direction === "top" ? "desc" : "asc" }] } : {}),
+      limit: topN,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metricIds.join("|"), dimensions.join("|"), effectiveSort, direction, topN]);
+
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const measures: PivotMeasure[] = metricIds.map((id) => {
@@ -132,16 +200,6 @@ export default function Builder() {
   });
 
   const rows = result.data?.rows ?? [];
-  const chartMetric = effectiveSort || metricIds[0] || "";
-  // Top-level aggregation for the bar chart (level-0 subtotals when 2 dims).
-  const chartRows = useMemo(() => {
-    if (!chartMetric || rows.length === 0) return [];
-    return buildTree(rows, dimensions, [chartMetric], result.data?.subtotals).map((node) => ({
-      label: node.labels[0] ?? "—",
-      value: node.values[chartMetric] ?? null,
-    }));
-  }, [rows, dimensions, chartMetric, result.data?.subtotals]);
-  const chartFmt = formatterFor(knownMetrics.find((m) => m.id === chartMetric)?.format ?? "count");
 
   const field = (label: string, control: ReactNode) => (
     <div className="flex min-w-44 flex-col gap-1.5">
@@ -160,35 +218,59 @@ export default function Builder() {
       </div>
 
       {/* ── config panel ── */}
+      {/* Config arriving from a saved report or a shared link can be illegal
+          against the CURRENT metric set. Say what was adjusted rather than
+          running a request that 422s the whole screen. */}
+      {(dropped.length > 0 || Object.keys(contaminated).length > 0) && (
+        <div
+          data-testid="builder-adjusted-notice"
+          className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          {dropped.length > 0 && (
+            <span>
+              {t("salesReports.groupBy.droppedNotice", {
+                dims: dropped.map((d) => t(`salesReports.dims.${d}`)).join(listSeparator),
+              })}
+            </span>
+          )}
+          {Object.keys(contaminated).length > 0 && (
+            <span>
+              {t("salesReports.groupBy.voidPopulationNotice", {
+                metrics: Object.keys(contaminated)
+                  .map((m) => t(`salesReports.metrics.${m}`))
+                  .join(listSeparator),
+              })}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="surface space-y-3 p-4" data-testid="builder-config">
         <div className="flex flex-wrap items-end gap-3">
           {field(
-            t("salesReports.builder.metrics"),
+            `${t("salesReports.builder.metrics")} (${metricIds.length}/${MAX_METRICS})`,
             <MultiSelectCombobox
               options={metricOptions}
               values={metricIds}
-              onChange={(values) => patchParam(P_METRICS, values.join(","))}
+              // Slice defensively: a URL can carry more than the ceiling.
+              onChange={(values) => patchParam(P_METRICS, values.slice(0, MAX_METRICS).join(","))}
               ariaLabel={t("salesReports.builder.metrics")}
             />,
           )}
-          {field(
-            t("salesReports.builder.dimensions"),
-            <Select
-              aria-label={t("salesReports.builder.dimensions")}
-              value={dim1}
-              onChange={(e) => patchParam(P_DIM1, e.target.value)}
-              options={dimOptions}
-            />,
-          )}
-          {field(
-            `${t("salesReports.builder.dimensions")} 2`,
-            <Select
-              aria-label={`${t("salesReports.builder.dimensions")} 2`}
-              value={dim2}
-              onChange={(e) => patchParam(P_DIM2, e.target.value || null)}
-              options={[{ value: NONE, label: "—" }, ...dimOptions.filter((d) => d.value !== dim1)]}
-            />,
-          )}
+          {/* The same control the Explorer uses: every groupable dimension,
+              up to the planner's three levels, illegal ones disabled with the
+              metric that blocks them named. It replaces two native <select>s
+              that offered a curated pair and could not say why anything was
+              unavailable. */}
+          <GroupByControl
+            registry={registry.data}
+            metricIds={metricIds}
+            value={dimensions}
+            onChange={(next) => {
+              patchParam(P_DIM1, next[0] ?? DEFAULT_DIM);
+              patchParam(P_DIM2, next[1] ?? null);
+            }}
+          />
           {field(
             "N",
             <NumberInput
@@ -238,22 +320,6 @@ export default function Builder() {
               <CalendarClock className="h-4 w-4" /> {t("salesReports.builder.schedule")}
             </Button>
           </Tooltip>
-          {enabled && rows.length > 0 && chartMetric && (
-            <div className="ms-auto">
-              {/* Optional bar chart of the sort metric by the primary dimension. */}
-              <Toggle
-                checked={showChart}
-                onChange={setShowChart}
-                aria-label={t("salesReports.builder.showChart")}
-                label={
-                  <span className="inline-flex items-center gap-1.5">
-                    <BarChart3 className="h-4 w-4 text-slate-500" aria-hidden="true" />
-                    {t("salesReports.builder.showChart")}
-                  </span>
-                }
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -272,28 +338,6 @@ export default function Builder() {
             <div data-testid="completeness-notice">
               <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
             </div>
-          )}
-          {showChart && chartRows.length > 0 && (
-            <ChartCard
-              title={t(`salesReports.metrics.${chartMetric}`)}
-              tableLabel={t(`salesReports.dims.${dim1}`)}
-              tableColumns={[
-                { key: "label", label: t(`salesReports.dims.${dim1}`) },
-                { key: "value", label: t(`salesReports.metrics.${chartMetric}`) },
-              ]}
-              tableRows={chartRows.map((r) => ({
-                label: r.label,
-                value: r.value == null ? "—" : chartFmt(r.value),
-              }))}
-            >
-              <BarChart data={chartRows}>
-                <CartesianGrid stroke={palette.grid} vertical={false} />
-                <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-                <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-                <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterNumber(v)} />
-                <Bar dataKey="value" name={t(`salesReports.metrics.${chartMetric}`)} fill={palette.series[0]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ChartCard>
           )}
           <PivotTable
             rows={rows}

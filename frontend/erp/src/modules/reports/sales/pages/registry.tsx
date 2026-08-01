@@ -13,6 +13,7 @@ export const SEGMENT_PAGES: Readonly<
   executive: lazy(() => import("./Executive")),
   explorer: lazy(() => import("./Explorer")),
   items: lazy(() => import("./Items")),
+  "item-sales": lazy(() => import("./ItemSales")),
   modifiers: lazy(() => import("./Modifiers")),
   payments: lazy(() => import("./Payments")),
   cashiers: lazy(() => import("./Cashiers")),

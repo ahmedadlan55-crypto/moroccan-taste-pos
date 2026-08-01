@@ -12,11 +12,16 @@ vi.mock("@/shared/api", async (importOriginal) => {
     apiClient: {
       ...actual.apiClient,
       get: vi.fn(async (path: string) => {
-        if (path.includes("/orders")) {
+        if (path.includes("/invoices")) {
           return {
             success: true,
             data: [
-              { id: "o1", order_number: "SO-1001", customer_name: "متجر الأمل", order_date: "2026-01-05", total_amount: 1250.5, is_credit_sale: 1, status: "confirmed", version: 1 },
+              {
+                id: "i1", document_number: "INV-1001", document_type: "invoice", source_type: "pos",
+                customer_name: "متجر الأمل", issue_date: "2026-01-05", due_date: "2026-02-05",
+                subtotal: 1087.39, vat_amount: 163.11, total_amount: 1250.5, paid_amount: 0,
+                balance_amount: 1250.5, status: "issued", zatca_status: "accepted", version: 1,
+              },
             ],
             pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 },
           };
@@ -38,20 +43,27 @@ function renderAt(path: string) {
   );
 }
 
-describe("sales module — orders list smoke", () => {
-  it("renders order rows from a mocked apiClient without console errors", async () => {
+// Manual sales orders were removed with the credit-sales surfaces; invoices is
+// now the sales group's first leaf AND the module's default section, so this
+// smoke covers both the section it lands on and the fallback branch.
+describe("sales module — invoices list smoke", () => {
+  it("renders invoice rows from a mocked apiClient without console errors", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    renderAt("/sales/orders");
+    renderAt("/sales/invoices");
 
     // Rows render in both the desktop table and the mobile stacked card (jsdom
     // applies no CSS, so both layouts are in the DOM) — assert at least one.
-    expect((await screen.findAllByText("SO-1001")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("INV-1001")).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getAllByText("متجر الأمل").length).toBeGreaterThan(0));
-    // status label + credit badge from the shared kit + domain adapter
-    expect(screen.getAllByText("مؤكَّد").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("آجل").length).toBeGreaterThan(0);
+    // status label from the shared kit + domain adapter
+    expect(screen.getAllByText("صادرة").length).toBeGreaterThan(0);
 
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("falls back to the invoices section for an unknown /sales segment", async () => {
+    renderAt("/sales/orders");
+    expect((await screen.findAllByText("INV-1001")).length).toBeGreaterThan(0);
   });
 });

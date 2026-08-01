@@ -24,7 +24,10 @@
  */
 
 const router = require('express').Router();
+const acctDate = require('../../lib/accountingDate');
+const glPosting = require('../../lib/glPosting');
 const db = require('../../db/connection');
+const requireCapability = require('../../middleware/requireCapability');
 
 function _monthBounds(year, month) {
   const start = new Date(year, month - 1, 1);
@@ -36,7 +39,8 @@ function _monthBounds(year, month) {
   };
 }
 
-router.get('/periods', async (req, res) => {
+// Shadowed by routes/erp.js:2450 (same path, mounted first, same capability).
+router.get('/periods', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const year = Number(req.query.year) || new Date().getFullYear();
     const [rows] = await db.query(
@@ -70,7 +74,9 @@ router.get('/periods', async (req, res) => {
   }
 });
 
-router.get('/periods/check', async (req, res) => {
+// No known caller (grep-verified across frontend/, public/, routes/, lib/) —
+// routes/sales.js:55 requires assertPeriodOpen as a MODULE, never over HTTP.
+router.get('/periods/check', requireCapability('finance.gl.view'), async (req, res) => {
   try {
     const date = req.query.date;
     if (!date) return res.json({ success: false, error: 'date is required' });
@@ -106,7 +112,10 @@ async function _statusAt(conn, date, brandId, branchId) {
   }
 }
 
-router.post('/periods', async (req, res) => {
+// Shadowed by routes/erp.js:2482 (same path, mounted first, same capability) —
+// guarded here too so mount order is not the only thing standing between an
+// arbitrary token and a new period row.
+router.post('/periods', requireCapability('finance.periods.manage'), async (req, res) => {
   try {
     const { periodLabel, startDate, endDate, brandId, branchId } = req.body || {};
     if (!periodLabel || !startDate || !endDate) {
@@ -150,6 +159,46 @@ async function _transitionStatus(req, res, target, fromStates) {
     if (fromStates && fromStates.length && fromStates.indexOf(cur[0].status) < 0) {
       return res.json({ success: false, error: 'illegal transition from ' + cur[0].status });
     }
+
+    // ── «ترحيل المبيعات» guard ──────────────────────────────────────────
+    // Sealing a period whose sales have not reached the ledger produces a
+    // trial balance that looks finished and is wrong, and leaves the queue
+    // rows with nowhere legal to go. Only on a real close — soft_close is a
+    // review state, and reopen must never be blocked.
+    if (target === 'closed' || target === 'locked') {
+      try {
+        await require('./sales-posting').assertNoUnpostedSales(db, {
+          from: bounds.start, to: bounds.end, brandId, branchId });
+      } catch (guardErr) {
+        if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
+          // Override needs force AND the capability AND a reason. What is left
+          // behind becomes `stranded` rather than being deleted, so a forced
+          // close never makes unposted revenue disappear quietly.
+          const wantsForce = req.body && req.body.force === true;
+          const reason = String((req.body && req.body.reason) || '').trim();
+          const mayOverride = await requireCapability
+            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
+          if (!wantsForce || !mayOverride || reason.length < 10) {
+            return res.status(409).json({
+              success: false,
+              error: 'UNPOSTED_SALES_IN_PERIOD',
+              message: guardErr.message,
+              unpostedCount: guardErr.unpostedCount,
+              firstDay: guardErr.firstDay,
+              lastDay: guardErr.lastDay,
+              // The screen deep-links straight to what is blocking the close.
+              link: '/accounting/sales-posting?from=' + (guardErr.firstDay || '') +
+                    '&to=' + (guardErr.lastDay || ''),
+              overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
+            });
+          }
+          const stranded = await require('./sales-posting').strandUnposted(db,
+            { from: bounds.start, to: bounds.end });
+          console.warn('[periods] FORCED close of ' + id + ' by ' + username +
+            ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
+        } else { throw guardErr; }
+      }
+    }
     await db.query(
       `UPDATE accounting_periods SET status = ?, closed_by = ?, closed_at = NOW(), closing_notes = ? WHERE id = ?`,
       [target, username, notes, id]
@@ -160,10 +209,30 @@ async function _transitionStatus(req, res, target, fromStates) {
   }
 }
 
-router.post('/periods/:label/close',       (req, res) => _transitionStatus(req, res, 'closed', ['open', 'soft_close']));
-router.post('/periods/:label/soft-close',  (req, res) => _transitionStatus(req, res, 'soft_close', ['open']));
-router.post('/periods/:label/lock',        (req, res) => _transitionStatus(req, res, 'locked', ['closed']));
-router.post('/periods/:label/reopen',      (req, res) => _transitionStatus(req, res, 'open',   ['closed', 'soft_close']));
+// ── Authorization ───────────────────────────────────────────────────────────
+// These routes shipped with NO guard at all. Closing a period blocks every
+// subsequent sale in it (lib/glPosting.js isPeriodClosed fails CLOSED), and
+// re-opening one lets journals be posted into a period the books were already
+// signed off on. `finance.periods.manage` is the capability routes/erp.js:2523
+// already uses for the parallel lock endpoint, so this closes the bypass rather
+// than inventing a second, divergent gate.
+//
+// MOUNT ORDER MATTERS — server.js mounts routes/erp.js (:772) BEFORE this file
+// (:778), so `/periods` (GET+POST) and `/periods/:id/lock` are already served,
+// and already guarded, by routes/erp.js:2450/2482/2523. Only `close`,
+// `soft-close` and `reopen` are unique to this file — those were the live hole.
+// The rest are guarded here anyway: a shadowed route is one mount-order edit
+// away from being reachable, and an unguarded shadowed route is a trap.
+//
+// `posPortalScope` (middleware/posPortalScope.js) already blocked the CASHIER
+// role specifically. It is a deny-list for POS_ONLY_ROLES, so every other
+// non-admin role — waiter, inventory, purchasing, employee — still reached
+// these. That is what this closes.
+
+router.post('/periods/:label/close',       requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'closed', ['open', 'soft_close']));
+router.post('/periods/:label/soft-close',  requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'soft_close', ['open']));
+router.post('/periods/:label/lock',        requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'locked', ['closed']));
+router.post('/periods/:label/reopen',      requireCapability('finance.periods.manage'), (req, res) => _transitionStatus(req, res, 'open',   ['closed', 'soft_close']));
 
 /**
  * Helper for other routes to enforce period locks inside their
@@ -176,11 +245,30 @@ router.post('/periods/:label/reopen',      (req, res) => _transitionStatus(req, 
  */
 async function assertPeriodOpen(conn, date, brandId, branchId) {
   const c = conn || db;
-  const d = (date instanceof Date)
-    ? (date.toISOString().slice(0, 10))
-    : String(date).slice(0, 10);
+  // Riyadh calendar date, not UTC. `toISOString()` here checked a 00:00–02:59
+  // sale against the PREVIOUS day's period — so a sale on the 1st was refused
+  // whenever the prior month was closed, and slipped into a month that was
+  // supposed to be finished whenever it was not. See lib/accountingDate.js.
+  const d = acctDate.toAccountingDate(date);
   const status = await _statusAt(c, d, brandId, branchId);
-  if (status === 'closed' || status === 'locked') {
+  // Same list glPosting blocks on — imported, not restated.
+  //
+  // These two guards used to disagree: this one blocked only {closed, locked}
+  // while lib/glPosting.js#isPeriodClosed also blocks {soft_close,
+  // soft_closed}. So a sale into a soft-closed period passed THIS check, ran
+  // the whole checkout, and then died inside postJournal with a generic
+  // «GL_POSTING_FAILED» that rolled everything back — the cashier saw an
+  // unexplained failure instead of «the period is closed».
+  //
+  // Aligning them cannot newly reject a sale that succeeds today: any sale
+  // that posts a journal already fails in that period. It only moves the
+  // refusal to the front, where it can say why.
+  //
+  // The FAIL DIRECTIONS stay deliberately opposite: _statusAt degrades to
+  // 'open' so a broken period table can never stop the register, while
+  // isPeriodClosed returns true so it can never let money into a closed book.
+  // Availability for the till, integrity for the ledger.
+  if (glPosting.PERIOD_CLOSED_STATUSES.includes(String(status || '').toLowerCase())) {
     const err = new Error('Accounting period for ' + d + ' is ' + status + ' — re-open or post to a later date');
     err.code = 'period_locked';
     err.status = 403;

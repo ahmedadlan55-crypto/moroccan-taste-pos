@@ -15,6 +15,15 @@ const { appendAuditEntry, verifyAuditChain } = require('../lib/auditLogger');
 // Owner B — cashier account validation: shared branch/warehouse existence +
 // active-state guard used by POST /users and PUT /users/:username below.
 const _validateBranchWarehouse = require('../lib/branchWarehouseValidation');
+// The ONE authority for "what is this person called" (users.full_name →
+// settings.user_meta[u].name → username). Every token minted below carries the
+// resolved name as the `displayName` claim, because the POS receipt is printed
+// from the token ALONE: the till re-derives its user from localStorage on every
+// mount (frontend/pos/src/state/store.tsx:530) and an OFFLINE sale cannot ask
+// the server who the cashier is. Without the claim the receipt printed the
+// login id ("2004"). Same resolver backs the reprint (routes/sales.js) and the
+// X/Z shift report (routes/shifts.js) so one sale can never print two names.
+const { resolveCashierIdentity } = require('../lib/displayName');
 
 // ─── In-memory rate limiter (per IP) ───
 const loginAttempts = {}; // { ip: { count, firstAttempt, blockedUntil } }
@@ -191,8 +200,19 @@ router.post('/login', async (req, res) => {
       return res.json({ success: false, error: 'هذا الحساب لا يملك صلاحية الدخول إلى بوابة العهدة' });
     }
 
+    // The row came from `SELECT *` above, so full_name is already in hand — pass
+    // it to skip a redundant query. On a pre-migration schema the property is
+    // `undefined`, which makes the resolver look it up (and tolerate its
+    // absence); a NULL/blank column is a KNOWN empty and short-circuits to the
+    // user_meta → username layers.
+    const identity = await resolveCashierIdentity(db, user.username, { fullName: user.full_name });
+
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
+      // v7.8 — the cashier's real name, for the receipt's "served by" line.
+      // ALWAYS present and never blank (worst case it equals username), so the
+      // client needs no server round-trip and no offline fallback of its own.
+      displayName: identity.name,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
@@ -202,6 +222,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       success: true, username: user.username, role: user.role, token,
+      displayName: identity.name,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || '',
@@ -265,8 +286,16 @@ router.post('/change-password', verifyToken, async (req, res) => {
 
     // Fresh token for THIS session carrying the new version (so it stays valid).
     const isDev = !!user.is_developer || user.username === 'admin' || (req.user && req.user.role === 'developer');
+    // Resolve the name FRESH rather than copying req.user.displayName: the old
+    // token may predate this claim entirely (the deploy case), and copying it
+    // would leave that session printing a login id until the next full login.
+    // The SELECT above deliberately does NOT fetch full_name — the resolver
+    // reads it behind its own try/catch, so a schema that has not run
+    // server.js:3695 yet cannot 500 a password change over a cosmetic name.
+    const freshIdentity = await resolveCashierIdentity(db, user.username);
     const fresh = jwt.sign({
       id: user.id, username: user.username, role: req.user.role,
+      displayName: freshIdentity.name,
       isDeveloper: isDev, brandId: req.user.brandId || '', branchId: req.user.branchId || '',
       default_warehouse_id: req.user.default_warehouse_id || '', employeeId: req.user.employeeId || '',
       tokenVersion: newVersion
@@ -325,13 +354,20 @@ router.post('/refresh-token', async (req, res) => {
     const decodedVer = Number(decoded.tokenVersion != null ? decoded.tokenVersion : 1) || 1;
     if (decodedVer !== (Number(user.token_version) || 1)) return res.json({ success: false, error: 'انتهت الجلسة — يرجى تسجيل الدخول مجددًا' });
     // Issue new token with CURRENT values (not old cached ones — role/branch/warehouse may have changed)
+    // …including the display name: a rename in the admin screen reaches the
+    // till on its next refresh, and a session that started on a pre-claim token
+    // GAINS the name here instead of waiting 24h for a re-login. The SELECT
+    // above is left untouched (no full_name column added) so an unmigrated
+    // schema cannot turn a token refresh into a hard logout.
+    const identity = await resolveCashierIdentity(db, user.username);
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
+      displayName: identity.name,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
       tokenVersion: Number(user.token_version) || 1
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ success: true, token, role: user.role });
+    res.json({ success: true, token, role: user.role, displayName: identity.name });
   } catch (e) { res.json({ success: false }); }
 });
 
@@ -1498,8 +1534,13 @@ router.post('/2fa/enroll', async (req, res) => {
     const user = users[0];
     await db.query('UPDATE users SET totp_secret = ? WHERE id = ?', [secret, user.id]);
     const isDev = !!user.is_developer || user.username === 'admin' || user.role === 'developer';
+    // Fourth and last mint site. The SELECT above lists its columns explicitly
+    // and does NOT include full_name on purpose — the resolver reads it behind
+    // its own try/catch, keeping 2FA enrolment working on an unmigrated schema.
+    const identity = await resolveCashierIdentity(db, user.username);
     const token = jwt.sign({
       id: user.id, username: user.username, role: user.role,
+      displayName: identity.name,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
@@ -1507,6 +1548,7 @@ router.post('/2fa/enroll', async (req, res) => {
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({
       success: true, token, username: user.username, role: user.role,
+      displayName: identity.name,
       isDeveloper: isDev,
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || '',

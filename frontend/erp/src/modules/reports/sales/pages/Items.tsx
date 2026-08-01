@@ -1,16 +1,15 @@
 // Sales Analytics Hub — "items" page.
 //
 // Category → item pivot (expandable, API subtotals win) over qty / gross / net
-// / contribution, a KPI row from the query totals, and a top-20 bar of items
-// by net. Wave 4: a leaf (menu_item) row drills to the orders segment with the
-// clicked item pinned via the shared `menuItemId` codec param; group rows
-// still toggle on click.
-import { lazy, Suspense, useMemo, useState, type ReactElement } from "react";
+// / contribution, plus a KPI row from the query totals. Wave 4: a leaf
+// (menu_item) row drills to the orders segment with the clicked item pinned
+// via the shared `menuItemId` codec param; group rows still toggle on click.
+// No chart lives here: reports are decision tables, charts belong on the
+// dashboard.
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, Package, Receipt } from "lucide-react";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
+import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
 import { formatCurrency, formatNumber } from "@/shared/lib";
@@ -18,7 +17,6 @@ import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
-  displayMetric,
   setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
@@ -32,7 +30,6 @@ import type { FlatPivotRow } from "../lib/pivot";
 const SEGMENT = "items";
 const METRICS = ["qty_sold", "gross_product_sales", "net_ex_vat", "item_contribution_pct"] as const;
 const DIMS = ["category", "menu_item"] as const;
-const TOP_N = 20;
 
 // The TopBar ExportMenu asks this page's registry entry for its export shape.
 setPageExportRequest(SEGMENT, () => ({
@@ -40,23 +37,6 @@ setPageExportRequest(SEGMENT, () => ({
   dimensions: [...DIMS],
   sort: [{ by: "net_ex_vat", dir: "desc" }],
 }));
-
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -110,8 +90,6 @@ function segmentHref(search: string, segment: string, extra: Record<string, stri
 
 export default function Items() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -132,18 +110,6 @@ export default function Items() {
   // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
-
-  const topItems = useMemo(() => {
-    return (query.data?.rows ?? [])
-      .map((row) => ({
-        key: String(row.keys[1] ?? ""),
-        label: row.labels[1] ?? String(row.keys[1] ?? ""),
-        net: displayMetric(row, "net_ex_vat"),
-      }))
-      .filter((r) => r.net != null)
-      .sort((a, b) => (b.net as number) - (a.net as number))
-      .slice(0, TOP_N);
-  }, [query.data]);
 
   const measures = useMemo<PivotMeasure[]>(
     () => [
@@ -219,46 +185,6 @@ export default function Items() {
           );
         })}
       </div>
-
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t("salesReports.metrics.net_ex_vat")}
-              subtitle={t("salesReports.dims.menu_item")}
-              isEmpty={topItems.length === 0}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t("salesReports.metrics.net_ex_vat")} — ${t("salesReports.dims.menu_item")}`}
-              tableColumns={[
-                { key: "label", label: t("salesReports.dims.menu_item") },
-                { key: "netText", label: t("salesReports.metrics.net_ex_vat") },
-              ]}
-              tableRows={topItems.map((r) => ({
-                label: r.label,
-                netText: r.net == null ? "—" : formatCurrency(r.net),
-              }))}
-              height={320}
-            >
-              <R.BarChart data={topItems} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis
-                  dataKey="label"
-                  reversed={rtl.xAxisReversed}
-                  tick={{ fontSize: 10, fill: palette.axis }}
-                  interval={0}
-                  angle={-30}
-                  height={64}
-                  textAnchor="end"
-                />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterCurrency(value)} />
-                <R.Bar dataKey="net" name={t("salesReports.metrics.net_ex_vat")} fill={palette.series[0]} radius={[6, 6, 0, 0]} />
-              </R.BarChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
 
       <PivotTable
         rows={rows}

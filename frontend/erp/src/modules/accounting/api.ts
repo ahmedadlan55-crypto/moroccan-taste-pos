@@ -291,14 +291,23 @@ export interface GlLedgerResponse {
     lineCount: number;
   };
 }
-export function useGlLedger(range: DateRange | null, scope: string) {
+/** main = a ROOT account · sub = anything that has a parent · both = no filter. */
+export type GlAccountKind = "both" | "main" | "sub";
+
+/**
+ * `accType` was hardcoded to "both" here, so the account-category filter the
+ * SERVER has always honoured (routes/erp/reports/gl-ledger.js reads `accType`
+ * and applies `isMain`) was unreachable from the UI. It is a real parameter
+ * now, and it is part of the query key so switching category refetches.
+ */
+export function useGlLedger(range: DateRange | null, scope: string, accType: GlAccountKind = "both") {
   return useQuery({
-    queryKey: ["acc", "gl-ledger", range?.from, range?.to, scope],
+    queryKey: ["acc", "gl-ledger", range?.from, range?.to, scope, accType],
     enabled: !!range,
     queryFn: async () =>
       unwrap(
         await apiClient.get<GlLedgerResponse>("/erp/reports/gl-ledger-multi", {
-          params: { from: range!.from, to: range!.to, scope, accType: "both" },
+          params: { from: range!.from, to: range!.to, scope, accType },
         }),
       ),
   });

@@ -7,7 +7,7 @@
 import { useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Check, Plus, RefreshCw, X } from "lucide-react";
+import { Bookmark, Check, Plus, Printer, RefreshCw, X } from "lucide-react";
 import { Badge, Button, Dialog, DropdownMenu, IconButton, Input, SegmentedControl } from "@/shared/ui";
 import { useCan } from "@/shared/permissions";
 import {
@@ -20,6 +20,10 @@ import {
 } from "@/shared/ui/date-range-picker";
 import { MultiSelectCombobox, type MultiSelectOption } from "@/shared/ui/multi-select-combobox";
 import { formatDate, formatDateTime, formatNumber } from "@/shared/lib";
+// The accounting reports own the print contract (printReport + PrintArea +
+// the .print-document rules in styles/index.css); the hub reuses it verbatim
+// rather than growing a second, drifting copy.
+import { printReport } from "@/modules/accounting/components";
 import { useT } from "@/i18n";
 import {
   analyticsFilterCodec,
@@ -33,14 +37,18 @@ import {
   savedViewSearchString,
   useBrandOptions,
   useBranchOptions,
+  useMenuItemOptions,
   type AnalyticsResult,
 } from "../lib/api";
 import { ExportMenu } from "./ExportMenu";
+import { useChannels } from "@/modules/sales/channels/api";
 
-/** Static channel codes this wave (server-backed options arrive with explorer). */
-export const CHANNEL_CODES = ["pos", "online", "aggregator", "call_center"] as const;
+/** RETIRED. These four codes never existed in `sales_channels` — see the
+ *  channelOptions comment below. Kept only so an old saved view that stored one
+ *  can still be recognised and cleared rather than silently returning zero. */
+export const RETIRED_CHANNEL_CODES = ["pos", "online", "aggregator", "call_center"] as const;
 /** Static order-type codes this wave. */
-export const ORDER_TYPE_CODES = ["dine_in", "takeaway", "delivery", "pickup"] as const;
+export const ORDER_TYPE_CODES = ["dine_in", "takeaway", "delivery"] as const;
 
 export interface AnalyticsTopBarProps {
   filters: AnalyticsFilters;
@@ -223,6 +231,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   const defaults = analyticsFilterCodec.defaults;
   const brands = useBrandOptions();
   const branches = useBranchOptions();
+  const menuItems = useMenuItemOptions();
   // Segment = the last pathname piece (the hub owns /reports/sales/<segment>).
   const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
   const canExport = useCan("analytics.export");
@@ -234,10 +243,24 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
     COMPARE_MODES.map((m) => [m, t(`salesReports.topbar.compareModes.${m}`)]),
   ) as Record<CompareMode, string>;
 
-  const channelOptions: MultiSelectOption[] = CHANNEL_CODES.map((c) => ({
-    value: c,
-    label: t(`salesReports.topbar.channels.${c}`),
+  // REAL CHANNELS, KEYED BY THE COLUMN THE ENGINE FILTERS ON.
+  //
+  // This used to map a hardcoded CHANNEL_CODES list — "pos" / "online" /
+  // "aggregator" / "call_center" — while the dimension filters on
+  // `f.channel_id` (lib/analytics/registry/dimensions.js:151), which holds the
+  // owner's real `sales_channels.id` values. The two sets never intersected, so
+  // picking ANY channel silently emptied every report in the hub. The file's own
+  // comment admitted the list was provisional; it then outlived the wave.
+  //
+  // A failed/empty load falls back to NO options rather than to fake ones: an
+  // empty picker is honest, a picker full of ids that match nothing is not.
+  const channelsQuery = useChannels();
+  const channelOptions: MultiSelectOption[] = (channelsQuery.data ?? []).map((c) => ({
+    value: c.id,
+    label: c.name || c.code || c.id,
   }));
+  // "pickup" is not in the ENUM this column can hold (dine_in | takeaway |
+  // delivery), so it could only ever return nothing.
   const orderTypeOptions: MultiSelectOption[] = ORDER_TYPE_CODES.map((o) => ({
     value: o,
     label: t(`salesReports.topbar.orderTypes.${o}`),
@@ -368,6 +391,19 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           />,
         )}
         {field(
+          // The owner's question is "how did THIS item sell in THAT branch" —
+          // menuItemId has always been a first-class URL filter, but until now
+          // the only way to set it was drilling into a row.
+          t("salesReports.dims.menu_item"),
+          <MultiSelectCombobox
+            options={toOptions(menuItems.data)}
+            values={filters.menuItemId}
+            onChange={(values) => patch({ menuItemId: values })}
+            ariaLabel={t("salesReports.dims.menu_item")}
+            labels={{ placeholder: t("salesReports.topbar.allItems") }}
+          />,
+        )}
+        {field(
           t("salesReports.topbar.channel"),
           <MultiSelectCombobox
             options={channelOptions}
@@ -432,6 +468,12 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
             </IconButton>
           )}
           <SaveViewControl />
+          {/* Print is NOT export-gated: it puts the report the user is already
+              reading on paper. The hub wraps the routed page in PrintArea, and
+              this bar is .no-print, so the printout is the report alone. */}
+          <IconButton size="sm" aria-label={t("salesReports.topbar.print")} onClick={printReport}>
+            <Printer className="h-4 w-4" />
+          </IconButton>
           {canExport && <ExportMenu segment={segment} filters={filters} />}
           {pageActions}
         </div>

@@ -21,6 +21,7 @@ const express = require('express');
 const db = require('../../db/connection');
 const { FACTS } = require('../../lib/analytics/registry/facts');
 const DIMS = require('../../lib/analytics/registry/dimensions');
+const grouping = require('../../lib/analytics/registry/grouping');
 const METRICS = require('../../lib/analytics/registry/metrics');
 const planner = require('../../lib/analytics/planner');
 const freshness = require('../../lib/analytics/freshness');
@@ -60,6 +61,19 @@ router.get('/', async (req, res) => {
           id: m.id,
           kind: m.kind,
           fact: m.kind === 'additive' ? m.fact : null,
+          // `fact` is a single id and is null for every derived metric, which
+          // tells a grouping UI nothing: a derived metric is expanded into its
+          // additive inputs and EVERY input's fact must express the grouped
+          // dimension. `facts` is that resolved list (registry/grouping.js) —
+          // without it the client cannot predict ANALYTICS_UNSUPPORTED_COMBINATION
+          // and the user meets a raw 422 that names no culprit.
+          facts: grouping.metricFacts(m.id),
+          // TRUE when this metric makes the planner drop the void exclusion for
+          // every OTHER metric on the same fact statement (planner.js:356).
+          // The condition is a substring test on SQL the client never sees, so
+          // the verdict is projected rather than re-derived — a hardcoded list
+          // of "void metrics" on the client would be a second copy of the rule.
+          liftsVoidExclusion: grouping.liftsVoidExclusion(m.id),
           format: m.format,
           equationKey: m.equationKey,
           version: m.version,
@@ -78,7 +92,11 @@ router.get('/', async (req, res) => {
           kind: d.kind,
           ops: d.ops,
           groupable: !!d.groupable,
-          facts: Object.keys(d.facts || {}),
+          // NOT Object.keys(d.facts): meal_period is kind 'derived-js' with no
+          // `facts` map at all — it is planned from `sourceColumn`, so reading
+          // `facts` alone reported it supported NOWHERE and a client honouring
+          // that would grey out the most useful restaurant grouping there is.
+          facts: grouping.dimensionFacts(d.id),
         };
         if (d.requiresCap) out.requiresCap = d.requiresCap;
         if (d.label) out.hasLabels = true;

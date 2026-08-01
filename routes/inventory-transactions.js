@@ -25,6 +25,7 @@ const router = require('express').Router();
 const crypto = require('crypto');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
+const coaTree = require('../lib/coa/tree');
 const E = require('../lib/inventoryTxEngine');
 const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
@@ -957,10 +958,14 @@ router.get('/gl-accounts', async (req, res) => {
     if (!types) return _fail(res, 'VALIDATION_ERROR', 'usage يجب أن يكون receipt أو issue');
     await gl.ensureCoreAccounts(db);
     const ph = types.map(() => '?').join(',');
+    // Checked "childless" only, so a childless account flagged is_folder=1 was
+    // offered here and postable — the same hole routes/accounting.js had, and
+    // it is what the trial balance then reports as nonLeafPostingActivity. One
+    // shared predicate now (lib/coa/tree.js, which folds in the is_active test).
     const [rows] = await db.query(
       'SELECT a.code, a.name_ar, a.name_en, a.type FROM gl_accounts a ' +
-      'WHERE a.is_active=1 AND a.type IN (' + ph + ') ' +
-      'AND NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id=a.id) ORDER BY a.code',
+      'WHERE ' + coaTree.POSTING_LEAF_SQL('a') + ' AND a.type IN (' + ph + ') ' +
+      'ORDER BY ' + coaTree.ORDER_BY('a'),
       types
     );
     res.json({ data: rows.map((r) => ({ code: r.code, name: r.name_ar || r.name_en || r.code, type: r.type })), usage });

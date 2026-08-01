@@ -138,6 +138,7 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
   const grand = {};
   let sawGrand = false;
   let anyCapped = false;
+  const cappedStatements = new Set();
 
   for (const st of plan.statements) {
     if (cancelState && cancelState.cancelled) {
@@ -153,7 +154,9 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
       sawGrand = true;
       continue;
     }
-    if (rows.length >= plan.meta.fetchN) anyCapped = true;
+    // Per-STATEMENT, not just per-request: which fact ran out of fetch depth
+    // decides whose missing values are an honest zero and whose are unknown.
+    if (rows.length >= plan.meta.fetchN) { anyCapped = true; cappedStatements.add(st); }
     for (const r of rows) {
       const keyVals = [];
       const keys = {};
@@ -195,17 +198,49 @@ async function executePlan(conn, plan, offsetMin, cancelState) {
     }
   }
 
-  // zero-fill additive metrics a fact never contributed
+  /*
+   * Fill the metrics a fact did not contribute for a key.
+   *
+   * ZERO IS ONLY TRUE WHEN THE FACT ACTUALLY LOOKED.
+   *   Every fact statement fetches its OWN top-`fetchN` slice, and when the
+   *   sort metric does not live on a fact the planner falls back to
+   *   `ORDER BY d0` for it (planner.js:396-399) — a lexicographic slice of one
+   *   dimension, not a metric ranking. So two facts can return 500 rows each
+   *   that barely intersect. Zero-filling the gap then prints a fabricated 0
+   *   that is indistinguishable from a real one:
+   *
+   *     BR2 2025-12-06 h20   net 1,714.48   orders 0     ← truth: 6
+   *
+   *   A top-selling hour with no orders. Measured on a 400-day synthetic set,
+   *   grouping branch × day × hour: 10 of 10 visible rows wrong.
+   *
+   *   The fix is not to hide the row — the sales figure on it is real — but to
+   *   stop asserting the part we did not measure. A CAPPED statement's metrics
+   *   fill with null, which every consumer already renders as "—" and which
+   *   api.ts documents as "not computable; render '—', never 0". An honest
+   *   unknown beats a confident wrong number.
+   *
+   *   `anyCapped` still rides out as page.rowCountCapped so the UI can say why.
+   */
   const allAdditive = plan.meta.additiveMetrics;
-  const zeroFill = (values) => {
-    for (const id of allAdditive) if (values[id] == null) values[id] = 0;
+  const truncated = new Set();
+  for (const st of plan.statements) {
+    if (cappedStatements.has(st)) for (const id of st.metrics) truncated.add(id);
+  }
+  const fill = (values) => {
+    for (const id of allAdditive) {
+      if (values[id] != null) continue;
+      values[id] = truncated.has(id) ? null : 0;
+    }
   };
-  for (const row of rowsByKey.values()) zeroFill(row.values);
-  for (const sub of subtotalsByKey.values()) zeroFill(sub.values);
+  for (const row of rowsByKey.values()) fill(row.values);
+  for (const sub of subtotalsByKey.values()) fill(sub.values);
+  // The grand total comes from a ROLLUP over the WHOLE grouping, not from the
+  // fetched page, so it is unaffected by the cap and still zero-fills.
   if (!sawGrand) for (const id of allAdditive) grand[id] = 0;
-  zeroFill(grand);
+  for (const id of allAdditive) if (grand[id] == null) grand[id] = 0;
 
-  return { rowsByKey, subtotalsByKey, grand, anyCapped };
+  return { rowsByKey, subtotalsByKey, grand, anyCapped, truncatedMetrics: [...truncated] };
 }
 
 // ── labels ───────────────────────────────────────────────────────────────────
@@ -393,6 +428,10 @@ async function run(db, request, scope, opts = {}) {
           limit: plan.meta.limit,
           offset: plan.meta.offset,
           rowCountCapped: !!exec.anyCapped,
+          // Which metrics came from a TRUNCATED fact statement. Their missing
+          // values are null ("—"), not 0, and the UI names them so the reader
+          // knows which column to distrust rather than the whole page.
+          truncatedMetrics: exec.truncatedMetrics || [],
         },
       },
       meta: {

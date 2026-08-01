@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const { recomputeInvItemStock, recomputeMenuStock, reconcileAllStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber'); // v7.1 — ADJ-… numbering
@@ -3774,7 +3775,7 @@ router.post('/stocktakes', requireCapability('inventory.stocktake.create'), asyn
             branchId: branchId || null, brandId: brandId || null, warehouseId: warehouseId || null });
         }
         const post = await gl.postJournal(db, {
-          journalDate: now.toISOString().slice(0, 10),
+          journalDate: acctDate.journalDate(now),
           description: 'Stock count variance — ' + stId,
           referenceType: 'Stocktake',
           referenceId: stId,
@@ -4115,7 +4116,7 @@ router.post('/adjustments/:id/approve', MGR, requireCapability('inventory.edit')
         const glRes = await gl.postJournal(conn, {
           // Post into the adjustment's OWN business date (not the approval
           // wall-clock), so a back-dated adjustment lands in its real period.
-          journalDate: (adj[0].adjustment_date ? new Date(adj[0].adjustment_date) : now).toISOString().slice(0, 10),
+          journalDate: acctDate.toAccountingDate(adj[0].adjustment_date || now),
           referenceType: 'adjustment',
           referenceId: id,
           description: 'تعديل مخزون (' + (REASON_LABELS[adj[0].reason] || adj[0].reason) + ') — ' + id,
@@ -4509,7 +4510,7 @@ router.post('/receive-approve/:id', requireCapability('inventory.edit'), async (
         });
 
         const post = await gl.postJournal(db, {
-          journalDate: now.toISOString().slice(0, 10),
+          journalDate: acctDate.journalDate(now),
           description: desc,
           referenceType: 'PurchaseReceipt',
           referenceId: req.params.id,

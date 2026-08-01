@@ -25,6 +25,7 @@ import { JournalsPage } from "./pages/Journals";
 import { EquityChangesPage } from "./pages/EquityChanges";
 import { ProfitabilityPage } from "./pages/Profitability";
 import { InventoryValuationPage } from "./pages/InventoryValuation";
+import { SalesPostingPage } from "./pages/SalesPosting";
 
 const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/chart-of-accounts": ChartOfAccountsPage,
@@ -37,6 +38,7 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/ar-aging": ArAgingPage,
   "/accounting/ap-aging": ApAgingPage,
   "/accounting/periods": PeriodsPage,
+  "/accounting/sales-posting": SalesPostingPage,
   "/accounting/financial-ratios": FinancialRatiosPage,
   "/accounting/equity-changes": EquityChangesPage,
   "/accounting/profitability": ProfitabilityPage,

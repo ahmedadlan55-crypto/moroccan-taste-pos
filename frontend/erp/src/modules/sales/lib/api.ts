@@ -6,7 +6,7 @@
 import { apiClient, type RequestOptions } from "@/shared/api";
 import type {
   Customer, Customer360, CustomerStatement, Dashboard, DataResponse, Invoice, ListResponse,
-  MutationResponse, Payment, SalesOrder, SalesReturn,
+  MutationResponse, Payment, SalesReturn,
 } from "./types";
 
 const B = "/order-to-cash";
@@ -42,15 +42,6 @@ export const o2cApi = {
   activateCustomer: (id: string) => apiClient.post<MutationResponse>(`${B}/customers/${id}/activate`, {}, { headers: mutHeaders() }),
   mergePreview: (id: string, target: string, signal?: AbortSignal) => apiClient.get<DataResponse<unknown>>(`${B}/customers/${id}/merge-preview`, { params: { target }, signal }),
   mergeCustomer: (id: string, targetId: string) => apiClient.post<MutationResponse>(`${B}/customers/${id}/merge`, { targetId }, { headers: mutHeaders() }),
-
-  // ── orders ──
-  orders: (params: Params, signal?: AbortSignal) => apiClient.get<ListResponse<SalesOrder>>(`${B}/orders`, { params, signal }),
-  order: (id: string, signal?: AbortSignal) => apiClient.get<DataResponse<SalesOrder>>(`${B}/orders/${id}`, { signal }),
-  createOrder: (body: unknown) => apiClient.post<MutationResponse>(`${B}/orders`, body, { headers: mutHeaders() }),
-  confirmOrder: (id: string, version?: number, body?: unknown) => apiClient.post<MutationResponse>(`${B}/orders/${id}/confirm`, body ?? {}, { headers: mutHeaders(version) }),
-  fulfillOrder: (id: string, version?: number) => apiClient.post<MutationResponse>(`${B}/orders/${id}/fulfill`, {}, { headers: mutHeaders(version) }),
-  invoiceOrder: (id: string, version?: number) => apiClient.post<MutationResponse>(`${B}/orders/${id}/invoice`, {}, { headers: mutHeaders(version) }),
-  cancelOrder: (id: string, version?: number) => apiClient.post<MutationResponse>(`${B}/orders/${id}/cancel`, {}, { headers: mutHeaders(version) }),
 
   // ── invoices ──
   invoices: (params: Params, signal?: AbortSignal) => apiClient.get<ListResponse<Invoice>>(`${B}/invoices`, { params, signal }),

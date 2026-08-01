@@ -1,19 +1,17 @@
 // Sales Analytics Hub — "hours" page.
 //
 // The peak map: a weekday × hour heatmap of net sales (hour, not half_hour, is
-// the v1 grain), an orders-by-hour line, and the hour table synced to the same
-// data. Wave 4: a heat cell click drills to the orders segment with the
-// clicked hour pinned via the shared `hour` codec param (merged into the
-// CURRENT search so every other filter is preserved — one history push).
+// the v1 grain) and the hour table synced to the same data. Wave 4: a heat cell
+// click drills to the orders segment with the clicked hour pinned via the
+// shared `hour` codec param (merged into the CURRENT search so every other
+// filter is preserved — one history push).
 //
-// TODO(next wave): forecast overlay on the orders-by-hour line (the forecast
-// series lands with the builder wave).
-import { lazy, Suspense, useMemo, type ReactElement } from "react";
+// No chart here: reports are decision tables, charts live on the dashboard.
+// The heatmap stays — it is a data grid (cells carry values and drill), not a plot.
+import { useMemo } from "react";
 import { Clock, Coins, ShoppingBag } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, Skeleton } from "@/shared/ui";
-import { useChartPalette } from "@/shared/charts/palette";
-import { useChartsRtl } from "@/shared/charts/rtl";
+import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
 // Deep import: the charts barrel would pull ChartCard → recharts eagerly.
 import { Heatmap, type HeatmapCell } from "@/shared/charts/Heatmap";
 import { DataTable, type ColumnDef } from "@/shared/tables";
@@ -41,23 +39,6 @@ setPageExportRequest(SEGMENT, () => ({
   dimensions: ["hour"],
   sort: [{ by: "hour", dir: "asc" }],
 }));
-
-/* ── deferred chart kit (page-local copy by design; see wave notes) ── */
-
-type Recharts = typeof import("recharts");
-interface ChartKitBag {
-  R: Recharts;
-  ChartCard: (typeof import("@/shared/charts/ChartCard"))["ChartCard"];
-}
-const ChartKit = lazy(async () => {
-  const [R, card] = await Promise.all([import("recharts"), import("@/shared/charts/ChartCard")]);
-  const bag: ChartKitBag = { R, ChartCard: card.ChartCard };
-  return {
-    default: function ChartKitHost({ children }: { children: (kit: ChartKitBag) => ReactElement }) {
-      return children(bag);
-    },
-  };
-});
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -116,8 +97,6 @@ interface HourRow {
 
 export default function Hours() {
   const t = useT();
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
   const navigate = useNavigate();
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
@@ -134,6 +113,12 @@ export default function Hours() {
       { by: "weekday", dir: "asc" },
       { by: "hour", dir: "asc" },
     ],
+    // 7 weekdays × 24 hours = 168 rows. Omitting `limit` handed the request to
+    // the planner's DEFAULT_LIMIT of 50 (lib/analytics/planner.js:58) — and
+    // because the sort is weekday-then-hour, the cut fell mid-week: Thursday
+    // through Sunday, the busiest end of a restaurant week, were simply absent
+    // from the peak map with nothing on screen to say so.
+    limit: 200,
   };
   const byHourBody: AnalyticsQueryBody = {
     ...base,
@@ -290,44 +275,6 @@ export default function Hours() {
           />
         )}
       </article>
-
-      <Suspense fallback={<Skeleton className="h-80" />}>
-        <ChartKit>
-          {({ R, ChartCard }) => (
-            <ChartCard
-              title={t("salesReports.metrics.orders")}
-              subtitle={t("salesReports.dims.hour")}
-              isEmpty={hourRows.every((r) => r.orders == null)}
-              emptyLabel={t("salesReports.charts.empty")}
-              tableLabel={t("salesReports.charts.showTable")}
-              tableCaption={`${t("salesReports.metrics.orders")} — ${t("salesReports.dims.hour")}`}
-              tableColumns={[
-                { key: "label", label: t("salesReports.dims.hour") },
-                { key: "ordersText", label: t("salesReports.metrics.orders") },
-              ]}
-              tableRows={hourRows.map((r) => ({
-                label: r.label,
-                ordersText: r.orders == null ? "—" : formatNumber(r.orders),
-              }))}
-            >
-              <R.LineChart data={hourRows} margin={{ top: 8, left: 8, right: 8 }}>
-                <R.CartesianGrid stroke={palette.grid} vertical={false} />
-                <R.XAxis dataKey="label" reversed={rtl.xAxisReversed} tick={{ fontSize: 11, fill: palette.axis }} />
-                <R.YAxis tick={{ fontSize: 11, fill: palette.axis }} tickFormatter={rtl.tickFormatterNumber} width={64} />
-                <R.Tooltip contentStyle={rtl.tooltipStyle} formatter={(value) => rtl.tickFormatterNumber(value)} />
-                <R.Line
-                  type="monotone"
-                  dataKey="orders"
-                  name={t("salesReports.metrics.orders")}
-                  stroke={palette.series[0]}
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </R.LineChart>
-            </ChartCard>
-          )}
-        </ChartKit>
-      </Suspense>
 
       <DataTable<HourRow>
         columns={columns}

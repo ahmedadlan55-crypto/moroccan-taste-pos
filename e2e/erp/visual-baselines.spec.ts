@@ -115,9 +115,14 @@ const FROZEN_CLOCK = new Date("2026-06-15T09:00:00.000Z");
 //     watermark's future home ([data-freshness-watermark], plus the KPI-row
 //     fallback) so the baseline cannot silently start diffing the moment a
 //     later wave wires meta through — a mask that matches nothing is legal;
-//   * recharts animates with JS (not CSS), which `animations: "disabled"`
-//     cannot stop — the fixed post-networkidle settle lets the ~1.4s chart
-//     intro finish before the capture.
+//   * NO chart settle is needed any more. These screens used to carry recharts,
+//     which animates with JS (not CSS) — `animations: "disabled"` could not
+//     stop it, so a fixed 1.8s sleep was the only way to outlast the intro.
+//     Charts have since been removed from every report (they belong on the
+//     dashboard), so these pages are static tables at first paint: the sleep
+//     was pure wall-clock cost guarding an animation that no longer exists.
+//     waitRendered + networkidle + fonts.ready is the whole determinism story
+//     now, and toHaveScreenshot retries until two consecutive frames match.
 const HUB_SHOT_SEGMENTS = ["executive", "hours", "profitability"] as const;
 const HUB_SEED_QS = "?from=2032-03-01&to=2032-03-31";
 
@@ -135,7 +140,6 @@ test("sales hub visual baseline [ar]", async ({ page }, testInfo) => {
     await waitRendered(page);
     await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
     await page.evaluate(() => (document as any).fonts?.ready);
-    await page.waitForTimeout(1800); // recharts JS intro animation settle
     await expect(page.locator("#main")).toBeVisible();
     await expect(page).toHaveScreenshot(`hub-${segment}--ar.png`, {
       animations: "disabled",

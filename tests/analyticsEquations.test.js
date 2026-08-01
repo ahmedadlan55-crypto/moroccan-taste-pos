@@ -93,10 +93,46 @@ test('grossProductSales sums an array of line grosses', () => {
 test('grossProductSales passes a scalar through (already summed)', () => {
   eq(E.grossProductSales(200.1), 200.1);
 });
-test('netProductSales = gross − discounts − returnsNet', () => {
-  eq(E.netProductSales(1000, 50, 25.5), 924.5);
-  eq(E.netProductSales(100, 0, 0), 100);
-  eq(E.netProductSales(100, 120, 0), -20, 'over-discount goes negative, not clamped');
+// netProductSales (gross − discounts − returnsNet) is GONE, and its removal is
+// the point: `gross` was d.gross_amount (INCL VAT, already net of the
+// discount), `discounts` was f.discount_total (INCL VAT, the same money
+// removed a second time) and `returnsNet` was rl.net_amount (EX VAT). Three
+// bases, one subtraction, a result that reconciled to nothing. It is replaced
+// by two single-basis functions.
+test('netSalesInclVat = invoiced (incl VAT) − returns (incl VAT)', () => {
+  eq(E.netSalesInclVat(1071.5, 262.5), 809);
+  eq(E.netSalesInclVat(100, 0), 100);
+  eq(E.netSalesInclVat(100, 120), -20, 'returns beyond the period go negative, not clamped');
+});
+test('netSalesExVat = net (ex VAT) − returns (ex VAT)', () => {
+  eq(E.netSalesExVat(950, 240), 710);
+  eq(E.netSalesExVat(0.1 + 0.2, 0.1), 0.2, 'halala math, not float math');
+});
+test('salesBeforeDiscount adds the discount back in the space it was recorded in', () => {
+  eq(E.salesBeforeDiscount(1071.5, 15.75), 1087.25);
+  eq(E.salesBeforeDiscount(100, 0), 100, 'no discount ⇒ the ladder degenerates cleanly');
+  // The reconstruction must never touch VAT: a 1.15 divisor anywhere here would
+  // change this expectation, which is the whole reason it is asserted.
+  eq(E.salesBeforeDiscount(0, 15.75), 15.75, 'a fully discounted period is all discount');
+});
+test('netVat = VAT on sales − VAT credited back on returns', () => {
+  eq(E.netVat(150, 0), 150, 'no returns ⇒ the filing figure is VAT on sales');
+  eq(E.netVat(150, 37.5), 112.5);
+  // The defect this metric exists to fix: reporting vat_amount alone as "the
+  // VAT" overstates the liability by exactly the returns VAT, so the gap must
+  // be real and must not be clamped away.
+  eq(E.netVat(150, 200), -50, 'a month where refunds exceed sales VAT goes negative, not to zero');
+  eq(E.netVat(0.1 + 0.2, 0.1), 0.2, 'halala math, not float math');
+});
+test('statementVariance = invoice headers − invoice lines (0 when the projection ran)', () => {
+  eq(E.statementVariance(1071.5, 1071.5), 0);
+  eq(E.statementVariance(1071.5, 1000), 71.5, 'a lineless backfilled header shows up here');
+  eq(E.statementVariance(1000, 1071.5), -71.5, 'and so does the opposite drift');
+});
+test('the removed mixed-basis equation is not reachable under any name', () => {
+  if (typeof E.netProductSales === 'function') {
+    throw new Error('netProductSales is back — the mixed-basis subtraction must stay deleted');
+  }
 });
 test('netInclVat adds STORED vat — no rate anywhere', () => {
   eq(E.netInclVat(100, 15), 115);
@@ -154,10 +190,21 @@ test('avgItemsPerOrder', () => {
   eq(E.avgItemsPerOrder(10, 3), 3.33);
   eq(E.avgItemsPerOrder(10, 0), null);
 });
-test('discountPct', () => {
-  eq(E.discountPct(50, 1000), 5);
-  eq(E.discountPct(1, 3), 33.33);
-  eq(E.discountPct(50, 0), null, 'no gross → undefined, not 0%');
+test('discountPct divides by sales BEFORE the discount, not by the invoiced figure', () => {
+  // The second operand is Σ d.gross_amount, which is POST-discount
+  // (calculations.js:131-138). Dividing by it computes D/(S−D): a day at
+  // exactly 10% policy printed 11.11% and tripped the amber ≥10 threshold on
+  // the discounts report, and the error is unbounded as the discount
+  // approaches the whole sale.
+  eq(E.discountPct(100, 900), 10, 'SAR 100 off SAR 1,000 of sales is 10%, not 11.11%');
+  eq(E.discountPct(500, 500), 50, 'a 50%-off promotion is 50%, not 100%');
+  eq(E.discountPct(50, 950), 5);
+  // A rate may not exceed 100%, and a fully comped period is exactly 100% —
+  // it used to return null (rendered "—", read as "no data") because the
+  // post-discount denominator was 0.
+  eq(E.discountPct(300, 0), 100, 'a fully comped period is 100%, not "no data"');
+  eq(E.discountPct(0, 1000), 0, 'no discount is 0%, not null');
+  eq(E.discountPct(0, 0), null, 'nothing sold and nothing discounted → undefined, not 0%');
 });
 test('attachRate: modifiers per 100 items', () => {
   eq(E.attachRate(30, 100), 30);

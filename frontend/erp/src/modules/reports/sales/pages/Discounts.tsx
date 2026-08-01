@@ -1,26 +1,43 @@
 // Sales Analytics Hub — "discounts" page.
 //
-// KPI row (dimensionless analytics query) + two ChartCard/table pairs:
-// discounts by day (click-to-filter drill onto that day) and by cashier
-// (drill → the cashiers segment, preserving the current search params).
+// KPI row (dimensionless analytics query) + two decision tables: discounts by
+// day (click-to-filter drill onto that day) and by cashier (drill → the
+// cashiers segment, preserving the current search params).
 // Honest limitation: the discount reason / promo dimension is NOT projected
 // into the fact store yet — a banner says so, and the reason table slots in
 // under the TODO below when the dimension lands.
 import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { BadgePercent, Percent, ShoppingCart, TicketPercent, type LucideIcon } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard, type MetricTone } from "@/shared/ui";
-import { ChartCard, useChartPalette, useChartsRtl } from "@/shared/charts";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import {
+  buildFiltersBody,
+  displayMetric,
+  setPageExportRequest,
+  type AnalyticsQueryBody,
+  type AnalyticsResult,
+} from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
+const SEGMENT = "discounts";
 const METRICS = ["discounts_total", "discount_pct", "discounted_orders", "orders"] as const;
+
+// The TopBar ExportMenu asks this page's registry entry for its export shape —
+// without it the export silently falls back to net + orders by business day.
+// The day dimension follows the date basis, exactly like the primary table.
+setPageExportRequest(SEGMENT, (filters) => {
+  const dayDim = filters.businessDay ? "business_day" : "calendar_day";
+  return {
+    metrics: [...METRICS],
+    dimensions: [dayDim],
+    sort: [{ by: dayDim, dir: "asc" }],
+  };
+});
 
 /** discount_pct at/above this (percent points) reads as a warning tone. */
 const HIGH_DISCOUNT_PCT = 10;
@@ -67,8 +84,6 @@ export default function Discounts() {
   const navigate = useNavigate();
   const { search } = useLocation();
   const { filters, patch } = useUrlFilters(analyticsFilterCodec);
-  const palette = useChartPalette();
-  const rtl = useChartsRtl();
 
   const dayDim = filters.businessDay ? "business_day" : "calendar_day";
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
@@ -102,12 +117,6 @@ export default function Discounts() {
   if (dayRows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
   const incomplete = byDay.data?.meta?.completeness?.complete === false;
-
-  const drillToDay = (state: unknown) => {
-    const label = (state as { activeLabel?: unknown } | null)?.activeLabel;
-    const hit = dayRows.find((r) => r.label === String(label ?? ""));
-    if (hit?.key) patch({ from: hit.key, to: hit.key, preset: "custom" }, { push: true });
-  };
 
   const dimCol = (header: string): ColumnDef<DimRow> => ({
     id: "label",
@@ -152,19 +161,6 @@ export default function Discounts() {
     },
   ];
 
-  const chartTable = (rows: DimRow[], dimLabel: string) => ({
-    tableColumns: [
-      { key: "label", label: dimLabel },
-      { key: "discounts_total", label: t("salesReports.metrics.discounts_total") },
-      { key: "discount_pct", label: t("salesReports.metrics.discount_pct") },
-    ],
-    tableRows: rows.map((r) => ({
-      label: r.label,
-      discounts_total: r.discounts_total == null ? "—" : formatCurrency(r.discounts_total),
-      discount_pct: r.discount_pct == null ? "—" : fmtPct(r.discount_pct),
-    })),
-  });
-
   return (
     <section aria-labelledby="sales-hub-page-discounts" className="space-y-4">
       <div>
@@ -176,7 +172,7 @@ export default function Discounts() {
 
       {/* Honest limitation: no discount_reason/promo projection yet (queued for
           a later wave). TODO(sales-hub): when the reason dimension is projected,
-          add a third ChartCard/table here grouped by discount_reason. */}
+          add a third table here grouped by discount_reason. */}
       <div data-testid="discounts-reason-gap">
         <Badge tone="warning">{t("salesReports.discounts.reasonGap")}</Badge>
       </div>
@@ -206,21 +202,8 @@ export default function Discounts() {
         })}
       </div>
 
-      <ChartCard
-        title={`${t("salesReports.metrics.discounts_total")} — ${t(`salesReports.dims.${dayDim}`)}`}
-        tableLabel={t(`salesReports.dims.${dayDim}`)}
-        onPointClick={drillToDay}
-        {...chartTable(dayRows, t(`salesReports.dims.${dayDim}`))}
-      >
-        <BarChart data={dayRows}>
-          <CartesianGrid stroke={palette.grid} vertical={false} />
-          <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-          <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-          <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-          <Bar dataKey="discounts_total" name={t("salesReports.metrics.discounts_total")} fill={palette.series[0]} radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ChartCard>
-
+      {/* Reports are decision tables; the charted view of these same rows lives
+          on the dashboard. */}
       <DataTable<DimRow>
         columns={[dimCol(t(`salesReports.dims.${dayDim}`)), ...metricCols]}
         rows={dayRows}
@@ -236,33 +219,16 @@ export default function Discounts() {
         <ErrorState error={byCashier.error} onRetry={() => byCashier.refetch()} />
       ) : (
         cashierRows.length > 0 && (
-          <>
-            <ChartCard
-              title={`${t("salesReports.metrics.discounts_total")} — ${t("salesReports.dims.cashier")}`}
-              tableLabel={t("salesReports.dims.cashier")}
-              onPointClick={() => navigate(`/reports/sales/cashiers${search}`)}
-              {...chartTable(cashierRows, t("salesReports.dims.cashier"))}
-            >
-              <BarChart data={cashierRows}>
-                <CartesianGrid stroke={palette.grid} vertical={false} />
-                <XAxis dataKey="label" reversed={rtl.xAxisReversed} stroke={palette.axis} tick={{ fontSize: 11 }} />
-                <YAxis orientation={rtl.dir === "rtl" ? "right" : "left"} stroke={palette.axis} tickFormatter={rtl.tickFormatterNumber} tick={{ fontSize: 11 }} />
-                <RechartsTooltip contentStyle={rtl.tooltipStyle} formatter={(v) => rtl.tickFormatterCurrency(v)} />
-                <Bar dataKey="discounts_total" name={t("salesReports.metrics.discounts_total")} fill={palette.series[1]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ChartCard>
-
-            <DataTable<DimRow>
-              columns={[dimCol(t("salesReports.dims.cashier")), ...metricCols]}
-              rows={cashierRows}
-              getRowId={(r) => r.key || r.label}
-              paginate={false}
-              columnMenu={false}
-              emptyTitle={t("salesReports.states.empty")}
-              mobileTitle={(r) => r.label}
-              onRowClick={() => navigate(`/reports/sales/cashiers${search}`)}
-            />
-          </>
+          <DataTable<DimRow>
+            columns={[dimCol(t("salesReports.dims.cashier")), ...metricCols]}
+            rows={cashierRows}
+            getRowId={(r) => r.key || r.label}
+            paginate={false}
+            columnMenu={false}
+            emptyTitle={t("salesReports.states.empty")}
+            mobileTitle={(r) => r.label}
+            onRowClick={() => navigate(`/reports/sales/cashiers${search}`)}
+          />
         )
       )}
     </section>

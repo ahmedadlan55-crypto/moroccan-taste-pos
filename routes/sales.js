@@ -1,4 +1,6 @@
 const router = require('express').Router();
+const acctDate = require('../lib/accountingDate');
+const salesPostingCapture = require('../lib/salesPosting/capture');
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
@@ -13,6 +15,11 @@ const requireCapability = require('../middleware/requireCapability');
 // letting the middleware 403 before the approval credentials are ever read.
 const { hasCapability } = require('../middleware/requireCapability');
 const gl = require('../lib/glPosting');
+// The ONE authority for "what is this person called" — users.full_name →
+// settings.user_meta[u].name → username. The receipt's cashier line and the
+// JWT claim the till prints from (routes/auth.js) both go through it, so an
+// original and its reprint can never name the same cashier differently.
+const displayName = require('../lib/displayName');
 const zatca = require('../lib/zatca');
 // Renders the ZATCA TLV payload into a PNG data-URL SERVER-side. The clients
 // must not encode QRs themselves: the legacy receipt template lazy-loaded a QR
@@ -558,6 +565,18 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     let invoiceNumber = null;
     try { invoiceNumber = await salesNumbering.nextInvoiceNumber(db, _ymd); }
     catch (_) { /* tolerate — falls back to orderId in UI */ }
+
+    // ─── «ترحيل المبيعات» capture buffers ───
+    // Declared at handler scope because the splits are built deep inside the
+    // GL block (paymentDebits at ~:1802, totalCogs at ~:1661) while the queue
+    // row is written just before the commit. They hold the three things four
+    // totals cannot reconstruct: payment by method, revenue by account, and
+    // COGS by warehouse. Empty is a legitimate state — a comp sale whose
+    // components all cost zero posts no GL entries at all.
+    let _capturePayments = [];
+    let _captureRevenue = [];
+    let _captureCogsByWarehouse = [];
+    let _captureCogs = 0;
 
     // ─── v6.2.0 Wave F.3 — Period close guard ───
     // Reject the sale up-front if the date falls in a closed/locked
@@ -1838,6 +1857,15 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
             }
           }
 
+          // Snapshot the splits for the posting queue. Taken HERE, from the
+          // same values the journal is built from, so a batch can only ever
+          // reproduce what this sale actually posted. Reading the sale again
+          // at posting time would let a later edit change a number that was
+          // already reported.
+          _capturePayments = paymentDebits.map(pd => ({ code: pd.code, amount: pd.amount }));
+          _captureRevenue = [{ code: saleGl.revenue, amount: net }];
+          if (vat > 0) _captureRevenue.push({ code: saleGl.outputVat, amount: vat, tax: true });
+
           // Debit(s) — by payment method (one per split, GL routed dynamically)
           paymentDebits.forEach(pd => {
             entries.push({
@@ -1876,6 +1904,12 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
 
         // COGS leg (if any cost)
         if (totalCogs > 0) {
+          // Snapshot for the queue. Grouped by warehouse because that is the
+          // grain the inventory credit is posted at, and `ar_documents` has no
+          // warehouse_id to recover it from later.
+          _captureCogs = totalCogs;
+          _captureCogsByWarehouse = [{ warehouseId: warehouseId || null, amount: totalCogs,
+            cogsCode: saleGl.cogs, inventoryCode: saleGl.inventory }];
           entries.push({
             accountCode: saleGl.cogs,
             debit: totalCogs, credit: 0,
@@ -1896,7 +1930,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         // all carry zero cost): skip posting rather than fail on all-zero lines.
         if (entries.length) {
           const post = await gl.postJournal(db, {
-            journalDate: now.toISOString().slice(0, 10),
+            journalDate: acctDate.journalDate(now),
             description: (invTotal > 0 ? 'Sale ' : 'Sale (comp — zero total) ') + orderId + ' (' + (payStr || '—') + ')',
             referenceType: 'Sale',
             referenceId: orderId,
@@ -1924,7 +1958,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
             if (_amt > 0) {
               await gl.ensureCoreAccounts(db); // idempotent — seeds 5500 + 2320 if missing
               const cPost = await gl.postJournal(db, {
-                journalDate: now.toISOString().slice(0, 10),
+                journalDate: acctDate.journalDate(now),
                 description: 'عمولة قناة ' + (resolvedChannelName || '') + ' — ' + orderId,
                 referenceType: 'ChannelCommission',
                 referenceId: orderId,
@@ -2026,6 +2060,43 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         components: _projComponents,
       });
     }
+
+    // ═══ «ترحيل المبيعات» — capture this sale as a postable economic event ══
+    //
+    // INSIDE the transaction, and that placement is the whole point. The
+    // post-commit region below is NOT reached on the idempotent-replay path
+    // (a duplicate clientOrderId rolls back and returns 200 earlier in this
+    // handler) nor on any of the three rollbacks — so a capture placed there
+    // would miss exactly the cases where a sale exists without a posting
+    // record, which is the hole this queue exists to close.
+    //
+    // On `db`, which is the transaction connection (shadowed at the top of the
+    // handler). It must never open its own connection: that would deadlock
+    // against the row locks this transaction already holds.
+    //
+    // Cheap by construction — every value below is already in memory, and
+    // there is no account resolution and no balance check. Those move to
+    // posting time, which is the change the owner asked for.
+    //
+    // Non-fatal: a queue-write failure must not lose a sale the customer has
+    // already paid for. The compensating control is the standing health check
+    // (`countUnqueuedSales` must return zero), so a swallowed failure is
+    // visible rather than silent.
+    try {
+      await salesPostingCapture.capture(db, {
+        sourceType: 'sale',
+        sourceId: orderId,
+        occurredAt: now,
+        brandId: saleBrandId || brandId || null,
+        branchId: saleBranchId || branchId || null,
+        net, tax: vat, gross: invTotal, cogs: _captureCogs,
+        invoiceNumber: invoiceNumber || null,
+        channelId: channelId || null,
+        payments: _capturePayments,
+        revenue: _captureRevenue,
+        cogsByWarehouse: _captureCogsByWarehouse,
+      });
+    } catch (_) { /* capture is best-effort by contract — see lib/salesPosting/capture.js */ }
 
     // v6.0.1 Wave A — commit the transaction
     await _conn.commit();
@@ -2290,22 +2361,26 @@ router.get('/invoice/:orderId', async (req, res) => {
       console.warn('[sales/invoice] ar_document_lines lookup failed for sale', req.params.orderId, '—', e.code || e.message);
     }
 
-    // ── Lookup cashier display name from settings.user_meta ──
-    // The receipt shows "You were served by : <FullName>, <empNo>".
-    // empNo is OPTIONAL — only printed when explicitly set in user_meta;
-    // falling back to username here would render "John Smith, j.smith" which
-    // looks redundant. So default empNo to '' and let the frontend hide it.
-    let cashierName = sale.username || '';
-    let cashierEmpNo = '';
-    try {
-      const [metaRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'user_meta'");
-      if (metaRows.length && metaRows[0].setting_value) {
-        const meta = JSON.parse(metaRows[0].setting_value) || {};
-        const me = meta[sale.username] || {};
-        if (me.name)  cashierName  = me.name;
-        if (me.empNo) cashierEmpNo = me.empNo;
-      }
-    } catch (_) { /* fall back to username for the name; empNo stays empty */ }
+    // ── Cashier display name — resolved from the SALE's OWN username ──
+    // The receipt shows "You were served by : <FullName>, <empNo>", so a
+    // reprint pulled up by a DIFFERENT cashier must still name the person who
+    // MADE the sale. `sales.username` (written at INSERT, ~:953/:956) is that
+    // person; the name is resolved here at READ time because the sales table
+    // has no name column (db/schema.sql:148-189).
+    //
+    // This used to read settings.user_meta ONLY, while the admin screen
+    // (routes/auth.js:660) and the developer guard (lib/transactionGuards.js:130)
+    // both read users.full_name FIRST. The moment the till started printing a
+    // name from users.full_name, that split would have made the SAME sale print
+    // two different names on its original and its reprint. lib/displayName.js
+    // is now the single rule for all of them.
+    //
+    // empNo is OPTIONAL — it exists only in user_meta and is only printed when
+    // explicitly set; falling back to username here would render "John Smith,
+    // j.smith", which looks redundant. It stays '' so the receipt can hide it.
+    const cashierIdentity = await displayName.resolveCashierIdentity(db, sale.username);
+    const cashierName = cashierIdentity.name;
+    const cashierEmpNo = cashierIdentity.empNo;
 
     // ── Lookup the branch: prefer the branch frozen on the sale, else the user's ──
     //
@@ -2599,12 +2674,22 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
     try { await recomputeInvItemStock(c, id); } catch (_) {}
   }
 
-  // 4. Reverse the GL journal for this sale
+  // 4. Reverse the GL journals for this sale.
+  //
+  // BOTH reference types, and that is the fix: a sale on a delivery channel
+  // posts a SECOND journal — Dr 5500 commission / Cr 2320 payable to the
+  // platform — under referenceType 'ChannelCommission' (see the posting site
+  // in this file). This query used to name only 'Sale', so voiding an
+  // Uber/HungerStation order removed the revenue, VAT and COGS and left the
+  // commission journal standing: a permanent expense and a permanent payable
+  // for an order that no longer exists. Nothing pointed at it afterwards — the
+  // sale row could even be hard-deleted underneath it — so it was unreachable
+  // for anyone trying to clean it up by hand.
   let reversedGl = false;
   try {
     const [journals] = await c.query(
-      'SELECT id FROM gl_journals WHERE reference_type = ? AND reference_id = ?',
-      ['Sale', orderId]);
+      'SELECT id FROM gl_journals WHERE reference_type IN (?, ?) AND reference_id = ?',
+      ['Sale', 'ChannelCommission', orderId]);
     for (const j of journals) {
       const [entries] = await c.query('SELECT * FROM gl_entries WHERE journal_id = ?', [j.id]);
       for (const e of entries) {

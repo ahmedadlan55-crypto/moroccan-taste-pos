@@ -13,10 +13,10 @@
  * English digits throughout. The print window is self-contained and CSP-safe in
  * both apps (window.open + document.write + .print(), no inline <script>).
  */
-import { cartTotals } from "./cartMath";
+import { cartTotals, lineTotals, round2 } from "./cartMath";
 import { fmt2, fmtDateTime, shortRef } from "./format";
 import type { LocalOrder, Payment, ReceiptIdentity, ReceiptShowFields } from "./types";
-import { baseCss, esc, buildSaleReceiptHtml, printHtml as printHtmlShared } from "../../../shared/invoiceTemplate";
+import { baseCss, esc, fmtQty, buildSaleReceiptHtml, printHtml as printHtmlShared } from "../../../shared/invoiceTemplate";
 import type { PaperWidth } from "../../../shared/invoiceTemplate";
 import { receipt as receiptAr } from "../i18n/dictionaries/ar/receipt";
 import { receipt as receiptEn } from "../i18n/dictionaries/en/receipt";
@@ -95,6 +95,10 @@ export interface ReceiptOptions {
   invoiceNumber: string | null;
   cashTendered?: number;
   changeDue?: number;
+  /** The HUMAN NAME of whoever served this customer — it prints as the
+   *  «تم خدمتكم عن طريق …» band, so a login id here is a visible defect on the
+   *  paper the customer walks out with. Empty string → the band is omitted
+   *  entirely rather than printing a credit line with nobody in it. */
   cashierName: string;
   vatRate: number;
   /** true → offline queued sale: prints the local reference instead. */
@@ -133,19 +137,44 @@ export function buildReceiptHtml(opts: ReceiptOptions): string {
   const { order } = opts;
   const totals =
     opts.totalsOverride ??
-    cartTotals(order.lines, order.discountType ? { type: order.discountType, value: order.discountValue } : null);
+    // opts.vatRate FORWARDED. It was omitted, so cartTotals silently fell back
+    // to DEFAULT_VAT_RATE_PCT: a shop on any rate other than 15% printed a VAT
+    // line computed at 15% while the label beside it announced the real rate.
+    // Pre-existing and invisible here (this owner is on 15%) and masked on
+    // reprints by totalsOverride — but it is the receipt's own tax figure, and
+    // a tax figure that disagrees with its own label is not something to leave
+    // in place while redesigning the document it prints on.
+    cartTotals(
+      order.lines,
+      order.discountType ? { type: order.discountType, value: order.discountValue } : null,
+      opts.vatRate,
+    );
 
   return buildSaleReceiptHtml({
-    lines: order.lines.map((l) => ({
-      name: l.name,
-      qty: l.qty,
-      baseQty: l.baseQty,
-      unitPrice: l.unitPrice,
-      lineDiscount: l.lineDiscount,
-      notes: l.notes ?? undefined,
-      conversionFactorSnapshot: l.conversionFactorSnapshot,
-      enteredUnitName: l.enteredUnitName ?? undefined,
-    })),
+    lines: order.lines.map((l) => {
+      // TAX-INCLUSIVE per line, from the SAME rule the cart and the product
+      // card use. Without this the template falls back to qty × unitPrice,
+      // which is the NET figure for a tax-exclusive row — so the printed items
+      // summed to less than the printed «المجموع» and the customer's own
+      // arithmetic disagreed with the invoice.
+      const t = lineTotals(l, opts.vatRate);
+      const baseQty = Number(l.baseQty ?? l.qty) || 0;
+      return {
+        name: l.name,
+        qty: l.qty,
+        baseQty: l.baseQty,
+        unitPrice: l.unitPrice,
+        lineDiscount: l.lineDiscount,
+        notes: l.notes ?? undefined,
+        conversionFactorSnapshot: l.conversionFactorSnapshot,
+        enteredUnitName: l.enteredUnitName ?? undefined,
+        lineTotalGross: t.gross,
+        // The unit price the customer can multiply back out. Derived from the
+        // line's own gross so it can never disagree with the line total; a
+        // zero-quantity line keeps the stored price rather than dividing by 0.
+        unitPriceGross: baseQty > 0 ? round2((t.gross + t.discount) / baseQty) : l.unitPrice,
+      };
+    }),
     payments: opts.payments.map((p) => ({ method: p.method, amount: p.amount })),
     totals: {
       subtotal: totals.subtotal,
@@ -194,8 +223,10 @@ export function buildKitchenTicketHtml(
         : t.orderType.takeaway;
   const linesHtml = order.lines
     .map(
+      // Quantities read as counts on a kitchen ticket ("2 ×", not "2.00 ×") —
+      // same fmtQty the shared receipt template uses for its qty column.
       (l) => `<tr>
-        <td><span class="num">${fmt2(l.qty)}</span> ×</td>
+        <td><span class="num">${fmtQty(l.qty)}</span> ×</td>
         <td>${esc(l.name)}${l.notes ? `<div class="note">${esc(l.notes)}</div>` : ""}</td>
       </tr>`,
     )

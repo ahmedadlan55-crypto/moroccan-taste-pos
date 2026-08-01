@@ -5,7 +5,7 @@
  * with a bottom cart sheet. Keyboard: F2 search, F4 pay, F9 hold, Esc close.
  */
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChefHat, Loader2, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
+import { AlertTriangle, ChefHat, Loader2, PauseCircle, ShoppingBasket, Store, Tag } from "lucide-react";
 import { usePos } from "@/state/store";
 import { clearToken } from "@/lib/auth";
 import { listOrders } from "@/lib/api";
@@ -248,6 +248,9 @@ export default function App() {
     channels,
     channelId,
     setChannel,
+    channelPricesUnavailable,
+    channelHealed,
+    dismissChannelHealed,
   } = usePos();
 
   const [category, setCategory] = useState<string | null>(null);
@@ -757,6 +760,55 @@ export default function App() {
                 </select>
               </label>
             ) : null}
+            {/* The escape hatch, and the missing message.
+                `channelPricesUnavailable` existed on the context and was rendered
+                NOWHERE — the till served base prices while the picker advertised
+                a channel, and said nothing at all. That silence is most of why a
+                stuck channel read as «مشكلة لا تنحل».
+                The button clears the stored preference DIRECTLY rather than
+                through the <select>: when the stored id is not in channels[] the
+                select already displays «الأساسي», and re-picking the option it is
+                already on fires no change event — so the only visible way back
+                was, in that state, a no-op. This works whatever the cause:
+                deleted channel, empty price list, or a plain outage. */}
+            {/* The server rejected the stored channel and the till was moved to
+                base prices. This STAYS until acknowledged: a toast that expires
+                in five seconds is not an acceptable way to tell a cashier that
+                the price list under their register just changed. */}
+            {channelHealed ? (
+              <div
+                data-testid="channel-healed"
+                role="status"
+                className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-extrabold text-amber-900 sm:col-span-2"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">{t("appShell.toast.channelGone")}</span>
+                <button
+                  type="button"
+                  onClick={dismissChannelHealed}
+                  className="btn-press min-h-11 shrink-0 rounded-lg border border-amber-400 bg-white px-3 font-extrabold text-amber-900 hover:bg-amber-100"
+                >
+                  {t("appShell.channel.acknowledge")}
+                </button>
+              </div>
+            ) : null}
+            {channelPricesUnavailable ? (
+              <div
+                data-testid="channel-prices-unavailable"
+                role="status"
+                className="flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-extrabold text-amber-900 sm:col-span-2"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">{t("appShell.channel.pricesUnavailable")}</span>
+                <button
+                  type="button"
+                  onClick={() => setChannel(null)}
+                  className="btn-press min-h-11 shrink-0 rounded-lg border border-amber-400 bg-white px-3 font-extrabold text-amber-900 hover:bg-amber-100"
+                >
+                  {t("appShell.channel.backToBase")}
+                </button>
+              </div>
+            ) : null}
             {priceListName ? (
               <span className="flex min-w-0 items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-[11px] font-extrabold text-teal-700 sm:col-span-2 sm:justify-self-end">
                 <Tag className="h-3.5 w-3.5" aria-hidden />
@@ -777,7 +829,13 @@ export default function App() {
           {catalogError && !catalog ? (
             <ErrorBanner message={t(catalogError)} onRetry={refetchCatalog} />
           ) : (
-            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+            // pt-2: the in-cart quantity badge is deliberately positioned
+            // OUTSIDE its card (-top-1.5) so it never changes a card's measured
+            // height and cannot disturb the virtualizer. That means the scroll
+            // container clips it on the FIRST ROW — the cashier saw the count
+            // sliced in half by the search bar above. A little headroom fixes it
+            // without touching the card geometry the windowing spec pins.
+            <div ref={setGridScrollEl} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pt-2">
               <ProductGrid
                 catalog={catalog}
                 loading={catalogLoading}

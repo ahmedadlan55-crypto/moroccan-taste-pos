@@ -52,7 +52,7 @@ const LEAVES: Leaf[] = [...MANIFEST_SRC.matchAll(/\bpath:\s*"([^"]+)"[^\n]*\blab
   .filter((l, i, a) => a.findIndex((x) => x.path === l.path) === i);
 
 // One representative leaf per nav group — used for deep-link + hard-refresh.
-const GROUP_FIRST = ["/overview", "/sales/orders", "/menu/hub", "/pos-admin/register", "/inventory",
+const GROUP_FIRST = ["/overview", "/sales/invoices", "/menu/hub", "/pos-admin/register", "/inventory",
   "/purchasing/suppliers", "/accounting/chart-of-accounts", "/banking/cashboxes", "/people/employees",
   "/workflow/inbox", "/reports/sales", "/administration/companies"];
 

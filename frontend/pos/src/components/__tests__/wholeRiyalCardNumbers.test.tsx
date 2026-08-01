@@ -154,7 +154,18 @@ describe("quantities are whole units", () => {
 });
 
 // ── Defect 5 — the stock pip ────────────────────────────────────────────────
-describe("resolveStockState — the owner's own alert threshold", () => {
+//
+// THE PIP IS NOT RENDERED TODAY. The owner asked for it off — «لا تميز لي
+// المنتجات المنتهية من المستودع فجميع المنتجات معتمدة علي وصفات وليست مخزون
+// فعلي» — so ProductGrid leaves StockPip unwired and this suite must NOT assert
+// on a rendered pip (productCardShelf.test.tsx pins its absence).
+//
+// resolveStockState stays in the tree for a menu that really does sell stocked
+// goods, and these are unit tests of that dormant logic: it used to warn at a
+// hardcoded 3 base units while ignoring the min_stock_alert the owner had
+// configured. Fixing it now means the component is correct on the day it is
+// re-wired, instead of shipping a known-wrong threshold the moment it returns.
+describe("resolveStockState — the owner's own alert threshold (dormant logic)", () => {
   it("warns at the item's configured minStockAlert, not a hardcoded 3", () => {
     const s = resolveStockState({ id: "M1", warehouseQty: 8, minStockAlert: 10 }, null);
     expect(s.level).toBe("low");
@@ -174,10 +185,17 @@ describe("resolveStockState — the owner's own alert threshold", () => {
     expect(s.count).toBe(4);
   });
 
-  it("labels the pip with its SOURCE so the two numbers are distinguishable", () => {
+  it("reports its SOURCE so a re-wired pip can word the two numbers differently", () => {
+    // `makeable` (portions a recipe can still yield) and `warehouseQty` (the
+    // item's own balance) mean different things and used to render identically.
+    const fromStock = resolveStockState({ id: "M1", warehouseQty: 8, minStockAlert: 10 }, null);
+    expect(fromStock.source).toBe("warehouseQty");
+    const map = { M1: { mode: "mto", makeable: 2, isOutOfStock: false, isLowStock: true, blockerCount: 0, hasRecipe: true } };
+    expect(resolveStockState({ id: "M1", warehouseQty: 8 }, map).source).toBe("availability");
+  });
+
+  it("no pip reaches the grid while the owner has it switched off", () => {
     renderGrid(catalog([item({ warehouseQty: 8, minStockAlert: 10 })]));
-    const pip = screen.getByTestId("stock-pip");
-    expect(pip).toHaveAttribute("data-stock-source", "warehouseQty");
-    expect(pip).toHaveTextContent("8");
+    expect(screen.queryByTestId("stock-pip")).not.toBeInTheDocument();
   });
 });

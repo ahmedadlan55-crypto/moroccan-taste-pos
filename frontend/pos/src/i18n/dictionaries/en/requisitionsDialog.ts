@@ -15,6 +15,12 @@ export const requisitionsDialog = {
     label: "Editing request",
     cancel: "Cancel edit",
   },
+  /** The staging step: ticking does not add; the button is what drops the
+   *  materials into the request. */
+  picker: {
+    insert: "Insert selected ({count})",
+    inserted: "{count} materials added to the request",
+  },
   search: {
     placeholder: "Search for an item to add to the request…",
     ariaLabel: "Search for an item",

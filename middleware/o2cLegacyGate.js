@@ -4,11 +4,13 @@
  * When ORDER_TO_CASH_ENABLE is ON, the unified /api/order-to-cash module owns the
  * AR source of truth (ar_documents), customer collections, and returns. These
  * guards block the LEGACY *duplicate* write paths so no legacy endpoint can create
- * a second invoice, a detached receipt, or destroy a sale's GL in parallel:
+ * a detached receipt or destroy a sale's GL in parallel:
  *
- *   legacyArGate        → ALL mutations on /api/ar-invoices (the second invoice source)
  *   customerReceiptGate → /api/cash customer-directed receipts (source_type='customer')
  *   saleReverseGate     → legacy sale VOID / RETURN / DELETE / bulk-delete (GL-destroying)
+ *
+ * The former legacyArGate guarded /api/ar-invoices; that route was deleted, so the
+ * second invoice source no longer exists to gate.
  *
  * POS sale CREATION (POST /api/sales) is NOT gated — POS remains the financial
  * writer; only its destructive reverse/return/delete paths move to O2C (a proper
@@ -24,9 +26,9 @@ const ENABLED = /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABL
  *
  * Callers still pass the pre-cutover '/sales' (server.js mounts
  * saleReverseGate('/sales')). That path no longer reaches a returns screen: the
- * standalone Sales SPA was retired, and server.js now 302s /sales/* to
- * /app/sales/orders — the ORDERS list. So a cashier told "this moved" landed on
- * a screen with no way to reverse anything, which reads as a dead end.
+ * standalone Sales SPA was retired, and server.js 302s /sales/* to the read-only
+ * invoices ledger. So a cashier told "this moved" landed on a screen with no way
+ * to reverse anything, which reads as a dead end.
  *
  * The gate is the thing that knows *why* the request was refused, so it is also
  * the right place to know where the operation now lives. A caller may still pass
@@ -49,14 +51,6 @@ function _blocked(res, redirect) {
   });
 }
 function _isRead(req) { return /^(GET|HEAD|OPTIONS)$/.test(req.method); }
-
-/** Block every mutation on a legacy prefix (GET/HEAD/OPTIONS pass). */
-function legacyArGate(redirect) {
-  return function (req, res, next) {
-    if (!ENABLED || _isRead(req)) return next();
-    return _blocked(res, redirect);
-  };
-}
 
 /** Block customer-directed cash receipts; let other treasury (boxes/banks/transfers/misc) pass. */
 function customerReceiptGate(redirect) {
@@ -134,4 +128,4 @@ function creditSaleGate() {
   };
 }
 
-module.exports = { legacyArGate, customerReceiptGate, saleReverseGate, creditSaleGate, ENABLED, RETURNS_ROUTE, _dest };
+module.exports = { customerReceiptGate, saleReverseGate, creditSaleGate, ENABLED, RETURNS_ROUTE, _dest };

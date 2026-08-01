@@ -76,6 +76,10 @@ const STEPS = [
   // NET item must be 16.00 + 2.40 = 18.40 on screen, in sales.total_final, in
   // tax_subtotals_json and in the GL. Every OTHER test seeds is_tax_inclusive=1,
   // a state no production row is in — which is how the mismatch shipped.
+  // The sales-report registry contracts: discount answerable beside an item
+  // dimension, category grouped on a populated column, returns counted only
+  // when posted, profit net of returned-goods cost. All four shipped green.
+  { id: 'backend:analytics-truth', cmd: NPM, args: ['run', 'test:analytics-truth'] },
   { id: 'backend:vat-money-path', cmd: NPM, args: ['run', 'test:vat-money-path'] },
   { id: 'backend:item-image', cmd: NPM, args: ['run', 'test:item-image'] },
   { id: 'backend:product-images', cmd: NPM, args: ['run', 'test:product-images-upload'] },

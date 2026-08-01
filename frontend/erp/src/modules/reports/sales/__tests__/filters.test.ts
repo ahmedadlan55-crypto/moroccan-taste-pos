@@ -5,6 +5,7 @@
 // CANONICAL param names from/to/brandId/branchId that legacy report redirects
 // target (renaming any of them breaks the redirect contract).
 import { describe, expect, it } from "vitest";
+import { DATE_RANGE_PRESETS } from "@/shared/ui/date-range-picker";
 import {
   computeAnalyticsDefaults,
   createAnalyticsFilterCodec,
@@ -140,5 +141,91 @@ describe("analytics filter codec", () => {
     const base = codec.parse(new URLSearchParams());
     expect(codec.serialize({ ...base, brandId: [] }).brandId).toBeNull();
     expect(codec.serialize({ ...base, brandId: ["B1"] }).brandId).toBe("B1");
+  });
+});
+
+/* ── a preset link must mean what its label says ───────────────────────────
+ * `to` on every to-date preset equals today = the codec's default, and a codec
+ * omits its default. So `?preset=mtd` shipped `from` frozen and `to` absent,
+ * and reopening it a week later gave a half-pinned window under an unchanged
+ * label — neither what its author saw nor what the label claims. The
+ * basis-of-preparation block now prints that range as the report's period, on
+ * paper, so a self-consistent answer is required rather than a plausible one.
+ */
+describe("re-opening a preset link on a later day", () => {
+  const PICKED = "2026-07-29";
+  const LATER = "2026-08-05";
+
+  /** Serialize on `pickedOn`, then re-parse the same URL on `openedOn`. */
+  function roundTrip(preset: string, pickedOn: string, openedOn: string) {
+    const a = createAnalyticsFilterCodec(pickedOn);
+    const picked = a.parse(new URLSearchParams(`preset=${preset}`));
+    const url = new URLSearchParams();
+    for (const [k, v] of Object.entries(a.serialize(picked))) if (v != null) url.set(k, v);
+    const b = createAnalyticsFilterCodec(openedOn);
+    return { picked, url: url.toString(), reopened: b.parse(new URLSearchParams(url.toString())) };
+  }
+
+  it("a to-date preset re-evaluates, so the label stays true", () => {
+    // Not 2026-07-01 … 2026-08-05 (the old half-pinned window), and not the
+    // author's July either: month-to-date on 2026-08-05 IS August.
+    const r = roundTrip("mtd", PICKED, LATER);
+    expect(r.reopened.preset).toBe("mtd");
+    expect(r.reopened.from).toBe("2026-08-01");
+    expect(r.reopened.to).toBe(LATER);
+  });
+
+  it("'today' reopens as one day, never as an eight-day window", () => {
+    const r = roundTrip("today", PICKED, LATER);
+    expect(r.reopened.from).toBe(LATER);
+    expect(r.reopened.to).toBe(LATER);
+  });
+
+  it("a CLOSED period is stable — it names a window that has ended", () => {
+    // The whole point of lastMonth/lastQuarter/lastYear: a close does not move.
+    for (const [preset, from, to] of [
+      ["lastMonth", "2026-06-01", "2026-06-30"],
+      ["lastQuarter", "2026-04-01", "2026-06-30"],
+      ["lastYear", "2025-01-01", "2025-12-31"],
+    ] as const) {
+      const r = roundTrip(preset, PICKED, LATER);
+      expect(r.reopened.from, `${preset} from`).toBe(from);
+      expect(r.reopened.to, `${preset} to`).toBe(to);
+    }
+  });
+
+  it("CUSTOM pins both dates verbatim — the way to share an exact window", () => {
+    const a = createAnalyticsFilterCodec(PICKED);
+    const picked = a.parse(new URLSearchParams("preset=custom&from=2026-03-01&to=2026-03-15"));
+    const b = createAnalyticsFilterCodec(LATER);
+    const reopened = b.parse(new URLSearchParams("preset=custom&from=2026-03-01&to=2026-03-15"));
+    expect(picked.from).toBe("2026-03-01");
+    expect(reopened.from).toBe("2026-03-01");
+    expect(reopened.to).toBe("2026-03-15");
+  });
+
+  it("the window is never HALF-pinned — both dates come from one source", () => {
+    // The defect in one assertion, and the only property that matters: a
+    // from/to pair where one side is the author's and the other is the
+    // reader's. Either outcome is legitimate — a fully pinned window (the URL
+    // carried both dates) or a fully re-derived one (it carried neither) — but
+    // a mixture is a window nobody chose.
+    //
+    // `yesterday` lands on the pinned side and `mtd` on the derived side, which
+    // is why both are in the list: the rule is about halves, not about which
+    // presets happen to write a `to`.
+    for (const preset of DATE_RANGE_PRESETS.filter((p) => p !== "custom")) {
+      const r = roundTrip(preset, PICKED, LATER);
+      const authored = createAnalyticsFilterCodec(PICKED).parse(new URLSearchParams(`preset=${preset}`));
+      const fresh = createAnalyticsFilterCodec(LATER).parse(new URLSearchParams(`preset=${preset}`));
+      const got = [r.reopened.from, r.reopened.to];
+      const isPinned = got[0] === authored.from && got[1] === authored.to;
+      const isDerived = got[0] === fresh.from && got[1] === fresh.to;
+      expect(
+        isPinned || isDerived,
+        `${preset} reopened as ${got.join("..")} — neither the authored ` +
+          `${authored.from}..${authored.to} nor a fresh ${fresh.from}..${fresh.to}`,
+      ).toBe(true);
+    }
   });
 });

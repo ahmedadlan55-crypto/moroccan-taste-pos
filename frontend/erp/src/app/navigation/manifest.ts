@@ -67,13 +67,10 @@ export const NAV: NavGroup[] = [
     id: "sales",
     label: "nav.groups.sales",
     items: [
-      { id: "sl-orders", path: "/sales/orders", label: "nav.items.sl-orders", icon: "ShoppingCart", cap: "sales_orders.view", module: "sales" },
       { id: "sl-invoices", path: "/sales/invoices", label: "nav.items.sl-invoices", icon: "FileText", cap: "invoices.view", module: "sales" },
       { id: "sl-returns", path: "/sales/returns", label: "nav.items.sl-returns", icon: "Undo2", cap: "returns.view", module: "sales" },
       { id: "sl-payments", path: "/sales/payments", label: "nav.items.sl-payments", icon: "Banknote", cap: "payments.view", module: "sales" },
       { id: "sl-customers", path: "/customers", label: "nav.items.sl-customers", icon: "Users", cap: "customers.view", module: "customers" },
-      { id: "sl-channels", path: "/sales/channels", label: "nav.items.sl-channels", icon: "Store", cap: "sales.channels.view", module: "sales" },
-      { id: "sl-pricing", path: "/sales/pricing", label: "nav.items.sl-pricing", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
     ],
   },
   {
@@ -100,6 +97,12 @@ export const NAV: NavGroup[] = [
       { id: "pa-devices", path: "/pos-admin/devices", label: "nav.items.pa-devices", icon: "RefreshCw", cap: "pos.devices.view", module: "pos-admin" },
       // The pos-admin cashier-reports leaf was retired → /reports/sales/shifts
       // (analytics) + the shifts leaf above (operational drill). Redirect in app/router.tsx.
+      // Channels + pricing sat under "sales" but never described a sales DOCUMENT:
+      // they are the only UI for editing menu prices and channel commissions, which
+      // is register configuration. They keep module:"sales" (the code still lives
+      // in modules/sales) — only the nav home moved.
+      { id: "sl-channels", path: "/sales/channels", label: "nav.items.sl-channels", icon: "Store", cap: "sales.channels.view", module: "sales" },
+      { id: "sl-pricing", path: "/sales/pricing", label: "nav.items.sl-pricing", icon: "Tags", cap: "sales.pricing.view", module: "sales" },
     ],
   },
   {
@@ -154,6 +157,7 @@ export const NAV: NavGroup[] = [
       // this link, and that only holds while the nav cap matches the backend
       // gate. Nothing else in the block changed.
       { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "finance.reports.view", module: "accounting" },
+      { id: "ac-sales-posting", path: "/accounting/sales-posting", label: "nav.items.ac-sales-posting", icon: "Send", cap: "finance.reports.view", module: "accounting" },
       { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
       { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },

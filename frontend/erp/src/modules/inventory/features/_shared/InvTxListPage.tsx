@@ -14,7 +14,6 @@ import { useT } from "@/i18n";
 import { invTxStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import { useInvTxList } from "@/modules/inventory/lib/hooks/useInventoryTx";
 import type { InvTxConfig } from "./invtxConfig";
-import { InvTxDetailDrawer } from "./InvTxDetailDrawer";
 
 const PAGE_SIZES = [10, 25, 50];
 const NUMBER_SORT: Record<string, string> = { receipt: "receipt_number", issue: "issue_number", adjustment: "adjustment_number" };
@@ -45,7 +44,13 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
   const pageSize = PAGE_SIZES.includes(Number(params.get("pageSize"))) ? Number(params.get("pageSize")) : 25;
   const sort = params.get("sort") ?? "created_at";
   const dir = params.get("dir") === "asc" ? "asc" : "desc";
-  const view = params.get("view");
+
+  // Receipt / issue / adjustment details are REAL ROUTES now (the operations
+  // centre), not a `?view=` drawer. `config.docType` IS the operations
+  // documentType, and modules/inventory/index.tsx redirects any surviving
+  // `?view=<id>` link to the same destination so old bookmarks still resolve.
+  const openDocument = (id: string) =>
+    navigate(`/inventory/operations/${config.docType}/${encodeURIComponent(id)}`);
 
   function patch(next: Record<string, string | number | null>, resetPage = true) {
     const p = new URLSearchParams(params);
@@ -134,7 +139,7 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.rows.map((r) => (
-                    <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => patch({ view: r.id }, false)}>
+                    <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => openDocument(r.id)}>
                       <td className="px-4 py-3 font-extrabold text-slate-900">{r.number}</td>
                       <td className="px-4 py-3 text-slate-600">{r.warehouse.name}</td>
                       <td className="px-4 py-3"><StatusBadge>{invTxStatusToLabel(r.status)}</StatusBadge></td>
@@ -148,7 +153,7 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
 
             <div className="space-y-3 md:hidden">
               {data.rows.map((r) => (
-                <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-right">
+                <button key={r.id} type="button" onClick={() => openDocument(r.id)} className="surface block w-full p-4 text-right">
                   <div className="flex items-center justify-between gap-2"><span className="font-extrabold text-slate-900">{r.number}</span><StatusBadge>{invTxStatusToLabel(r.status)}</StatusBadge></div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>{r.warehouse.name} · {formatDate(r.date)}</span><span className="font-bold text-slate-800">{formatCurrency(r.totalValue)}</span></div>
                 </button>
@@ -170,8 +175,6 @@ export function InvTxListPage({ config }: { config: InvTxConfig }) {
           </>
         )}
       </section>
-
-      <InvTxDetailDrawer config={config} id={view} onClose={() => patch({ view: null }, false)} />
     </div>
   );
 }

@@ -270,13 +270,18 @@ function byBranch(env) {
 
   // ── 3. what the rollup cannot express falls back to the raw facts ─────────
   {
-    // menu_item exists only on the line/return/modifier facts. The daily-item
-    // rollup deliberately does not participate in routing (its PK cannot hold
-    // menu_id NULL, so it drops free-text lines the live path keeps), so this
-    // must land on the facts.
-    const db = makeDb({ dims: ['menu_item'], today: TODAY, minDirty: null });
+    // `channel` is an ORDER-ATTRIBUTE dimension (f.channel_id): no rollup is
+    // keyed by it and none stores it, so the request must land on the facts.
+    //
+    // This used to be `menu_item`, on the grounds that analytics_daily_item
+    // dropped free-text (menu_id NULL) lines and so could never be routed. That
+    // is no longer why it lands live — the rollup now STORES those lines under
+    // the '' sentinel and the planner maps them back with NULLIF, so item
+    // reporting routes. A dimension that genuinely no rollup expresses is what
+    // this case is for, and channel is one.
+    const db = makeDb({ dims: ['channel'], today: TODAY, minDirty: null });
     const env = await QueryService.run(
-      db, baseReq({ metrics: ['net_ex_vat'], dimensions: ['menu_item'] }), SCOPE);
+      db, baseReq({ metrics: ['net_ex_vat'], dimensions: ['channel'] }), SCOPE);
 
     await test("a dimension no rollup expresses falls back to the facts and says 'live'", () => {
       const t = db.tables();
@@ -298,8 +303,19 @@ function byBranch(env) {
       ['an order_status filter changes the population the rollup froze',
         baseReq({ filters: [{ dimension: 'order_status', op: 'eq', value: 'closed' }] }),
         'order_status_filter'],
+      // A voids_* metric drops the void exclusion for its fact's WHOLE
+      // statement, so live computes `guests` over the void-INCLUSIVE
+      // population here. analytics_daily_branch stores no voided-guests twin,
+      // so it cannot reproduce that population and the request must go live.
+      //
+      // (This case used to pair voids_count with `orders`. That pair now ROUTES
+      // — the rollup stores voids_count beside orders, so the void-inclusive
+      // count is orders + voids_count exactly, and answering it live was
+      // leaving a correct, cheap answer on the table. The guard being asserted
+      // is the same one; `guests` is a metric the table genuinely cannot
+      // express under a lift, which is what makes it the honest probe.)
       ['a voids_* metric drops the void exclusion for its whole statement',
-        baseReq({ metrics: ['orders', 'voids_count'] }), 'voids_metric'],
+        baseReq({ metrics: ['guests', 'voids_count'] }), 'voids_metric'],
       ['noRollup forces the facts, so a suspected drift can always be checked',
         baseReq({ noRollup: true }), 'noRollup'],
     ];

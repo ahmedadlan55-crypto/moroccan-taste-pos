@@ -10,6 +10,12 @@
  *
  * NO cross-fact SQL joins, ever — merging is the only way facts meet.
  *
+ * LANGUAGE: `request.lang` ('en' | 'ar', default 'ar') selects the language the
+ * LABELS resolve in — it changes no number, no filter and no SQL of the fact
+ * query. It rides on the request (not on a header or an opts field) for one
+ * reason: the cache key is a hash of the request, so two languages can never
+ * share a cache entry. See attachLabels for what it does per dimension.
+ *
  * SOURCE ROUTING: before planning, run() reads the rollup horizon (the last
  * business day whose rollup is provably complete — see readRollupHorizon) and
  * hands it to the planner, which decides per request whether the pre-aggregated
@@ -42,6 +48,7 @@ const scopeLib = require('../../lib/analytics/scope');
 const EQ = require('../../lib/analytics/equations');
 const METRICS = require('../../lib/analytics/registry/metrics');
 const DIMS = require('../../lib/analytics/registry/dimensions');
+const displayName = require('../../lib/displayName');
 
 // ── stable stringify ─────────────────────────────────────────────────────────
 // Reuse the O2C fingerprint helper if it's exported; else a local equivalent.
@@ -342,33 +349,98 @@ async function readRollupHorizon(db, offsetMin) {
 }
 
 // ── labels ───────────────────────────────────────────────────────────────────
-async function attachLabels(conn, dims, pageRows) {
+
+/** NULLIF(TRIM(x),'') semantics, the rule the rest of the repo already uses:
+ *  a whitespace-only column is EMPTY, not a name. */
+function _labelText(v) {
+  return v == null ? '' : String(v).trim();
+}
+
+/** 'en' | 'ar'. Anything else — absent, a locale tag, junk — is Arabic, which
+ *  is what every caller got before a language existed. */
+function normLang(v) {
+  return String(v || '').trim().toLowerCase().slice(0, 2) === 'en' ? 'en' : 'ar';
+}
+
+/**
+ * ids → display strings for every labeled dimension on the PAGE.
+ *
+ * TWO resolvers, chosen by the registry descriptor (registry/dimensions.js):
+ *
+ *   resolver:'person' — lib/displayName.js, the ONE authority for "what is this
+ *     person called" (users.full_name → settings.user_meta[username].name →
+ *     username). Employee fact columns hold usernames, so without this a report
+ *     grouped by cashier printed the login id. It is called rather than
+ *     re-implemented so a person cannot be named one thing on the receipt and
+ *     another in the report.
+ *
+ *   table/idCol/cols — a master-table read. When the caller asked for English
+ *     AND the descriptor declares `enCol`, the English column wins; when that
+ *     column is NULL/blank the PRIMARY name is shown and the row is flagged in
+ *     `labelFallback` — a silent Arabic fallback is indistinguishable from a
+ *     translation, and the reader must be able to tell them apart.
+ *
+ * The flag is STRUCTURED DATA (row.labelFallback[dimId] === true), never a
+ * marker glued onto the string: labels are exported to CSV, where a "‡" would
+ * become part of the data.
+ *
+ * @param {'en'|'ar'} lang the language the caller asked for.
+ */
+async function attachLabels(conn, dims, pageRows, lang) {
+  const wantEn = normLang(lang) === 'en';
   const labelsByDim = {};
+  const fallbackByDim = {};
   for (const dimId of dims) {
     const d = DIMS.byId[dimId];
     if (!d || !d.label) continue;
     const ids = [...new Set(pageRows.map((r) => r.keys[dimId]).filter((v) => v != null))];
     if (!ids.length) continue;
+
+    if (d.label.resolver === 'person') {
+      try {
+        const people = await displayName.resolveCashierIdentities(conn, ids.map(String));
+        const map = {};
+        for (const uname of Object.keys(people)) {
+          const nm = _labelText(people[uname].name);
+          map[uname] = nm || null;
+        }
+        labelsByDim[dimId] = map;
+      } catch (_) { /* a cosmetic name may never break a report */ }
+      continue;
+    }
+
     try {
-      // table/idCol/cols are REGISTRY constants — never request input.
+      // table/idCol/cols/enCol are REGISTRY constants — never request input.
       const cols = d.label.cols.map((c) => `\`${c}\``).join(', ');
       const [rows] = await conn.query(
         `SELECT \`${d.label.idCol}\` AS __id, ${cols} FROM \`${d.label.table}\` WHERE \`${d.label.idCol}\` IN (?)`,
         [ids]);
+      const enCol = d.label.enCol && d.label.cols.indexOf(d.label.enCol) >= 0 ? d.label.enCol : null;
       const map = {};
+      const missing = {};
       for (const r of rows) {
-        const primary = r[d.label.cols[0]];
-        map[String(r.__id)] = primary != null ? String(primary) : null;
+        const primary = _labelText(r[d.label.cols[0]]);
+        const english = enCol ? _labelText(r[enCol]) : '';
+        let text = primary;
+        if (wantEn && enCol) {
+          if (english) text = english;
+          else if (primary) missing[String(r.__id)] = true; // shown, but NOT English
+        }
+        map[String(r.__id)] = text || null;
       }
       labelsByDim[dimId] = map;
+      if (Object.keys(missing).length) fallbackByDim[dimId] = missing;
     } catch (_) { /* label table missing — rows keep raw keys */ }
   }
   for (const row of pageRows) {
     row.labels = {};
+    row.labelFallback = {};
     for (const dimId of dims) {
       const map = labelsByDim[dimId];
       const v = row.keys[dimId];
       if (map && v != null && map[String(v)] != null) row.labels[dimId] = map[String(v)];
+      const miss = fallbackByDim[dimId];
+      if (miss && v != null && miss[String(v)]) row.labelFallback[dimId] = true;
     }
   }
 }
@@ -528,8 +600,10 @@ async function run(db, request, scope, opts = {}) {
       for (const id of requested) totalsDelta[id] = deltaOf(exec.grand[id], prevExec.grand[id]);
     }
 
-    // labels — one batched lookup per labeled dim, for the PAGE only
-    await attachLabels(conn, dims, pageRows);
+    // labels — one batched lookup per labeled dim, for the PAGE only.
+    // `request.lang` is part of the request, so it is part of the cache key
+    // above: an English page can never be served out of the Arabic entry.
+    await attachLabels(conn, dims, pageRows, request && request.lang);
 
     const columns = [
       ...dims.map((d) => ({ key: d, type: 'dimension' })),
@@ -544,7 +618,15 @@ async function run(db, request, scope, opts = {}) {
       data: {
         columns,
         rows: pageRows.map((r) => {
-          const out = { keys: r.keys, labels: r.labels || {}, values: pickRequested(r.values, requested) };
+          // labelFallback[dimId] === true ⇒ the label in `labels` is NOT in the
+          // requested language (the English name is genuinely missing) — a flag,
+          // never a marker inside the string, because labels reach CSV.
+          const out = {
+            keys: r.keys,
+            labels: r.labels || {},
+            labelFallback: r.labelFallback || {},
+            values: pickRequested(r.values, requested),
+          };
           if (r.compare) { out.compare = r.compare; out.delta = r.delta; }
           return out;
         }),

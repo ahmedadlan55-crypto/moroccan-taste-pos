@@ -297,6 +297,120 @@ async function apply(db, log = () => {}) {
       PRIMARY KEY (business_day, branch_id, slot30)
     ) ${TBL}`, log);
 
+  // ── 10b. rollup columns the ROUTING needs (additive, guarded) ─────────────
+  //
+  // Every column below exists so `lib/analytics/planner.js` can route a shape
+  // that previously had to be answered live. Each one is the rollup twin of a
+  // REGISTRY metric or of the existence test the live merge performs, and the
+  // reason it is here rather than being derived at read time is written beside
+  // it. `H.addColumn` is INFORMATION_SCHEMA-guarded, so the second run of this
+  // migration is a no-op (and ADD COLUMN with an implicit/NULL-able default is
+  // INSTANT on InnoDB — no rewrite, no lock).
+  if (await H.tableExists(db, 'analytics_daily_branch')) {
+    // PRESENCE, not a metric. The live path emits a group for a key only when
+    // the fact statement that owns the metric actually returned a row there; a
+    // rollup row, by contrast, exists as soon as ANY of its writers touched the
+    // (day, branch) pair — so a day with a return but no trade would otherwise
+    // publish a fabricated all-zero sales row that live never shows. The
+    // planner turns these counts into a WHERE clause per requested metric.
+    await H.addColumn(db, 'analytics_daily_branch', 'line_rows', 'INT NOT NULL DEFAULT 0', log);
+    await H.addColumn(db, 'analytics_daily_branch', 'return_lines', 'INT NOT NULL DEFAULT 0', log);
+    // metric twins
+    await H.addColumn(db, 'analytics_daily_branch', 'qty_sold', 'DECIMAL(14,3) NOT NULL DEFAULT 0', log);
+    await H.addColumn(db, 'analytics_daily_branch', 'discounted_orders', 'INT NOT NULL DEFAULT 0', log);
+    await H.addColumn(db, 'analytics_daily_branch', 'voids_value', `${ROLLUP_MONEY} NOT NULL DEFAULT 0`, log);
+    await H.addColumn(db, 'analytics_daily_branch', 'returns_value', `${ROLLUP_MONEY} NOT NULL DEFAULT 0`, log);
+    await H.addColumn(db, 'analytics_daily_branch', 'returns_vat', `${ROLLUP_MONEY} NOT NULL DEFAULT 0`, log);
+    await H.addColumn(db, 'analytics_daily_branch', 'returns_cogs', `${ROLLUP_MONEY} NOT NULL DEFAULT 0`, log);
+    await H.addColumn(db, 'analytics_daily_branch', 'returns_count', 'INT NOT NULL DEFAULT 0', log);
+    await H.addColumn(db, 'analytics_daily_branch', 'qty_returned', 'DECIMAL(14,3) NOT NULL DEFAULT 0', log);
+  }
+  if (await H.tableExists(db, 'analytics_daily_item')) {
+    // The live `category` dimension is `d.category_name_snapshot` — a NAME, not
+    // an id (there is no categories master; see registry/dimensions.js). It is
+    // part of the rebuild's GROUP BY, so a menu item that carried TWO category
+    // snapshots on one (day, branch) collides on the PK and the pair's rebuild
+    // fails — leaving it dirty, which pins the rollup horizon and sends the day
+    // live. That is deliberate: the alternative is a MAX() that silently merges
+    // two groups live keeps apart.
+    await H.addColumn(db, 'analytics_daily_item', 'category_name', 'VARCHAR(200) NULL', log);
+    await H.addColumn(db, 'analytics_daily_item', 'line_rows', 'INT NOT NULL DEFAULT 0', log);
+    await H.addColumn(db, 'analytics_daily_item', 'return_lines', 'INT NOT NULL DEFAULT 0', log);
+  }
+  if (await H.tableExists(db, 'analytics_hourly_branch')) {
+    // DATE(f.occurred_at_local) for the slot. Every live time dimension except
+    // business_day is computed from occurred_at_local, NOT from business_day —
+    // so week/month/quarter/year/weekday/calendar_day can only be read off a
+    // rollup that stores the local calendar date. It is per SLOT because a
+    // business day spans two calendar dates whenever the branch closes after
+    // midnight, and a slot sits wholly inside one of them.
+    await H.addColumn(db, 'analytics_hourly_branch', 'calendar_day', 'DATE NULL', log);
+    await H.addColumn(db, 'analytics_hourly_branch', 'line_rows', 'INT NOT NULL DEFAULT 0', log);
+  }
+
+  // ── 10c. cashier grain ────────────────────────────────────────────────────
+  // The cashier reports (a cashier table, and the discount/void RATE per
+  // cashier per day) are the only high-traffic shapes whose grouping column
+  // (analytics_order_facts.created_by) exists on no rollup, so they re-scanned
+  // the fact table every time.
+  //
+  // `voided_orders` / `voided_discounted_orders` are the VOID-INCLUSIVE twins:
+  // a voids_* metric makes the planner drop the void exclusion for its whole
+  // order-fact statement, so live `orders` requested alongside `voids_count`
+  // counts voided orders too. Storing both populations is what lets the rollup
+  // answer that shape with live's number instead of a different one.
+  await H.createTable(db, 'analytics_daily_cashier', `
+    CREATE TABLE analytics_daily_cashier (
+      business_day DATE NOT NULL,
+      branch_id ${ID} NOT NULL,
+      cashier ${ACTOR} NOT NULL,
+      orders INT NOT NULL DEFAULT 0,
+      voided_orders INT NOT NULL DEFAULT 0,
+      discounted_orders INT NOT NULL DEFAULT 0,
+      voided_discounted_orders INT NOT NULL DEFAULT 0,
+      guests INT NOT NULL DEFAULT 0,
+      line_rows INT NOT NULL DEFAULT 0,
+      discounts ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      invoice_total ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      voids_value ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      gross_product ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      net_ex_vat ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      vat ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      cogs ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      qty_sold DECIMAL(14,3) NOT NULL DEFAULT 0,
+      PRIMARY KEY (business_day, branch_id, cashier)
+    ) ${TBL}`, log);
+
+  // ── 10d. VAT grain (sales AND returns, on the STORED columns only) ────────
+  // A VAT return is filed on vat_amount − returns_vat per (category, rate), and
+  // both sides live on different facts, so the shape needed a grain that spans
+  // them. `vat_rate` is NULLABLE on ar_document_lines but a PK part cannot be:
+  // -1 is the sentinel for "the source column was NULL" and the planner maps it
+  // back with NULLIF(dv.vat_rate, -1), which reproduces live's NULL group
+  // exactly. -1 is not a reachable VAT rate. `vat_category` is ENUM NOT NULL on
+  // both writers, so it needs no sentinel.
+  await H.createTable(db, 'analytics_daily_vat', `
+    CREATE TABLE analytics_daily_vat (
+      business_day DATE NOT NULL,
+      branch_id ${ID} NOT NULL,
+      vat_category VARCHAR(10) NOT NULL,
+      vat_rate DECIMAL(6,3) NOT NULL DEFAULT -1,
+      line_rows INT NOT NULL DEFAULT 0,
+      qty_sold DECIMAL(14,3) NOT NULL DEFAULT 0,
+      gross ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      discount_alloc ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      net_ex_vat ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      vat ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      cogs ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      return_lines INT NOT NULL DEFAULT 0,
+      returns_net ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      returns_vat ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      returns_value ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      returns_cogs ${ROLLUP_MONEY} NOT NULL DEFAULT 0,
+      qty_returned DECIMAL(14,3) NOT NULL DEFAULT 0,
+      PRIMARY KEY (business_day, branch_id, vat_category, vat_rate)
+    ) ${TBL}`, log);
+
   // ── 11. rollup bookkeeping ────────────────────────────────────────────────
   await H.createTable(db, 'analytics_rollup_dirty', `
     CREATE TABLE analytics_rollup_dirty (
@@ -429,6 +543,43 @@ async function apply(db, log = () => {}) {
   if (await H.tableExists(db, 'analytics_order_facts')) {
     await H.addIndex(db, 'analytics_order_facts', 'ix_aof_day_branch_status_src',
       'business_day, branch_id, status, source', {}, log);
+    // ── the COVERING form of the index above ─────────────────────────────────
+    //
+    // ix_aof_day_branch_status_src alone did NOT clear the full scans it was
+    // written for. EXPLAIN says why, and the split is exact: the optimizer
+    // takes the range whenever every `f` column the statement touches is IN the
+    // index, and abandons it for a table scan the moment ONE column is not.
+    // Measured on the 530k sandbox, same window, same fact:
+    //
+    //   sales by day 30d    [order] → range(…status_src)  (needs business_day only)
+    //   sales by branch 30d [order] → ALL                 (needs f.guests as well)
+    //
+    // Same WHERE, same 30 days, different plan — the only difference is one
+    // column outside the index, because each candidate row then costs a random
+    // primary-key seek into the clustered index. That is the optimizer costing
+    // the row lookups, not mis-estimating the range.
+    //
+    // So the fix is to make the index cover what the planner can actually ask
+    // for. These six columns are the complete set the emitted order/line
+    // statements read beyond the four above: brand_id / channel_id / created_by
+    // are groupable dimensions, occurred_at_local backs EVERY sub-day and
+    // calendar time dimension, and guests / discount_total back the `guests`,
+    // `discounts_total` and `discounted_orders` metrics.
+    //
+    // MEASURED, not assumed: with this index the sandbox goes from 11
+    // access_type=ALL plans to 0, every scenario's `f` becomes a range, and the
+    // statements that were scanning drop to
+    //   cashier table 30d [order] 250ms · orders by channel 30d 243ms
+    //   weekday×hour 90d [order] 672ms · brand×branch×day 90d [order] 764ms
+    // The index costs 64.9 MB beside a 119.9 MB table — it is narrower than the
+    // rows it replaces reading, which is the whole reason it wins.
+    //
+    // NOTE it is ADDITIVE: ix_aof_day_branch_status_src stays, and the
+    // optimizer still prefers it for the shapes it already covers (a narrower
+    // index reads fewer pages). Neither is dropped here.
+    await H.addIndex(db, 'analytics_order_facts', 'ix_aof_cover',
+      'business_day, branch_id, status, source, brand_id, channel_id, created_by, ' +
+      'occurred_at_local, guests, discount_total', {}, log);
     // One per dateBasis the planner actually accepts.
     await H.addIndex(db, 'analytics_order_facts', 'ix_aof_local_branch',
       'occurred_at_local, branch_id', {}, log);

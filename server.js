@@ -718,6 +718,16 @@ app.use('/api/saved-views', require('./routes/saved-views'));
 // RC hardening — per-user mutation rate limiter for the whole /v2 surface
 // (state-changing methods only; reads/exports pass through). Generous default
 // (300/min/user) so legitimate use + tests never trip it; env-tunable.
+// Inventory OPERATIONS CENTRE — one read model over every inventory DOCUMENT
+// header (receipts, issues, adjustments, stocktakes, transfers, production,
+// purchase receipts/returns and the two legacy families). Read-only.
+// Mounted at /api/inventory/operations, NOT under /api/inventory/v2, on
+// purpose: the /v2 prefix is wrapped by _v2Canary (403 for non-canary users)
+// and by the V2 WRITE gate below. A cross-cutting READ surface must stay
+// available to everyone the per-branch capabilities already allow. It still
+// inherits loadWarehouseScope from the /api/inventory mount above, and it is
+// claimed BEFORE the /api/inventory catch-all router further down.
+app.use('/api/inventory/operations', require('./routes/inventory-operations'));
 app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
 // Phase 5C — canary allow-list. Gates the ENTIRE v2 surface (reads + writes)

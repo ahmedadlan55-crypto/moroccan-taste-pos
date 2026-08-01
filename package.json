@@ -184,7 +184,9 @@
     "inv:names:apply": "node scripts/inventory/fix-bilingual-names.js --apply",
     "test:recipes-api": "node tests/integration/recipes.api.test.js",
     "test:operations-api": "node tests/integration/inventoryOperations.api.test.js",
-    "test:production-integrity": "node tests/integration/productionIntegrity.api.test.js"
+    "test:production-integrity": "node tests/integration/productionIntegrity.api.test.js",
+    "test:mutation": "node scripts/mutation/guards.js",
+    "test:mutation:full": "node scripts/mutation/guards.js --integration"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

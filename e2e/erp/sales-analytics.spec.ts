@@ -153,6 +153,30 @@ async function waitHealthy(page: Page, label: string) {
   }
 }
 
+/**
+ * Flip a basis radio (tax / date) through the compact filter bar.
+ *
+ * The bar became DRAFT-FIRST: the two basis toggles moved behind «المزيد من
+ * الفلاتر», and no control commits to the URL until «تطبيق» is pressed. That is
+ * the point of the redesign — a report must never repaint under a new period's
+ * label before the user asked for it — so this test drives the same three steps
+ * a person does, rather than reaching past the interaction it is meant to cover.
+ *
+ * The panel is left OPEN between calls (it auto-opens when the URL already
+ * carries one of its filters), hence the guarded expand.
+ */
+async function setBasis(page: Page, radioName: string) {
+  const panel = page.locator("#analytics-more-filters");
+  if (!(await panel.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "المزيد من الفلاتر" }).click();
+    await expect(panel, "the inline more-filters panel must open").toBeVisible();
+  }
+  await page.getByRole("radio", { name: radioName }).click();
+  const apply = page.getByRole("button", { name: "تطبيق" });
+  await expect(apply, `«تطبيق» must enable once ${radioName} differs from the applied filters`).toBeEnabled();
+  await apply.click();
+}
+
 async function assertHubChrome(page: Page, label: string) {
   // The grouped report picker (admin holds every cap → all 16 sections) + TopBar.
   const trigger = page.locator('#main button[aria-haspopup="listbox"]').first();
@@ -366,7 +390,7 @@ test.describe("focused flows (desktop)", () => {
     await expect(netLine, "the sales statement's net line must render").toHaveCount(1);
     await expect(netLine, "ex-VAT net must equal EXPECTED.TOTAL.net_ex_vat").toContainText(NET_EX_VAT_ALL);
 
-    await page.getByRole("radio", { name: "شامل الضريبة" }).click();
+    await setBasis(page, "شامل الضريبة");
     await page.waitForURL(/taxIncl/, { timeout: 15_000 });
     await waitHealthy(page, "executive (tax incl)");
     await expect(
@@ -382,7 +406,7 @@ test.describe("focused flows (desktop)", () => {
       "business-day basis: 2032-03-19 row exists (B2's 03:30 local order)",
     ).toContainText("2032-03-19");
 
-    await page.getByRole("radio", { name: "اليوم التقويمي" }).click();
+    await setBasis(page, "اليوم التقويمي");
     await page.waitForURL(/businessDay/, { timeout: 15_000 });
     await waitHealthy(page, "executive (calendar basis)");
     await expect(

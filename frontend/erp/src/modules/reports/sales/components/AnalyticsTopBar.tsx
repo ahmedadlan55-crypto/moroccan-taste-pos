@@ -1,13 +1,39 @@
 // Sales Analytics Hub — the shared filter top bar every hub page sits under.
 //
-// Controlled entirely by the URL codec (lib/filters.ts): `filters` is the
-// parsed state, `patch`/`reset` mutate the URL. Active-filter chips derive
-// from the codec's own serialize() (non-null ⇔ non-default) so the chip row
-// can never drift from what the URL actually says.
-import { useState, type ReactNode } from "react";
+// TWO CONTRACTS THIS FILE OWNS
+//
+// 1. DRAFT → COMMIT. `filters` is the COMMITTED state (parsed from the URL);
+//    every control here edits a local DRAFT and nothing reaches the URL until
+//    «تطبيق». Before, each edit patched the URL immediately, so the previous
+//    period's numbers sat under the NEW period's heading for the length of the
+//    refetch — a silently wrong number, not a cosmetic lag. The hub marks the
+//    results region aria-busy for the window where the label leads the data;
+//    here the job is to make that window start only when the analyst says so.
+//
+// 2. A COMPACT PRIMARY BAR. Period, branch, compare, Apply and a "more
+//    filters" toggle are always visible; brand / item / channel / order type /
+//    date basis / tax basis live in an INLINE expandable area (never a side
+//    panel — shared/ui/drawer.tsx is a retired shim). The bar used to render
+//    all eleven controls plus the page's own settings as one 1463px column,
+//    which put the first KPI below the fold.
+//
+// Active-filter chips still derive from the codec's own serialize() (non-null
+// ⇔ non-default) against the COMMITTED filters, so the chip row always
+// describes what you are LOOKING AT, never what you are about to ask for.
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bookmark, Check, Plus, Printer, RefreshCw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Bookmark,
+  Check,
+  ChevronDown,
+  Plus,
+  Printer,
+  RefreshCw,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { Badge, Button, Dialog, DropdownMenu, IconButton, Input, SegmentedControl } from "@/shared/ui";
 import { useCan } from "@/shared/permissions";
 import {
@@ -24,9 +50,12 @@ import { formatDate, formatDateTime, formatNumber } from "@/shared/lib";
 // the .print-document rules in styles/index.css); the hub reuses it verbatim
 // rather than growing a second, drifting copy.
 import { printReport } from "@/modules/accounting/components";
+import { cn } from "@/shared/lib";
 import { useT } from "@/i18n";
 import {
   analyticsFilterCodec,
+  filterDiff,
+  filterSignature,
   nonDefaultFilterKeys,
   type AnalyticsCompareMode,
   type AnalyticsFilters,
@@ -50,6 +79,9 @@ export const RETIRED_CHANNEL_CODES = ["pos", "online", "aggregator", "call_cente
 /** Static order-type codes this wave. */
 export const ORDER_TYPE_CODES = ["dine_in", "takeaway", "delivery"] as const;
 
+/** aria-controls target of the "more filters" toggle (one bar per screen). */
+const MORE_FILTERS_ID = "analytics-more-filters";
+
 export interface AnalyticsTopBarProps {
   filters: AnalyticsFilters;
   patch: (partial: Partial<AnalyticsFilters>) => void;
@@ -61,10 +93,11 @@ export interface AnalyticsTopBarProps {
   /** Page-owned actions (save view / export …) rendered at the end. */
   pageActions?: ReactNode;
   /**
-   * The routed report's OWN settings, published through the rail slot
-   * (lib/reportRail). They render inside this card, below the shared filters,
-   * so the analyst sees ONE filters-and-settings surface instead of two
-   * stacked panels that look like unrelated features.
+   * A report's OWN settings, for callers that render this bar outside the hub.
+   * The hub itself no longer passes them: a report's configuration is not a
+   * filter, and Builder's config alone is taller than a viewport — it goes in
+   * the rail BESIDE the report (see SalesAnalyticsHub), which is what keeps
+   * this card at one screen-row of chrome.
    */
   children?: ReactNode;
 }
@@ -88,6 +121,51 @@ function FilterChip({ label, onRemove, removeLabel }: { label: string; onRemove:
 
 function toOptions(rows: Array<{ id: string; name: string }> | undefined): MultiSelectOption[] {
   return (rows ?? []).map((r) => ({ value: r.id, label: r.name }));
+}
+
+/**
+ * A FAILED LOOKUP IS NOT AN EMPTY DOMAIN.
+ *
+ * Every option picker here used to read `query.data ?? []`, so a 500 on
+ * /erp/branches-full rendered a picker that said "no options" — indistinguish-
+ * able from a company that genuinely has one branch, and it invites the analyst
+ * to conclude the scope is empty rather than that the screen is broken. The
+ * picker is replaced by this, which says what failed and offers the retry.
+ *
+ * Sized to the same 44px as the field it stands in, so the bar does not jump
+ * when a lookup fails, and the retry stays a real touch target.
+ */
+function LookupError({
+  name,
+  onRetry,
+  scope,
+}: {
+  name: string;
+  onRetry: () => void;
+  /** Which picker failed — for tests and for automation, never for the user. */
+  scope: string;
+}) {
+  const t = useT();
+  return (
+    <div
+      role="alert"
+      data-testid="lookup-error"
+      data-lookup-error={scope}
+      className="flex min-h-11 items-center justify-between gap-1 rounded-xl border border-rose-200 bg-rose-50 ps-2.5 pe-1"
+    >
+      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-extrabold text-rose-700">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">{t("salesReports.topbar.lookupFailed", { name })}</span>
+      </span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="min-h-11 shrink-0 rounded-lg px-2 text-[11px] font-extrabold text-rose-700 underline transition hover:bg-rose-100"
+      >
+        {t("salesReports.topbar.lookupRetry")}
+      </button>
+    </div>
+  );
 }
 
 /* ── save-view control (wave 4) ─────────────────────────────────
@@ -200,8 +278,14 @@ function SaveViewControl() {
       <DropdownMenu
         aria-label={t("salesReports.topbar.saveView")}
         trigger={
-          <span className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
-            <Bookmark className="h-4 w-4" /> {t("salesReports.topbar.saveView")}
+          // min-h-11, not min-h-9: this is a real touch target, and it also
+          // pins the action bar to the same 44px as the control row below it.
+          <span className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
+            {/* The label collapses to its icon on a phone. DropdownMenu puts
+                the aria-label on the BUTTON, so the accessible name survives
+                the text going away. */}
+            <Bookmark className="h-4 w-4" />
+            <span className="hidden sm:inline">{t("salesReports.topbar.saveView")}</span>
           </span>
         }
         items={items}
@@ -259,8 +343,9 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   // picking ANY channel silently emptied every report in the hub. The file's own
   // comment admitted the list was provisional; it then outlived the wave.
   //
-  // A failed/empty load falls back to NO options rather than to fake ones: an
-  // empty picker is honest, a picker full of ids that match nothing is not.
+  // An EMPTY load falls back to no options rather than to fake ones: an empty
+  // picker is honest, a picker full of ids that match nothing is not. A FAILED
+  // load is a different fact and now says so — see LookupError.
   const channelsQuery = useChannels();
   const channelOptions: MultiSelectOption[] = (channelsQuery.data ?? []).map((c) => ({
     value: c.id,
@@ -273,7 +358,47 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
     label: t(`salesReports.topbar.orderTypes.${o}`),
   }));
 
+  /* ── DRAFT STATE ────────────────────────────────────────────────────────
+   * `filters` is committed (the URL). `draft` is what the controls show. The
+   * two are identical until someone edits, and «تطبيق» patches ONLY the diff.
+   *
+   * The resync effect keys off the committed SIGNATURE, not the object: the
+   * hub memoizes `filters` per URL, but a page test (or any caller that parses
+   * on every render) hands us a fresh object each time, and depending on that
+   * identity would loop set-state → render → set-state. It also means an
+   * outside commit — a drill pin from a page row, a saved view, clear-all —
+   * pulls the draft back in step, so the bar can never show an edit that the
+   * report below it has already superseded. */
+  const committedSig = filterSignature(filters);
+  const [draft, setDraft] = useState<AnalyticsFilters>(filters);
+  useEffect(() => {
+    setDraft(filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [committedSig]);
+
+  const pending = useMemo(() => filterDiff(filters, draft), [filters, draft]);
+  const dirty = Object.keys(pending).length > 0;
+  const edit = (partial: Partial<AnalyticsFilters>) => setDraft((d) => ({ ...d, ...partial }));
+  const apply = () => {
+    if (dirty) patch(pending);
+  };
+
+  /* ── the inline "more filters" area ──────────────────────────────────────
+   * Everything that is not period / branch / compare. It opens itself when the
+   * URL already carries one of these, because a deep link whose scope is
+   * hidden behind a collapsed toggle is a filter the reader cannot see. */
+  const MORE_KEYS = ["brandId", "menuItemId", "channel", "orderType", "businessDay", "taxIncl"] as const;
+  const moreActiveCount = MORE_KEYS.filter((k) =>
+    new Set(nonDefaultFilterKeys(draft)).has(k),
+  ).length;
+  const [showMore, setShowMore] = useState(
+    () => MORE_KEYS.filter((k) => new Set(nonDefaultFilterKeys(filters)).has(k)).length > 0,
+  );
+
   // ── active-filter chips (codec-derived; period keys collapse into one) ──
+  // Derived from the COMMITTED filters on purpose: a chip describes the report
+  // on screen. Chips (and clear-all) commit immediately — removing one is an
+  // explicit "show me without this", not a draft edit.
   const activeKeys = new Set(nonDefaultFilterKeys(filters));
   const chips: Array<{ id: string; label: string; onRemove: () => void }> = [];
   if (activeKeys.has("from") || activeKeys.has("to") || activeKeys.has("preset")) {
@@ -335,31 +460,55 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
   const watermark = meta?.freshness?.watermark ?? null;
   const pendingDays = meta?.freshness?.pendingDays ?? 0;
 
-  // `xl:w-full xl:min-w-0` — in the rail every field fills the column; below
-  // xl the min-width keeps the wrapping bar readable, exactly as before.
+  // A labelled field — for the EXPANDED area only. The primary bar carries no
+  // visible labels on purpose: each of its controls has an aria-label and
+  // displays its own value, and dropping the label line is most of what buys a
+  // one-row, 44px-tall primary bar.
   const field = (label: string, control: ReactNode) => (
-    <div className="flex min-w-40 flex-col gap-1.5 xl:w-full xl:min-w-0">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <span className="text-xs font-extrabold text-slate-500">{label}</span>
       {control}
     </div>
   );
 
+  /** A picker that says "this lookup failed" instead of "you have none". */
+  const picker = (
+    scope: string,
+    name: string,
+    query: { isError: boolean; refetch: () => unknown },
+    control: ReactNode,
+  ) =>
+    query.isError ? (
+      <LookupError scope={scope} name={name} onRetry={() => void query.refetch()} />
+    ) : (
+      control
+    );
+
   return (
-    // Two layouts, one component, ONE breakpoint: a wrapping bar below xl and a
-    // column at xl+. Keyed to the same `xl` as the hub's grid, so the bar and
-    // the grid are mathematically incapable of disagreeing — which a `layout`
-    // prop would have allowed.
+    // ONE card, two rows of chrome: an action bar and a control row, each 44px,
+    // inside 8px of padding. MEASURED collapsed (chromium, real stylesheet,
+    // 288px sidebar): 114px at 1280/1440/1920, 218px at 1024/768/375 — where
+    // the 2-column grid becomes three stacked rows. Everything that used to
+    // make this 1463px tall is either behind "more filters" or, for the page's
+    // own settings, in the hub's rail beside the report.
     <div
-      className="no-print surface mb-4 flex flex-col gap-3 p-4 xl:mb-0"
+      className="no-print surface mb-4 flex flex-col gap-2 p-2"
       data-testid="analytics-topbar"
     >
-      {/* toolbar — FIRST in the DOM, not moved with `order`. Visually-top /
-          tab-order-fourth would be a WCAG 2.4.3 focus-order defect, and in a
-          700px rail these actions must not sit below the fold. */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-3">
-        <h2 className="me-auto text-sm font-extrabold text-slate-900">
+      {/* THE ONE ACTION BAR — first in the DOM, not moved with `order`
+          (visually-top / tab-order-last is a WCAG 2.4.3 focus-order defect).
+          Saved views, refresh, print and export live here and nowhere else. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {/* Hidden on a phone: with the heading in the row the actions wrapped
+            onto a second line, and a wrapped action bar is 44px of the very
+            height this rebuild is about. The card is under a heading that
+            already says what it is. */}
+        <h2 className="me-auto hidden ps-1.5 text-xs font-extrabold text-slate-500 sm:block">
           {t("salesReports.hub.filtersTitle")}
         </h2>
+        {/* The draft's own status light: the analyst can see that what the bar
+            shows is NOT what the report below it answers. */}
+        {dirty && <Badge tone="warning">{t("salesReports.topbar.pendingChanges")}</Badge>}
         {pendingDays > 0 && (
           <Badge tone="warning">{t("salesReports.topbar.lateTx", { count: pendingDays })}</Badge>
         )}
@@ -372,7 +521,7 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
           </span>
         )}
         {onRefresh && (
-          <IconButton size="sm" aria-label={t("salesReports.topbar.refresh")} onClick={onRefresh}>
+          <IconButton aria-label={t("salesReports.topbar.refresh")} onClick={onRefresh}>
             <RefreshCw className="h-4 w-4" />
           </IconButton>
         )}
@@ -380,40 +529,59 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
         {/* Print is NOT export-gated: it puts the report the user is already
             reading on paper. The hub wraps the routed page in PrintArea, and
             this bar is .no-print, so the printout is the report alone. */}
-        <IconButton size="sm" aria-label={t("salesReports.topbar.print")} onClick={printReport}>
+        <IconButton aria-label={t("salesReports.topbar.print")} onClick={printReport}>
           <Printer className="h-4 w-4" />
         </IconButton>
         {canExport && <ExportMenu segment={segment} filters={filters} />}
         {pageActions}
       </div>
 
-      {/* row 1 — period + compare + scopes.
-          `items-end` is a CROSS-axis rule; in a column the cross axis is
-          horizontal, so leaving it would shrink every field to its content
-          width and jam it against the inline-end edge. Hence items-stretch. */}
-      <div className="flex flex-wrap items-end gap-3 xl:flex-col xl:flex-nowrap xl:items-stretch">
-        {field(
-          t("salesReports.topbar.period"),
+      {/* ── THE PRIMARY BAR ──────────────────────────────────────────────────
+          Period, branch, compare, Apply, more. Two columns on a phone (period
+          spans both — a custom range unfolds two date inputs into it), one row
+          from xl. No visible labels: each control names itself to assistive
+          tech via aria-label and shows its value in place, which is what keeps
+          the row 44px tall.
+
+          `xl`, not `lg`: at a 1024 viewport the shell's 288px sidebar leaves
+          ~688px, and four minmax() tracks whose minimums total 694px would
+          push the page into horizontal overflow — which the e2e sweep fails
+          on, at exactly that viewport. */}
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]">
+        <div className="col-span-2 min-w-0 xl:col-span-1">
           <DateRangePicker
-            value={{ from: filters.from, to: filters.to, preset: filters.preset }}
-            onChange={(range) => patch({ from: range.from, to: range.to, preset: range.preset })}
+            value={{ from: draft.from, to: draft.to, preset: draft.preset }}
+            onChange={(range) => edit({ from: range.from, to: range.to, preset: range.preset })}
             labels={{
               presets: presetLabels,
               from: t("salesReports.topbar.from"),
               to: t("salesReports.topbar.to"),
               presetAriaLabel: t("salesReports.topbar.period"),
             }}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.compare"),
+          />
+        </div>
+        <div className="min-w-0">
+          {picker(
+            "branch",
+            t("salesReports.topbar.branch"),
+            branches,
+            <MultiSelectCombobox
+              options={toOptions(branches.data)}
+              values={draft.branchId}
+              onChange={(values) => edit({ branchId: values })}
+              ariaLabel={t("salesReports.topbar.branch")}
+              labels={{ placeholder: t("salesReports.topbar.allBranches") }}
+            />,
+          )}
+        </div>
+        <div className="min-w-0">
           <ComparePicker
-            value={filters.compare}
+            value={draft.compare}
             onChange={(mode) => {
               // The URL contract carries none|prevPeriod|prevYear this wave; a
               // custom compare window ships with the builder wave.
               if (mode === "custom") return;
-              patch({ compare: mode as AnalyticsCompareMode });
+              edit({ compare: mode as AnalyticsCompareMode });
             }}
             labels={{
               modes: compareLabels,
@@ -421,103 +589,155 @@ export function AnalyticsTopBar({ filters, patch, reset, meta, onRefresh, pageAc
               to: t("salesReports.topbar.to"),
               modeAriaLabel: t("salesReports.topbar.compare"),
             }}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.brand"),
-          <MultiSelectCombobox
-            options={toOptions(brands.data)}
-            values={filters.brandId}
-            onChange={(values) => patch({ brandId: values })}
-            ariaLabel={t("salesReports.topbar.brand")}
-            labels={{ placeholder: t("salesReports.topbar.allBrands") }}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.branch"),
-          <MultiSelectCombobox
-            options={toOptions(branches.data)}
-            values={filters.branchId}
-            onChange={(values) => patch({ branchId: values })}
-            ariaLabel={t("salesReports.topbar.branch")}
-            labels={{ placeholder: t("salesReports.topbar.allBranches") }}
-          />,
-        )}
-        {field(
-          // The owner's question is "how did THIS item sell in THAT branch" —
-          // menuItemId has always been a first-class URL filter, but until now
-          // the only way to set it was drilling into a row.
-          t("salesReports.dims.menu_item"),
-          <MultiSelectCombobox
-            options={toOptions(menuItems.data)}
-            values={filters.menuItemId}
-            onChange={(values) => patch({ menuItemId: values })}
-            ariaLabel={t("salesReports.dims.menu_item")}
-            labels={{ placeholder: t("salesReports.topbar.allItems") }}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.channel"),
-          <MultiSelectCombobox
-            options={channelOptions}
-            values={filters.channel}
-            onChange={(values) => patch({ channel: values })}
-            searchable={false}
-            ariaLabel={t("salesReports.topbar.channel")}
-            labels={{ placeholder: t("salesReports.topbar.allChannels") }}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.orderType"),
-          <MultiSelectCombobox
-            options={orderTypeOptions}
-            values={filters.orderType}
-            onChange={(values) => patch({ orderType: values })}
-            searchable={false}
-            ariaLabel={t("salesReports.topbar.orderType")}
-            labels={{ placeholder: t("salesReports.topbar.allOrderTypes") }}
-          />,
-        )}
+          />
+        </div>
+        <div className="col-span-2 flex items-center gap-2 xl:col-span-1">
+          {/* Enabled ONLY when the draft differs from the URL — the button is
+              the answer to "does the report below me reflect this bar?". */}
+          <Button
+            className={cn("flex-1 xl:flex-none", dirty && "ring-2 ring-amber-300")}
+            disabled={!dirty}
+            onClick={apply}
+          >
+            {t("salesReports.topbar.apply")}
+          </Button>
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            aria-expanded={showMore}
+            aria-controls={MORE_FILTERS_ID}
+            // Explicit label: the count badge below would otherwise change the
+            // button's accessible NAME every time a filter is added.
+            aria-label={t("salesReports.topbar.moreFilters")}
+            className="flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+          >
+            <SlidersHorizontal className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+            <span className="truncate">{t("salesReports.topbar.moreFilters")}</span>
+            {moreActiveCount > 0 && (
+              <span
+                aria-hidden="true"
+                className="grid h-5 min-w-5 place-items-center rounded-full bg-teal-600 px-1 text-[11px] font-extrabold text-white"
+              >
+                {formatNumber(moreActiveCount)}
+              </span>
+            )}
+            <ChevronDown
+              className={cn("h-4 w-4 shrink-0 text-slate-400 transition-transform", showMore && "rotate-180")}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
       </div>
 
-      {/* row 2 — basis toggles. Wrapped in field() like every other control so
-          the rail reads as one consistent labelled list; the SegmentedControl
-          is inline-flex with non-flexing children, so a stretched one needs
-          `[&>button]:flex-1` or it leaves trailing dead space. */}
-      <div className="flex flex-wrap items-end gap-3 xl:flex-col xl:items-stretch">
-        {field(
-          t("salesReports.topbar.dateBasis"),
-          <SegmentedControl
-            size="sm"
-            className="xl:w-full xl:[&>button]:flex-1"
-            aria-label={t("salesReports.topbar.dateBasis")}
-            value={filters.businessDay ? "business" : "calendar"}
-            onChange={(v) => patch({ businessDay: v === "business" })}
-            options={[
-              { value: "business", label: t("salesReports.topbar.businessDay") },
-              { value: "calendar", label: t("salesReports.topbar.calendarDay") },
-            ]}
-          />,
-        )}
-        {field(
-          t("salesReports.topbar.taxBasis"),
-          <SegmentedControl
-            size="sm"
-            className="xl:w-full xl:[&>button]:flex-1"
-            aria-label={t("salesReports.topbar.taxBasis")}
-            value={filters.taxIncl ? "incl" : "excl"}
-            onChange={(v) => patch({ taxIncl: v === "incl" })}
-            options={[
-              { value: "excl", label: t("salesReports.topbar.taxExcl") },
-              { value: "incl", label: t("salesReports.topbar.taxIncl") },
-            ]}
-          />,
-        )}
-      </div>
+      {/* ── THE EXPANDED AREA — INLINE, never a panel ─────────────────────────
+          shared/ui/drawer.tsx is a deliberate compatibility shim whose header
+          says side panels do not come back; these controls therefore open in
+          the page, under the bar that owns them, where the chips and the Apply
+          button they feed are still visible. */}
+      {showMore && (
+        <div
+          id={MORE_FILTERS_ID}
+          data-testid="more-filters"
+          className="grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2 xl:grid-cols-3"
+        >
+          {field(
+            t("salesReports.topbar.brand"),
+            picker(
+              "brand",
+              t("salesReports.topbar.brand"),
+              brands,
+              <MultiSelectCombobox
+                options={toOptions(brands.data)}
+                values={draft.brandId}
+                onChange={(values) => edit({ brandId: values })}
+                ariaLabel={t("salesReports.topbar.brand")}
+                labels={{ placeholder: t("salesReports.topbar.allBrands") }}
+              />,
+            ),
+          )}
+          {field(
+            // The owner's question is "how did THIS item sell in THAT branch" —
+            // menuItemId has always been a first-class URL filter, but until now
+            // the only way to set it was drilling into a row.
+            t("salesReports.dims.menu_item"),
+            picker(
+              "menuItem",
+              t("salesReports.dims.menu_item"),
+              menuItems,
+              <MultiSelectCombobox
+                options={toOptions(menuItems.data)}
+                values={draft.menuItemId}
+                onChange={(values) => edit({ menuItemId: values })}
+                ariaLabel={t("salesReports.dims.menu_item")}
+                labels={{ placeholder: t("salesReports.topbar.allItems") }}
+              />,
+            ),
+          )}
+          {field(
+            t("salesReports.topbar.channel"),
+            picker(
+              "channel",
+              t("salesReports.topbar.channel"),
+              channelsQuery,
+              <MultiSelectCombobox
+                options={channelOptions}
+                values={draft.channel}
+                onChange={(values) => edit({ channel: values })}
+                searchable={false}
+                ariaLabel={t("salesReports.topbar.channel")}
+                labels={{ placeholder: t("salesReports.topbar.allChannels") }}
+              />,
+            ),
+          )}
+          {field(
+            t("salesReports.topbar.orderType"),
+            <MultiSelectCombobox
+              options={orderTypeOptions}
+              values={draft.orderType}
+              onChange={(values) => edit({ orderType: values })}
+              searchable={false}
+              ariaLabel={t("salesReports.topbar.orderType")}
+              labels={{ placeholder: t("salesReports.topbar.allOrderTypes") }}
+            />,
+          )}
+          {/* The SegmentedControl is inline-flex with non-flexing children, so
+              a stretched one needs `[&>button]:flex-1` or it leaves trailing
+              dead space. */}
+          {field(
+            t("salesReports.topbar.dateBasis"),
+            <SegmentedControl
+              size="sm"
+              className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+              aria-label={t("salesReports.topbar.dateBasis")}
+              value={draft.businessDay ? "business" : "calendar"}
+              onChange={(v) => edit({ businessDay: v === "business" })}
+              options={[
+                { value: "business", label: t("salesReports.topbar.businessDay") },
+                { value: "calendar", label: t("salesReports.topbar.calendarDay") },
+              ]}
+            />,
+          )}
+          {field(
+            t("salesReports.topbar.taxBasis"),
+            <SegmentedControl
+              size="sm"
+              className="w-full [&>button]:min-h-11 [&>button]:flex-1"
+              aria-label={t("salesReports.topbar.taxBasis")}
+              value={draft.taxIncl ? "incl" : "excl"}
+              onChange={(v) => edit({ taxIncl: v === "incl" })}
+              options={[
+                { value: "excl", label: t("salesReports.topbar.taxExcl") },
+                { value: "incl", label: t("salesReports.topbar.taxIncl") },
+              ]}
+            />,
+          )}
+        </div>
+      )}
 
-      {/* The routed report's OWN settings — the whole point of the rail. A page
-          publishes them through lib/reportRail; the 15 fixed reports publish
-          nothing and this renders nothing. */}
+      {/* A page's OWN settings, when this bar is rendered outside the hub. The
+          hub itself now renders them in the rail BESIDE the report (they are a
+          report's configuration, not a filter, and Builder's config alone is
+          taller than a viewport). Kept so a standalone render loses nothing. */}
       {children && <div className="border-t border-slate-100 pt-3">{children}</div>}
 
       {/* row 3 — active-filter chips. Last, because it is a summary of state

@@ -129,10 +129,13 @@ export function ExportMenu({
           <Download className="h-4 w-4" /> {t("salesReports.exportMenu.download")}
         </Button>
       )}
+      {/* The trigger's min-h-11 (44px) is the touch-target floor the rest of the
+          action bar already meets. It was 36px, so on a phone it was the one
+          control in the bar you could reach for and miss. */}
       <DropdownMenu
         aria-label={t("salesReports.topbar.export")}
         trigger={
-          <span className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
+          <span className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
             <Download className="h-4 w-4" /> {t("salesReports.topbar.export")}
           </span>
         }

@@ -11,10 +11,11 @@
 // analytics.cost.view. Those tabs are HIDDEN from the strip without the cap,
 // and a direct deep-link renders PermissionDenied instead of the page.
 import { Suspense } from "react";
-import { Compass } from "lucide-react";
+import { Compass, Loader2 } from "lucide-react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { useIsFetching } from "@tanstack/react-query";
 import { LoadingState, PageHeader, PermissionDenied, PrintDocument, StateShell } from "@/shared/ui";
-import { normalizeRoutePath } from "@/shared/lib";
+import { cn, normalizeRoutePath } from "@/shared/lib";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { useCan, usePermissions, type Capability } from "@/shared/permissions";
 
@@ -81,6 +82,23 @@ export default function SalesAnalyticsHub() {
   const { can } = usePermissions();
   const { filters, patch, reset } = useUrlFilters(analyticsFilterCodec);
 
+  /* ── "the number and the label must never disagree" ───────────────────────
+   * The heading, the print masthead and the basis block all read the COMMITTED
+   * filters, and the filter bar now commits only on «تطبيق» — so the moment a
+   * commit lands, the labels say the new period while the table still holds
+   * the old one until the round-trip returns (useAnalyticsQuery deliberately
+   * keeps the previous rows on screen, `placeholderData: keepPreviousData`).
+   * That window is exactly the silent wrong-number bug, so it is marked:
+   * aria-busy for assistive tech, a stale overlay for everyone else.
+   *
+   * Counted by PREDICATE, not by the ["analytics"] key prefix: saved-views and
+   * the registry live under that same prefix and would flag the report stale
+   * while a dropdown was populating. Only ["analytics","query",…] is a report. */
+  const inFlightReports = useIsFetching({
+    predicate: (q) => q.queryKey[0] === "analytics" && q.queryKey[1] === "query",
+  });
+  const stale = inFlightReports > 0;
+
   if (!canViewAnalytics) return <PermissionDenied />;
 
   const key = normalizeRoutePath(pathname);
@@ -143,14 +161,24 @@ export default function SalesAnalyticsHub() {
             })),
         })).filter((g) => g.options.length > 0)}
       />
-      {/* ── the work area: ONE filters-and-settings column, the report beside it.
-          The two panels the analyst used to reassemble by eye — the shared
-          filter bar and the page's own settings card — are now one rail.
+      {/* The filter bar spans the page, above the work area. It used to sit in
+          the 17rem rail beside the report — which is why it measured 1463px
+          tall: a 272px column cannot hold period + branch + compare + Apply +
+          the action cluster in anything less than five stacked rows, and the
+          page's own settings were stacked under them. Full width, it is one
+          44px row of controls under one 44px action bar. */}
+      <AnalyticsTopBar filters={filters} patch={patch} reset={reset} />
+
+      {/* ── the work area: the report, and (only when the routed page publishes
+          any) its OWN settings in a rail beside it.
+
+          The rail is CONDITIONAL. Sixteen of the seventeen reports publish
+          nothing, and an always-declared 17rem track spent 17rem of every one
+          of those screens on an empty column.
 
           `xl`, not `lg`: at 1024 (a viewport the e2e suite actually runs) a
           17rem rail leaves a 400px table. At xl the table gets 640px (1280),
-          800px (1440), 1200px (1920), and every viewport below xl keeps
-          exactly today's stacked layout.
+          800px (1440), 1200px (1920), and every viewport below xl stacks.
 
           `min-w-0` on the container and `minmax(0,1fr)` on the content track
           are load-bearing: grid items default to `min-width:auto`, so without
@@ -161,63 +189,84 @@ export default function SalesAnalyticsHub() {
         {(pageControls) => (
           <div
             data-analytics-split
-            className="grid min-w-0 gap-4 xl:grid-cols-[17rem_minmax(0,1fr)] 2xl:grid-cols-[19rem_minmax(0,1fr)]"
+            className={cn(
+              "grid min-w-0 gap-4",
+              pageControls && "xl:grid-cols-[17rem_minmax(0,1fr)] 2xl:grid-cols-[19rem_minmax(0,1fr)]",
+            )}
           >
             {/* `no-print` removes the whole grid ITEM on paper, so the report
                 gets the full sheet with no phantom track and no phantom gap.
                 `self-start` keeps the card at its natural height instead of
                 stretching to the table's row.
 
-                DELIBERATELY NOT STICKY. The design called for `sticky top-5`
-                on the estimate that the rail is ~715px and fits any 1280+
-                screen. Measured on the real page it is 1463px — because the
-                report's OWN settings now live here too, which is the whole
-                point of the rail. A sticky element taller than the viewport
-                pins its top and puts its bottom permanently off-screen: the
-                Run button and the active-filter chips would be unreachable at
-                1280×800. Scrolling with the page keeps every control
-                reachable, which beats keeping the period picker in view. */}
-            <aside
-              className="no-print min-w-0 xl:self-start"
-              aria-label={t("salesReports.hub.filtersAria")}
-            >
-              <AnalyticsTopBar filters={filters} patch={patch} reset={reset}>
-                {pageControls}
-              </AnalyticsTopBar>
-            </aside>
+                DELIBERATELY NOT STICKY: Builder's configuration is taller than
+                a 800px viewport, and a sticky element taller than the viewport
+                pins its top and puts its bottom (the Run button) permanently
+                off-screen. */}
+            {pageControls && (
+              <aside
+                className="no-print min-w-0 xl:self-start"
+                aria-label={t("salesReports.hub.settingsAria")}
+              >
+                <div className="surface p-4">{pageControls}</div>
+              </aside>
+            )}
 
-            <div className="min-w-0">
-              {segmentDenied ? (
-                <PermissionDenied />
-              ) : (
-                // Printing the hub puts the REPORT on paper — not the picker, the
-                // filter bar or the app shell (styles/index.css @media print).
-                // ONE house style, shared with every other printed report in the system
-                // (shared/ui/print-document). The hub used to import PrintArea from the
-                // accounting module and render its own masthead beside it — two copies
-                // of the same idea, free to drift apart.
-                <PrintDocument
-                  title={t(`salesReports.pages.${segment.id}.title`)}
-                  subtitle={`${filters.from} — ${filters.to}`}
-                  meta={`${filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")} · ${filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}`}
+            <div
+              className="min-w-0"
+              data-testid="analytics-results"
+              aria-label={t("salesReports.hub.resultsAria")}
+              aria-busy={stale || undefined}
+            >
+              {/* The stale marker. NOT a spinner over an empty box: the figures
+                  underneath are real, they just answer the PREVIOUS question,
+                  and saying so is the difference between a slow screen and a
+                  wrong one. */}
+              {stale && (
+                <div
+                  role="status"
+                  data-testid="analytics-stale-notice"
+                  className="no-print mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-extrabold text-amber-800"
                 >
-                  <Suspense fallback={<LoadingState />}>
-                    {(() => {
-                      const Page = SEGMENT_PAGES[segment.id];
-                      return <Page />;
-                    })()}
-                  </Suspense>
-                  {/* INSIDE PrintArea, deliberately. The filter bar states the basis on
-                      screen and is .no-print, so a printed report used to carry none of
-                      it: two printouts of "sales, July" can differ by a full day's
-                      takings — the business day runs past midnight — with nothing on
-                      either page to say which is which. Placing it here gives all 16
-                      reports the disclosure without touching 16 files. */}
-                  <div className="mt-4">
-                    <BasisOfPreparation filters={filters} />
-                  </div>
-                </PrintDocument>
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                  {t("salesReports.hub.updating")}
+                </div>
               )}
+              {/* `print:opacity-100` — the dimming is a screen affordance; a
+                  sheet printed mid-refetch must still be legible ink. */}
+              <div className={cn(stale && "pointer-events-none opacity-40 print:opacity-100")}>
+                {segmentDenied ? (
+                  <PermissionDenied />
+                ) : (
+                  // Printing the hub puts the REPORT on paper — not the picker, the
+                  // filter bar or the app shell (styles/index.css @media print).
+                  // ONE house style, shared with every other printed report in the system
+                  // (shared/ui/print-document). The hub used to import PrintArea from the
+                  // accounting module and render its own masthead beside it — two copies
+                  // of the same idea, free to drift apart.
+                  <PrintDocument
+                    title={t(`salesReports.pages.${segment.id}.title`)}
+                    subtitle={`${filters.from} — ${filters.to}`}
+                    meta={`${filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")} · ${filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}`}
+                  >
+                    <Suspense fallback={<LoadingState />}>
+                      {(() => {
+                        const Page = SEGMENT_PAGES[segment.id];
+                        return <Page />;
+                      })()}
+                    </Suspense>
+                    {/* INSIDE PrintArea, deliberately. The filter bar states the basis on
+                        screen and is .no-print, so a printed report used to carry none of
+                        it: two printouts of "sales, July" can differ by a full day's
+                        takings — the business day runs past midnight — with nothing on
+                        either page to say which is which. Placing it here gives all 16
+                        reports the disclosure without touching 16 files. */}
+                    <div className="mt-4">
+                      <BasisOfPreparation filters={filters} />
+                    </div>
+                  </PrintDocument>
+                )}
+              </div>
             </div>
           </div>
         )}

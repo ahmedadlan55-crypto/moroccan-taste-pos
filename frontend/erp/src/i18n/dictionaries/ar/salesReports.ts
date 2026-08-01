@@ -25,6 +25,9 @@ export const salesReports = {
     pickerLabel: "التقرير",
     filtersTitle: "الفلاتر والإعدادات",
     filtersAria: "فلاتر وإعدادات التقرير",
+    settingsAria: "إعدادات التقرير",
+    resultsAria: "نتائج التقرير",
+    updating: "جارٍ تحديث النتائج — الأرقام المعروضة أدناه لا تعكس الفلاتر الجديدة بعد",
   },
 
   report: {
@@ -159,6 +162,13 @@ export const salesReports = {
     lateTx: "أيام قيد الاكتمال: {count}",
     activeFilters: "الفلاتر النشطة",
     clearAll: "مسح الكل",
+    // ── draft → commit (the filter bar edits a draft; «تطبيق» commits it) ──
+    apply: "تطبيق",
+    pendingChanges: "تغييرات غير مطبَّقة",
+    moreFilters: "المزيد من الفلاتر",
+    moreFiltersActive: "فلاتر إضافية نشطة: {count}",
+    lookupFailed: "تعذّر تحميل {name}",
+    lookupRetry: "إعادة المحاولة",
     saveView: "حفظ العرض",
     export: "تصدير",
     print: "طباعة التقرير",

@@ -6,7 +6,7 @@
 // via the shared `menuItemId` codec param; group rows still toggle on click.
 // No chart lives here: reports are decision tables, charts belong on the
 // dashboard.
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, Package, Receipt } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
@@ -24,8 +24,9 @@ import {
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
-import { PivotTable, type PivotMeasure } from "../components/PivotTable";
-import type { FlatPivotRow } from "../lib/pivot";
+import { DataTable } from "@/shared/tables";
+import { ReportTotals } from "../components/ReportTotals";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 
 const SEGMENT = "items";
 const METRICS = ["qty_sold", "gross_product_sales", "net_ex_vat", "item_contribution_pct"] as const;
@@ -78,7 +79,6 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
 /** Merge extra params over the CURRENT search and render a hub segment URL. */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
@@ -94,7 +94,6 @@ export default function Items() {
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
@@ -111,14 +110,19 @@ export default function Items() {
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
 
-  const measures = useMemo<PivotMeasure[]>(
-    () => [
-      { id: "qty_sold", label: t("salesReports.metrics.qty_sold"), format: formatNumber },
-      { id: "gross_product_sales", label: t("salesReports.metrics.gross_product_sales"), format: formatCurrency },
-      { id: "net_ex_vat", label: t("salesReports.metrics.net_ex_vat"), format: formatCurrency },
-      { id: "item_contribution_pct", label: t("salesReports.metrics.item_contribution_pct"), format: fmtPercent },
-    ],
-    [t],
+  // One column per grouping dimension (read from row.labels[i]) then one per
+  // metric — the same flat shape the other thirteen report pages build by
+  // hand. Grouping stays a QUERY control: it decides which columns exist.
+  const columns = useMemo(
+    () =>
+      buildResultColumns({
+        dimensions: [...DIMS],
+        metricIds: [...METRICS],
+        t,
+        registry: registry.data,
+        maskedMetrics: query.data?.meta.maskedMetrics,
+      }),
+    [registry.data, query.data?.meta.maskedMetrics, t],
   );
 
   if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
@@ -137,24 +141,13 @@ export default function Items() {
   }
 
   const rows = query.data?.rows ?? [];
+  const tableRows = toResultRows(rows);
   if (rows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  const onRowClick = (row: FlatPivotRow) => {
-    // Groups toggle; a leaf (menu_item) row drills to the orders segment with
-    // the item pinned via the shared `menuItemId` codec param (wave 4) — the
-    // param rides the composed URL, so it is ONE history push.
-    if (row.isSubtotal) {
-      toggle(row.key);
-      return;
-    }
+  const onRowClick = (row: ResultTableRow) => {
+    // Every row is a leaf now, so a click always drills: the item is pinned via
+    // the shared `menuItemId` codec param (wave 4) and the param rides the
+    // composed URL, so it is ONE history push.
     const itemId = String(row.keys[1] ?? "");
     if (itemId === "") return;
     navigate(segmentHref(location.search, "orders", { menuItemId: itemId }));
@@ -186,15 +179,23 @@ export default function Items() {
         })}
       </div>
 
-      <PivotTable
-        rows={rows}
-        subtotals={query.data?.subtotals}
-        rowDims={[...DIMS]}
-        rowDimLabels={DIMS.map((d) => t(`salesReports.dims.${d}`))}
-        measures={measures}
-        expanded={expanded}
-        onToggle={toggle}
+      {/* Period totals from the server ROLLUP — above the table, never a sum
+          of the rows on screen. */}
+      <ReportTotals
+        totals={query.data?.totals}
+        metricIds={[...METRICS]}
+        registry={registry.data}
+        maskedMetrics={query.data?.meta.maskedMetrics}
+      />
+
+      <DataTable<ResultTableRow>
+        columns={columns}
+        rows={tableRows}
+        getRowId={(r) => r.id}
+        tableId="sales-hub-items"
         onRowClick={onRowClick}
+        emptyTitle={t("salesReports.states.empty")}
+        mobileTitle={(r) => r.labels[0] ?? ""}
       />
     </section>
   );

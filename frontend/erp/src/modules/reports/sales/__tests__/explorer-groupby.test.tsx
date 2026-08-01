@@ -210,14 +210,14 @@ describe("the grand total", () => {
     // The fixture's rows add to 300 while totals say 1000 — the difference a
     // top-N always creates. A footer that summed the visible rows would print
     // 300 under a report whose own KPI card says 1000.
-    const foot = await screen.findByTestId("pivot-grand-total");
+    const foot = await screen.findByTestId("report-totals");
     expect(foot.textContent).toContain("1,000");
     expect(foot.textContent).not.toContain("300");
   });
 
   it("is labelled as a grand total", async () => {
     renderExplorer();
-    const foot = await screen.findByTestId("pivot-grand-total");
+    const foot = await screen.findByTestId("report-totals");
     expect(foot.textContent).toContain("الإجمالي العام");
   });
 });
@@ -262,7 +262,7 @@ describe("regressions the audit caught", () => {
     // and one of only three grouping slots wasted. The old two-Select control
     // could not express this at all, so opening the grouping created it.
     renderExplorer("/reports/sales/explorer?g=branch,business_day");
-    const table = await screen.findByTestId("pivot-table");
+    const table = await screen.findByRole("table");
     const cell = within(table)
       .getAllByRole("row")
       .find((r) => (r.textContent ?? "").includes("الفرع الأول"))!;

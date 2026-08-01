@@ -278,7 +278,7 @@ test.describe("focused flows (desktop)", () => {
     const clickLeaf = async (text: string | RegExp, label: string) => {
       // Leaf rows only — subtotal rows carry data-subtotal (PivotTable.tsx).
       const leaf = page
-        .locator('[data-testid="pivot-table"] tbody tr:not([data-subtotal])')
+        .locator('#main table tbody tr')
         .filter({ hasText: text })
         .first();
       await expect(leaf, `${label}: drillable row must be visible`).toBeVisible({ timeout: 20_000 });

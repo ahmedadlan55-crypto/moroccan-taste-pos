@@ -31,6 +31,7 @@ export const salesReports = {
     title: "تقرير المبيعات",
     print: "طباعة",
     totalRow: "الإجمالي",
+    periodColumn: "الفترة",
     taxableBase: "الوعاء الخاضع",
     share: "النسبة",
     item: "البند",

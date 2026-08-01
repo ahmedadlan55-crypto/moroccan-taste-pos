@@ -17,6 +17,7 @@ export const salesReports = {
     title: "Sales report",
     print: "Print",
     totalRow: "Total",
+    periodColumn: "Period",
     taxableBase: "Taxable base",
     share: "Share",
     item: "Item",

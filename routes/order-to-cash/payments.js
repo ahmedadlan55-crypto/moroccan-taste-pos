@@ -10,6 +10,7 @@ const router = express.Router();
 const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
+const SalesScope = require('../../lib/salesScope');
 const PaymentService = require('../../services/order-to-cash/CustomerPaymentService');
 const events = require('../../lib/order-to-cash/events');
 
@@ -23,19 +24,37 @@ function _ctx(req, extra) {
 
 router.get('/', requireCapability('payments.view'), async (req, res) => {
   try {
-    const out = await PaymentService.list(req.query);
-    return H.sendData(res, out.data, { pagination: out.pagination });
+    // Collections are money received AT a branch. Unscoped, this endpoint listed
+    // every branch's receipts — amounts, methods, cash/bank destinations and the
+    // unapplied balances that reveal who is behind on payment.
+    const scope = await SalesScope.effectiveScope(db, req);
+    const out = await PaymentService.list(Object.assign({}, req.query, { scope }));
+    const page = await SalesScope.filterPage(db, scope, 'customer_payments', out.data);
+    return H.sendData(res, page.rows, {
+      pagination: Object.assign({}, out.pagination, page.dropped ? { scopeFiltered: true } : {}),
+    });
   } catch (e) { return H.sendErr(res, e); }
 });
 
 router.get('/:id', requireCapability('payments.view'), async (req, res) => {
-  try { return H.sendData(res, await db.withTransaction((c) => PaymentService.get(c, req.params.id))); }
-  catch (e) { return H.sendErr(res, e); }
+  try {
+    const scope = await SalesScope.forRequest(db, req);
+    const out = await db.withTransaction((c) => PaymentService.get(c, req.params.id));
+    // 404 rather than 403 — a 403 confirms the receipt exists (see salesScope.js).
+    SalesScope.assertRowInScope(scope, out, 'سند القبض غير موجود');
+    return H.sendData(res, out);
+  } catch (e) { return H.sendErr(res, e); }
 });
 
 router.get('/:id/timeline', requireCapability('payments.view'), async (req, res) => {
-  try { return H.sendData(res, await events.timeline(db, 'customer_payment', req.params.id)); }
-  catch (e) { return H.sendErr(res, e); }
+  try {
+    // The timeline is keyed by id alone, so it never loaded the row and never
+    // saw a branch: it handed out another branch's approval/post/reverse history
+    // — actors, timestamps and GL journal ids — to anyone who could name an id.
+    const scope = await SalesScope.forRequest(db, req);
+    await SalesScope.assertRecordInScope(db, scope, 'customer_payments', req.params.id, 'سند القبض غير موجود');
+    return H.sendData(res, await events.timeline(db, 'customer_payment', req.params.id));
+  } catch (e) { return H.sendErr(res, e); }
 });
 
 router.post('/', requireCapability('payments.create'), async (req, res) => {

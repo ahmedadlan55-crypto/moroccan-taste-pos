@@ -12,18 +12,37 @@ const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
 const events = require('../../lib/order-to-cash/events');
 const Zqr = require('../../lib/zatca-qr-image');
+const SalesScope = require('../../lib/salesScope');
 const InvoiceService = require('../../services/order-to-cash/InvoiceService');
 
 router.get('/', requireCapability('invoices.view'), async (req, res) => {
   try {
-    const out = await InvoiceService.list(req.query);
-    return H.sendData(res, out.data, { pagination: out.pagination });
+    // `invoices.view` says the caller may read invoices; it never said WHOSE.
+    // Without this scope every branch manager could page through every other
+    // branch's AR — customer names, amounts, balances, the lot. The scope is
+    // intersected with any `?branchId=` the caller sent, so asking for a branch
+    // they have no grant for yields an empty set (→ `1=0`), not that branch.
+    const scope = await SalesScope.effectiveScope(db, req);
+    // `scope` is passed down as well as enforced here: the day InvoiceService
+    // .list appends the branch predicate to its own WHERE, this becomes a no-op
+    // rather than a second thing to remember.
+    const out = await InvoiceService.list(Object.assign({}, req.query, { scope }));
+    const page = await SalesScope.filterPage(db, scope, 'ar_documents', out.data);
+    return H.sendData(res, page.rows, {
+      pagination: Object.assign({}, out.pagination, page.dropped ? { scopeFiltered: true } : {}),
+    });
   } catch (e) { return H.sendErr(res, e); }
 });
 
 router.get('/:id', requireCapability('invoices.view'), async (req, res) => {
   try {
+    const scope = await SalesScope.forRequest(db, req);
     const out = await db.withTransaction((c) => InvoiceService.getWithLines(c, req.params.id));
+    // Out-of-scope reads answer 404, not 403: a 403 would confirm the invoice
+    // exists, which is enough to enumerate another branch's document numbering
+    // and trading volume without ever reading a line. Checked before the ZATCA
+    // decode below so nothing about the other branch's seller block is computed.
+    SalesScope.assertRowInScope(scope, out, 'الفاتورة غير موجودة');
     // Print support: the QR image and the frozen seller block both come from
     // the persisted TLV (clients never encode QRs; ar_documents has no seller
     // columns — the stamp is the issue-time truth).

@@ -104,9 +104,17 @@ async function assertNotASidePanel(page: Page) {
     // A drawer/side-panel is an element pinned to one edge and narrower than
     // the viewport. Full-page flows (which this codebase renders Drawer/Dialog
     // as) cover the whole viewport and are fine.
+    //
+    // The app SHELL is excluded deliberately: the sidebar is a fixed, tall,
+    // 288px-wide <aside> and would otherwise be reported as a drawer on every
+    // single page. It is chrome, not document UI — it sits outside #main and is
+    // marked no-print. Without this exclusion the assertion is a false positive
+    // that says nothing about the thing being tested.
     return [...document.querySelectorAll("body *")].filter((el) => {
       const s = getComputedStyle(el);
       if (s.position !== "fixed") return false;
+      if (el.tagName === "ASIDE" || el.closest("aside") || el.getAttribute("role") === "complementary") return false;
+      if (el.classList.contains("no-print")) return false; // shell chrome
       const r = el.getBoundingClientRect();
       if (r.width < 120 || r.height < 200) return false;
       const coversWidth = r.width >= window.innerWidth * 0.95;

@@ -154,7 +154,17 @@ function Section() {
   // document detail is a REAL full page — never a drawer, never a side panel.
   if (route === "/inventory/operations") return <OperationsHubPage />;
   if (route.startsWith("/inventory/operations/")) {
-    const [docType, docId] = route.slice("/inventory/operations/".length).split("/").filter(Boolean);
+    // MATCH on the normalized (lower-cased) route, but read the id from the RAW
+    // pathname. Document ids carry meaningful case — `STK-0a71624b4013` — and
+    // `normalizeRoutePath` lower-cases the whole string. Looking a document up
+    // as `stk-0a71624b4013` happens to work only because MySQL's default
+    // collation is case-insensitive; that is luck, not design, and it breaks the
+    // moment a column uses a binary or `_bin` collation. `documentType` is a
+    // fixed lower-case vocabulary, so taking it from the normalized copy is safe.
+    const rawParts = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+    const opsIndex = rawParts.findIndex((p) => p.toLowerCase() === "operations");
+    const docType = (rawParts[opsIndex + 1] || "").toLowerCase();
+    const docId = rawParts[opsIndex + 2] ? decodeURIComponent(rawParts[opsIndex + 2]) : "";
     if (docType && docId) return <OperationDetailPage documentType={docType} documentId={docId} />;
     return <OperationsPathInvalid />;
   }

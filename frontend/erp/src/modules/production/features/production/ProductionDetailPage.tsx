@@ -363,16 +363,24 @@ export function ProductionDetailPage({ orderId }: { orderId: string }) {
             <div>
               <h3 className="mb-2 text-sm font-extrabold text-slate-800">{t("production.detail.trace.genealogyHeading")}</h3>
               {data.genealogy.length === 0 ? <p className="text-sm text-slate-400">{t("production.detail.trace.noGenealogy")}</p> : (
-                <ul className="space-y-1 text-sm">
-                  {data.genealogy.map((g) => (
-                    <li key={g.id} className="rounded-lg bg-slate-50 px-3 py-2">
-                      <span className="font-bold text-slate-700">{g.componentLotNumber ?? "—"}</span>
-                      <span className="mx-2 text-slate-400">←</span>
-                      <span className="font-bold text-teal-700">{g.outputLotNumber}</span>
-                      <span className="ms-2 text-xs tabular-nums text-slate-500">({formatQty(g.qty)})</span>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  {data.genealogy.some((g) => g.approximate) && (
+                    <p className="mb-2 text-xs text-amber-700">{t("production.detail.trace.approximateGenealogy")}</p>
+                  )}
+                  <ul className="space-y-1 text-sm">
+                    {data.genealogy.map((g) => (
+                      <li key={g.id} className="rounded-lg bg-slate-50 px-3 py-2">
+                        <span className="font-bold text-slate-700">{g.componentLotNumber ?? "—"}</span>
+                        {g.componentName ? <span className="ms-2 text-xs text-slate-500">{g.componentName}</span> : null}
+                        <span className="mx-2 text-slate-400">←</span>
+                        <span className="font-bold text-teal-700">{g.outputLotNumber || "—"}</span>
+                        <span className="ms-2 text-xs tabular-nums text-slate-500">
+                          ({formatQty(g.qty)}{g.approximate ? "≈" : ""})
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
           </div>

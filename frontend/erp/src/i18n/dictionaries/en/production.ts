@@ -360,6 +360,7 @@ export const production = {
       noLotMovements: "No lot movements (no tracked materials in this order).",
       genealogyHeading: "Genealogy (components → product)",
       noGenealogy: "No genealogy links (untracked product or no outputs yet).",
+      approximateGenealogy: "Produced before per-output tracking. The lot links are accurate; the quantity shown against each output lot is approximate (marked ≈).",
       col: {
         lot: "Lot",
         expiry: "Expiry",

@@ -304,14 +304,17 @@ describe("wave-4 drills", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/payments");
   });
 
-  it("Hours: a heat cell click lands on orders with the hour param merged", async () => {
-    renderAt(<Hours />, "/reports/sales/hours?channel=pos");
+  it("Hours: a heat cell click lands on the orders report with the hour param merged", async () => {
+    renderAt(<Hours />, "/reports/sales/operations?view=hours&channel=pos");
     const cell = await screen.findByRole("button", { name: /Mon × 10:00/ });
     fireEvent.click(cell);
+    // The orders report lives in the OPERATIONS centre now, and the drill goes
+    // straight to its canonical URL rather than through the retired path.
     await waitFor(() =>
-      expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/orders"),
+      expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/operations"),
     );
     const probe = screen.getByTestId("location").textContent ?? "";
+    expect(probe).toContain("view=orders");
     expect(probe).toContain("hour=10");
     expect(probe).toContain("channel=pos"); // the current search survived the drill
   });

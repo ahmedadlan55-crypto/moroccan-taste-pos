@@ -257,10 +257,34 @@ async function main() {
   }, actor)), 'OVER_RETURN', 'over-return blocked');
 
   // 8) reports run (ONLY_FULL_GROUP_BY-safe) + reconcile passes
+  //
+  // `scope` is REQUIRED now, and its absence is not a shortcut: the reporting
+  // service fails closed, so calling without one returns an empty report for
+  // every type. This loop kept passing on `Array.isArray(rep.rows)` while
+  // proving nothing — an empty array satisfies it perfectly.
+  //
+  // Passing the global scope restores what the loop was for, and asserting the
+  // documents this test just created are actually IN at least one report is
+  // what makes it a coverage check rather than a smoke test. `data-quality`
+  // and friends can legitimately be empty (they report exceptions), so the
+  // row assertion is on the report that must never be.
+  const REPORT_SCOPE = { all: true };
   for (const t of ['sales-summary', 'sales-by-customer', 'ar-aging', 'open-invoices', 'collections', 'credit-exposure', 'returns', 'zatca-status', 'data-quality']) {
-    const rep = await Reporting.run(t, { from: '2026-01-01', to: '2026-12-31' });
+    const rep = await Reporting.run(t, { from: '2026-01-01', to: '2026-12-31', scope: REPORT_SCOPE });
     ok(rep && Array.isArray(rep.rows), 'report ' + t + ' returns rows');
   }
+  // `sales-summary` returns a FIXED list of {metric, value} lines, so scoping
+  // shows up in the VALUES and never in the row count. Asserting on
+  // `rows.length` here passes identically whether the report leaks every
+  // branch or none — the money is the only thing that moves.
+  const sumOf = (rep) => rep.rows.reduce((s, r) => s + Math.abs(Number(r.value) || 0), 0);
+  const summary = await Reporting.run('sales-summary', { from: '2026-01-01', to: '2026-12-31', scope: REPORT_SCOPE });
+  ok(sumOf(summary) > 0, 'sales-summary reports real figures under a global scope');
+
+  // The mirror: a missing scope must yield NOTHING, not everything. A report
+  // that fails OPEN is the entire defect this scoping work exists to close.
+  const unscoped = await Reporting.run('sales-summary', { from: '2026-01-01', to: '2026-12-31' });
+  ok(sumOf(unscoped) === 0, 'sales-summary with NO scope fails CLOSED — every figure zero, nothing leaked');
   const rec = await Reconcile.run();
   const failed = rec.checks.filter((c) => !c.pass && c.severity === 'error');
   ok(rec.pass, 'reconcile PASS (' + (failed.length ? failed.map((c) => c.name).join(',') : 'all invariants hold') + ')');

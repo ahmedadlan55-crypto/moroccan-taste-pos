@@ -39,8 +39,15 @@ const REGISTRY: AnalyticsRegistry = {
     { id: "menu_item", kind: "attribute", groupable: true, facts: ["line"] },
     { id: "payment_method", kind: "attribute", groupable: true, facts: ["payment"] },
     { id: "meal_period", kind: "derived-js", groupable: true, facts: ["order", "line", "payment"] },
-    // groupable in the contract, backed by no projector
-    { id: "discount_reason", kind: "attribute", groupable: true, facts: [] },
+    // discount_reason IS projector-backed now (analytics_order_facts.discount_reason),
+    // so it is order-fact only — the "no source at all" case below uses ,
+    // which is a CONSTANT in the real registry and supports nothing anywhere.
+    { id: "discount_reason", kind: "attribute", groupable: true, facts: ["order"] },
+    // SYNTHETIC. Since discount_reason gained its projector there is no longer a
+    // groupable-yet-unbacked dimension in the real registry — but the RULE still
+    // has to answer "no source" rather than "your metrics are wrong" if one
+    // reappears, so the branch keeps a fixture of its own.
+    { id: "unbacked_reserved", kind: "attribute", groupable: true, facts: [] },
     // not groupable at all — must never reach a grouping menu
     { id: "vat_rate_filter_only", kind: "attribute", groupable: false, facts: ["line"] },
   ],
@@ -49,7 +56,7 @@ const REGISTRY: AnalyticsRegistry = {
 describe("the groupable menu", () => {
   it("offers every groupable dimension and nothing else", () => {
     const ids = groupableDimensions(REGISTRY).map((d) => d.id);
-    expect(ids).toEqual(["branch", "menu_item", "payment_method", "meal_period", "discount_reason"]);
+    expect(ids).toEqual(["branch", "menu_item", "payment_method", "meal_period", "discount_reason", "unbacked_reserved"]);
   });
 });
 
@@ -79,9 +86,10 @@ describe("a dimension's availability against the chosen metrics", () => {
   });
 
   it("reports a dimension with no fact as MISSING A SOURCE, not as a metric conflict", () => {
-    // discount_reason is reserved in the contract with no projector behind it.
-    // Blaming the user's metric choice would send them changing metrics forever.
-    const v = dimensionAvailability(REGISTRY, ["net_ex_vat"], "discount_reason");
+    //  is a CONSTANT in the real registry: groupable in the contract,
+    // expressible on no fact. Blaming the user's metric choice would send them
+    // changing metrics forever.
+    const v = dimensionAvailability(REGISTRY, ["net_ex_vat"], "company");
     expect(v?.reason).toBe("no-fact");
     expect(v?.blockedBy).toEqual([]);
   });
@@ -103,7 +111,7 @@ describe("the mirror question, for the metric picker", () => {
   });
 
   it("ignores a dimension that has no source — it blocks nothing, it IS blocked", () => {
-    expect(metricConflicts(REGISTRY, ["net_ex_vat"], ["discount_reason"])).toEqual({});
+    expect(metricConflicts(REGISTRY, ["net_ex_vat"], ["unbacked_reserved"])).toEqual({});
   });
 });
 

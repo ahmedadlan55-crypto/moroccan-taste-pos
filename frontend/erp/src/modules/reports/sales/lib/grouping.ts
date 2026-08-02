@@ -87,8 +87,12 @@ export function dimensionAvailability(
 ): Unavailable | null {
   if (!hasFactGraph(registry)) return null;
   const have = new Set(dimensionFacts(registry, dimId));
-  // `discount_reason` is groupable in the contract and backed by no projector.
-  // It must read as "no data source", never as "your metrics are wrong".
+  // A dimension the contract exposes that NOTHING projects must read as "no
+  // data source", never as "your metrics are wrong" — the second sends the
+  // reader changing metrics forever. `discount_reason` used to be the example;
+  // it is projector-backed now (analytics_order_facts.discount_reason), so this
+  // branch is currently defensive, and stays because the contract may reserve
+  // an id again before its projector lands.
   if (have.size === 0) return { reason: "no-fact", blockedBy: [] };
   const blockedBy = metricIds.filter((id) => {
     const need = metricFacts(registry, id);

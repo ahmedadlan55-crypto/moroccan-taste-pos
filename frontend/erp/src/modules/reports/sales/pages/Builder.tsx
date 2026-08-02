@@ -30,7 +30,7 @@ import {
 } from "@/shared/ui";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
-import { analyticsFilterCodec } from "../lib/filters";
+import { analyticsFilterCodec, nonDefaultFilterKeys } from "../lib/filters";
 import {
   buildFiltersBody,
   setPageExportRequest,
@@ -43,6 +43,7 @@ import { ReportTotals } from "../components/ReportTotals";
 import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 import { GroupByControl } from "../components/GroupByControl";
 import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { unsupportedFilterKeysForMetrics } from "../lib/reportRegistry";
 import { useListSeparator } from "../lib/listSeparator";
 import { useReportRailControls } from "../lib/reportRail";
 
@@ -187,6 +188,12 @@ export default function Builder() {
       sublabel,
     };
   });
+
+  /** Shared filters this metric selection cannot express — named, not hidden. */
+  const droppedFilters = unsupportedFilterKeysForMetrics(
+    metricIds,
+    nonDefaultFilterKeys(filters) as string[],
+  );
 
   const body = useMemo<AnalyticsQueryBody>(
     () => ({
@@ -379,11 +386,27 @@ export default function Builder() {
       {/* Config arriving from a saved report or a shared link can be illegal
           against the CURRENT metric set. Say what was adjusted rather than
           running a request that 422s the whole screen. */}
-      {(dropped.length > 0 || Object.keys(contaminated).length > 0 || requestedMetricCount > MAX_METRICS) && (
+      {(dropped.length > 0 ||
+        droppedFilters.length > 0 ||
+        Object.keys(contaminated).length > 0 ||
+        requestedMetricCount > MAX_METRICS) && (
         <div
           data-testid="builder-adjusted-notice"
           className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
         >
+          {/* THE FILTER HALF of the same honesty. The hub clears filters a
+              FIXED report cannot honour; this report's metric set is chosen at
+              runtime, so the drop happens per request inside api.ts and nothing
+              on screen would otherwise say it had. */}
+          {droppedFilters.length > 0 && (
+            <span>
+              {t("salesReports.hub.filtersDropped", {
+                filters: droppedFilters
+                  .map((k) => t(`salesReports.topbar.filterNames.${k}`))
+                  .join(listSeparator),
+              })}
+            </span>
+          )}
           {requestedMetricCount > MAX_METRICS && (
             <span>{t("salesReports.builder.truncated", { count: requestedMetricCount, max: MAX_METRICS })}</span>
           )}

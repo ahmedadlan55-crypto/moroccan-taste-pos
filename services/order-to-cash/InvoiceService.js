@@ -15,6 +15,7 @@ const { err } = require('../../lib/order-to-cash/errors');
 const calc = require('../../lib/order-to-cash/calculations');
 const { nextNumber } = require('../../lib/order-to-cash/numbering');
 const posting = require('../../lib/order-to-cash/posting');
+const SalesScope = require('../../lib/salesScope');
 const { standardVatRate } = require('../../lib/order-to-cash/config');
 const events = require('../../lib/order-to-cash/events');
 const { runTransition } = require('./TransitionExecutor');
@@ -308,28 +309,124 @@ async function getWithLines(conn, id) {
   });
 }
 
-const SORTABLE = { issueDate: 'issue_date', total: 'total_amount', dueDate: 'due_date', status: 'status', number: 'document_number' };
+// Sort keys are qualified: the list joins analytics_order_facts, which carries
+// its own `status`, `customer_id`, `branch_id` and `channel_id`. An unqualified
+// ORDER BY status would be an ambiguous-column error, not a silent wrong sort.
+const SORTABLE = { issueDate: 'd.issue_date', total: 'd.total_amount', dueDate: 'd.due_date', status: 'd.status', number: 'd.document_number' };
 const LIST_STATUSES = ['draft', 'issued', 'partially_paid', 'paid', 'credited', 'closed', 'cancelled'];
+
+/**
+ * THE DATE BASIS OF THIS LIST — read before changing it.
+ *
+ * `ar_documents.issue_date` is the CALENDAR day: linkPosSale sets it to
+ * `calc.ymd(sale.order_date)`, the Riyadh wall-clock date of the sale. The
+ * analytics hub keys EVERYTHING by `business_day`, which is that same local date
+ * minus one when the sale happened before the branch's day_close_time
+ * (lib/analytics/businessDay.js). For a 04:00 close the two disagree on exactly
+ * the 00:00–03:59 trade — the same window the journal-date fix (d4b34e8) was
+ * about. Filtering this list on issue_date while the KPI row above it is
+ * filtered on business_day puts an invoice in the table that the KPI does not
+ * count, and the page shows two different populations of the "same" period.
+ *
+ * So the list filters on `f.business_day` — the hub's own column, read from the
+ * hub's own fact row — and falls back to `d.issue_date` only where there is no
+ * fact row to read. That fallback is not a shortcut: analytics_order_facts is
+ * projected for POS sales and returns only (scripts/analytics/backfill-facts.js
+ * passes A–D), so a manual or contract invoice has no business day anywhere in
+ * the schema and its issue_date IS its trading day. `businessDay=false` (the
+ * hub's own calendar-day toggle) switches both sides to the calendar day.
+ *
+ * The LEFT JOIN never multiplies rows: analytics_order_facts.document_id is the
+ * PRIMARY KEY. The table is created by the idempotent boot migration in
+ * server.js — the same path that creates ar_documents itself.
+ */
+const DAY_BUSINESS = 'COALESCE(f.business_day, d.issue_date)';
+const DAY_CALENDAR = 'd.issue_date';
+const LIST_FROM = 'FROM ar_documents d LEFT JOIN analytics_order_facts f ON f.document_id = d.id';
+
+/**
+ * A bound, or nothing. Anything that is not a real calendar date is DROPPED
+ * rather than bound: `calc.ymd('abc')` happily returns 'abc', and comparing a
+ * DATE column to that makes MySQL's answer depend on its warning mode instead of
+ * on the filter the user asked for. Silently ignoring junk is also what keeps
+ * this endpoint from 422-ing the live Orders page.
+ */
+function _dayBound(value) {
+  const s = calc.ymd(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s + 'T00:00:00Z')) ? s : null;
+}
+
+/** Read a repeated or comma-separated multi-value query param as a list. */
+function _multi(value) {
+  const out = [];
+  const take = (v) => {
+    if (v == null) return;
+    if (Array.isArray(v)) { v.forEach(take); return; }
+    String(v).split(',').forEach((p) => { const s = p.trim(); if (s) out.push(s); });
+  };
+  take(value);
+  return out.filter((v, i) => out.indexOf(v) === i);
+}
 
 async function list(params = {}) {
   const page = Math.max(1, Number(params.page) || 1);
   const pageSize = Math.min(200, Math.max(1, Number(params.pageSize) || 25));
   const offset = (page - 1) * pageSize;
-  const sortCol = SORTABLE[params.sort] || 'issue_date';
+  const sortCol = SORTABLE[params.sort] || 'd.issue_date';
   const dir = String(params.dir).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-  const where = ["document_type <> 'credit_note' OR ? = 1"];
+  const where = ["d.document_type <> 'credit_note' OR ? = 1"];
   const args = [params.includeCreditNotes ? 1 : 0];
-  if (params.status && LIST_STATUSES.includes(params.status)) { where.push('status = ?'); args.push(params.status); }
-  if (params.customerId) { where.push('customer_id = ?'); args.push(String(params.customerId)); }
-  if (params.sourceType) { where.push('source_type = ?'); args.push(String(params.sourceType)); }
-  if (params.q) { where.push('(document_number LIKE ? OR customer_name LIKE ?)'); args.push('%' + params.q + '%', '%' + params.q + '%'); }
+  if (params.status && LIST_STATUSES.includes(params.status)) { where.push('d.status = ?'); args.push(params.status); }
+  if (params.customerId) { where.push('d.customer_id = ?'); args.push(String(params.customerId)); }
+  if (params.sourceType) { where.push('d.source_type = ?'); args.push(String(params.sourceType)); }
+  if (params.q) { where.push('(d.document_number LIKE ? OR d.customer_name LIKE ?)'); args.push('%' + params.q + '%', '%' + params.q + '%'); }
+
+  // Period. The hub page has been sending from/to since it shipped and they
+  // reached nothing, so honouring them is a fix, not a new contract — and an
+  // unknown-parameter 422 here would break that live page on deploy.
+  const dayExpr = String(params.businessDay) === 'false' ? DAY_CALENDAR : DAY_BUSINESS;
+  const dFrom = params.from ? _dayBound(params.from) : null;
+  const dTo = params.to ? _dayBound(params.to) : null;
+  if (dFrom) { where.push(`${dayExpr} >= ?`); args.push(dFrom); }
+  if (dTo) { where.push(`${dayExpr} <= ?`); args.push(dTo); }
+
+  // Channel / order type. ar_documents.channel_id is only written by the manual
+  // invoice path — linkPosSale does not set it — so the POS truth is the fact
+  // row's channel; COALESCE reads whichever one exists. order_type is POS-only
+  // and has no ar_documents column at all, so filtering by it necessarily
+  // excludes manual invoices, which genuinely have no order type.
+  const channels = _multi(params.channels != null ? params.channels : params.channel);
+  if (channels.length) {
+    where.push(`COALESCE(f.channel_id, d.channel_id) IN (${channels.map(() => '?').join(',')})`);
+    channels.forEach((v) => args.push(v));
+  }
+  const orderTypes = _multi(params.orderTypes != null ? params.orderTypes : params.orderType);
+  if (orderTypes.length) {
+    where.push(`f.order_type IN (${orderTypes.map(() => '?').join(',')})`);
+    orderTypes.forEach((v) => args.push(v));
+  }
+
+  // THE BRANCH PREDICATE, IN THE STATEMENT ITSELF.
+  // The router already drops out-of-scope rows from the page it gets back
+  // (lib/salesScope.filterPage), which closed the row leak but left
+  // pagination.total counted over every branch — an inflated total and a page
+  // short by however many rows the router had to remove. Counting and paging
+  // through the same predicate is what makes the total true and the page full;
+  // filterPage then finds nothing left to drop.
+  // `params.scope` has already been intersected with any `?branchId=` the caller
+  // sent, and a missing scope normalizes to zero grants → `1=0` → no rows.
+  const b = SalesScope.branchClause(params.scope, 'd.branch_id');
+  if (b.sql) { where.push(b.sql); b.params.forEach((v) => args.push(v)); }
+
   const whereSql = 'WHERE ' + where.map((w) => '(' + w + ')').join(' AND ');
   const [rows] = await db.query(
-    `SELECT id, document_number, document_type, source_type, customer_id, customer_name, issue_date, due_date,
-            subtotal, vat_amount, total_amount, paid_amount, balance_amount, status, zatca_status, version
-       FROM ar_documents ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+    `SELECT d.id, d.document_number, d.document_type, d.source_type, d.customer_id, d.customer_name,
+            d.issue_date, d.due_date, d.subtotal, d.vat_amount, d.total_amount, d.paid_amount,
+            d.balance_amount, d.status, d.zatca_status, d.version, d.branch_id,
+            COALESCE(f.channel_id, d.channel_id) AS channel, f.order_type, f.business_day
+       ${LIST_FROM} ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
     args.concat([pageSize, offset]));
-  const [cnt] = await db.query(`SELECT COUNT(*) AS total FROM ar_documents ${whereSql}`, args);
+  const [cnt] = await db.query(`SELECT COUNT(*) AS total ${LIST_FROM} ${whereSql}`, args);
   const total = Number(cnt[0].total);
   return { data: rows, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
 }

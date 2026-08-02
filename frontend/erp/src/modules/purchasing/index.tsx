@@ -16,6 +16,7 @@ import {
   OrderDetailPage, ReceiptDetailPage, InvoiceDetailPage, PaymentDetailPage, ReturnDetailPage,
 } from "./features/procurement/DetailPages";
 import { OrderCreatePage } from "./features/procurement/OrderCreatePage";
+import { ReceiveCreatePage, ReceivePickerPage } from "./features/procurement/ReceivePages";
 import { RequisitionsPage } from "./requisitions/RequisitionsPage";
 import { SuppliersList, SupplierDetail } from "@/modules/suppliers";
 
@@ -24,6 +25,8 @@ function Section() {
   const [sp] = useSearchParams();
   const doc = sp.get("doc");
   const isNew = sp.get("new") === "1";
+  // ?po=<id> → the goods-receiving form for that purchase order.
+  const po = sp.get("po");
 
   switch (pathname) {
     case "/purchasing/suppliers":
@@ -33,7 +36,7 @@ function Section() {
     case "/purchasing/orders":
       return isNew ? <OrderCreatePage /> : doc ? <OrderDetailPage /> : <OrdersPage />;
     case "/purchasing/receiving":
-      return doc ? <ReceiptDetailPage /> : <ReceiptsListPage />;
+      return po ? <ReceiveCreatePage /> : isNew ? <ReceivePickerPage /> : doc ? <ReceiptDetailPage /> : <ReceiptsListPage />;
     case "/purchasing/invoices":
       return doc ? <InvoiceDetailPage /> : <InvoicesListPage />;
     case "/purchasing/payments":

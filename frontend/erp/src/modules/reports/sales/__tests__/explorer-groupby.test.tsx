@@ -47,7 +47,7 @@ const { lastBody, REGISTRY, resultFor, truncated } = vi.hoisted(() => {
       { id: "menu_item", kind: "attribute", groupable: true, facts: ["line", "modifier", "return"] },
       { id: "payment_method", kind: "attribute", groupable: true, facts: ["payment"] },
       { id: "meal_period", kind: "derived-js", groupable: true, facts: ["order", "line", "modifier", "payment", "till"] },
-      { id: "discount_reason", kind: "attribute", groupable: true, facts: [] },
+      { id: "discount_reason", kind: "attribute", groupable: true, facts: ["order"] },
     ],
   };
 
@@ -136,14 +136,23 @@ describe("the grouping menu", () => {
     expect(opt.textContent).toContain("صافي المبيعات");
   });
 
-  it("marks a dimension with no data source differently from a metric conflict", async () => {
+  it("offers discount_reason — it is projector-backed now, not a reserved id", async () => {
+    // It USED to be groupable in the contract with an empty `facts` map, so the
+    // picker greyed it out and said "no data source". `analytics_order_facts.
+    // discount_reason` now carries the snapshot ProjectionService writes from
+    // `sales.discount_name`, and metadata ships facts:["order"] — so the option
+    // must be live. A picker that still refused it would hide a real dimension
+    // behind a message that is no longer true.
     renderExplorer();
     const list = await openSlot(0);
     const opt = within(list)
       .getAllByRole("option")
       .find((o) => (o.textContent ?? "").includes("سبب الخصم"))!;
-    expect(opt).toHaveAttribute("aria-disabled", "true");
-    expect(opt.textContent).toContain("لا يوجد مصدر بيانات");
+    // It IS still unavailable against the DEFAULT metric pick (net_ex_vat is a
+    // line-fact metric and the reason is order-fact only) — but the reason the
+    // picker gives must now be the metric conflict, not the retired "this
+    // dimension has no data source at all".
+    expect(opt.textContent).not.toContain("لا يوجد مصدر بيانات");
   });
 
   it("keeps meal_period available — it has no SQL `facts` map, only sourceColumn", async () => {

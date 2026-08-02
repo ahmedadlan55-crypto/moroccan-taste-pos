@@ -31,6 +31,7 @@ import {
   analyticsFilterCodec,
   csvParam,
   makeCodec,
+  nonDefaultFilterKeys,
   stringParam,
   type AnalyticsFilters,
 } from "../lib/filters";
@@ -49,6 +50,7 @@ import { ReportTotals } from "../components/ReportTotals";
 import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 import { GroupByControl, MAX_GROUP_DIMS } from "../components/GroupByControl";
 import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { hubHref, unsupportedFilterKeysForMetrics } from "../lib/reportRegistry";
 import { useListSeparator } from "../lib/listSeparator";
 
 const SEGMENT = "explorer";
@@ -132,13 +134,7 @@ function CompletenessNotice({ meta }: { meta?: AnalyticsResult["meta"] }) {
  * is one a user cannot read.
  */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) {
-    if (v === "") sp.delete(k);
-    else sp.set(k, v);
-  }
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
 const fmtPercent = (v: number) => `${formatNumber(v)}%`;
@@ -392,6 +388,30 @@ export default function Explorer() {
     </div>
   );
 
+  // THE SAME HONESTY, FOR FILTERS. The hub clears filters a FIXED report cannot
+  // honour, but this report's metric set is chosen at runtime — so the drop
+  // happens per request, inside api.ts, where nothing on screen would say it
+  // had. A branch filter that silently stops applying the moment you add a
+  // till-fact metric is the invisible wrong number all over again.
+  const droppedFilters = unsupportedFilterKeysForMetrics(
+    metricIds,
+    nonDefaultFilterKeys(filters) as string[],
+  );
+  const droppedFiltersNotice = droppedFilters.length > 0 && (
+    <div
+      data-testid="explorer-dropped-filters-notice"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    >
+      <span>
+        {t("salesReports.hub.filtersDropped", {
+          filters: droppedFilters
+            .map((k) => t(`salesReports.topbar.filterNames.${k}`))
+            .join(listSeparator),
+        })}
+      </span>
+    </div>
+  );
+
   const droppedNotice = dropped.length > 0 && (
     <div
       data-testid="grouping-dropped-notice"
@@ -467,6 +487,7 @@ export default function Explorer() {
         {truncatedNotice}
       {contaminatedNotice}
       {droppedNotice}
+      {droppedFiltersNotice}
         {controls}
         <EmptyState title={t("salesReports.states.empty")} />
       </section>
@@ -481,6 +502,7 @@ export default function Explorer() {
       {truncatedNotice}
       {contaminatedNotice}
       {droppedNotice}
+      {droppedFiltersNotice}
       {controls}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="kpi-row">

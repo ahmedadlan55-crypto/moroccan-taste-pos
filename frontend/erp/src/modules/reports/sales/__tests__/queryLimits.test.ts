@@ -1,6 +1,6 @@
 /**
  * A report body that omits `limit` is silently capped at 50 rows by the server
- * (lib/analytics/planner.js:58 DEFAULT_LIMIT), and nothing on screen says so.
+ * (lib/analytics/planner.js DEFAULT_LIMIT), and nothing on screen says so.
  *
  * That is not a cosmetic cap. Two places where it changed what the owner could
  * see, both found by auditing the request bodies rather than the screens:
@@ -15,65 +15,58 @@
  *    the same report is complete: ExportService overrides the limit to
  *    MAX_LIMIT, so the screen and the file disagreed.
  *
- * These pin the explicit limits. They read the request bodies the pages build,
- * because that is where the defect lives — a rendering test would have passed
- * throughout.
+ * WHY THIS FILE NO LONGER SCRAPES THE PAGE SOURCE
+ *   The limits moved into lib/reportRegistry with the rest of each request, so
+ *   these read the RESOLVED spec — the actual object the page spreads into its
+ *   query body. That is the value the defect lives in; a regex over the source
+ *   could only ever see a literal, and would go green the day a page computed
+ *   the number instead of writing it.
  */
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
+import { reportQuerySpec } from "../lib/api";
+import { createAnalyticsFilterCodec } from "../lib/filters";
+import { LIMITS } from "../lib/contract";
+import { REPORTS } from "../lib/reportRegistry";
 
-const PAGES = path.resolve(__dirname, "../pages");
-
-function source(file: string): string {
-  return fs.readFileSync(path.join(PAGES, file), "utf8");
-}
-
-/** The body literal a page assigns to `<name>: AnalyticsQueryBody = { … }`. */
-function bodyLiteral(src: string, name: string): string {
-  const start = src.indexOf(`const ${name}: AnalyticsQueryBody = {`);
-  expect(start, `${name} not found — was it renamed?`).toBeGreaterThan(-1);
-  // Balance braces from the opening one so nested objects/arrays are included.
-  const open = src.indexOf("{", start);
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") {
-      depth--;
-      if (depth === 0) return src.slice(open, i + 1);
-    }
-  }
-  throw new Error(`unbalanced literal for ${name}`);
-}
-
-function limitOf(literal: string): number | null {
-  const m = /\blimit:\s*(\d+)/.exec(literal);
-  return m ? Number(m[1]) : null;
-}
+const FILTERS = createAnalyticsFilterCodec("2026-07-29").parse(
+  new URLSearchParams("preset=custom&from=2026-05-01&to=2026-07-31"),
+);
 
 describe("the peak map asks for every weekday", () => {
-  const literal = bodyLiteral(source("Hours.tsx"), "heatBody");
+  const spec = reportQuerySpec("hours", "heatmap", FILTERS);
 
   it("groups by weekday × hour", () => {
-    expect(literal).toContain('"weekday"');
-    expect(literal).toContain('"hour"');
+    expect(spec.dimensions).toEqual(["weekday", "hour"]);
   });
 
   it("carries a limit that covers all 168 cells", () => {
-    const limit = limitOf(literal);
-    expect(limit, "no explicit limit ⇒ the server caps at 50 and the weekend disappears").not.toBeNull();
-    expect(limit!).toBeGreaterThanOrEqual(7 * 24);
+    expect(
+      spec.limit,
+      "no explicit limit ⇒ the server caps at 50 and the weekend disappears",
+    ).not.toBeUndefined();
+    expect(spec.limit!).toBeGreaterThanOrEqual(7 * 24);
   });
 });
 
 describe("the executive daily detail can foot to the statement above it", () => {
-  const literal = bodyLiteral(source("Executive.tsx"), "byDayBody");
+  const spec = reportQuerySpec("executive", "daily", FILTERS);
 
   it("carries an explicit limit, not the server default", () => {
-    expect(limitOf(literal), "no explicit limit ⇒ 50 rows under a whole-period total").not.toBeNull();
+    expect(spec.limit, "no explicit limit ⇒ 50 rows under a whole-period total").not.toBeUndefined();
   });
 
   it("reaches the planner's own maximum, since a range may run to 400 days", () => {
-    expect(limitOf(literal)!).toBeGreaterThanOrEqual(500);
+    expect(spec.limit!).toBeGreaterThanOrEqual(LIMITS.MAX_LIMIT);
+  });
+});
+
+describe("no declared query can exceed the planner's own page cap", () => {
+  it("every limit in the registry is within MAX_LIMIT", () => {
+    for (const report of REPORTS) {
+      for (const q of report.queries) {
+        if (q.limit == null) continue;
+        expect(q.limit, `${report.id}/${q.id}`).toBeLessThanOrEqual(LIMITS.MAX_LIMIT);
+      }
+    }
   });
 });

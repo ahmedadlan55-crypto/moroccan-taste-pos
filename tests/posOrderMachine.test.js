@@ -41,17 +41,25 @@ console.log('\n═══ posOrderMachine — cart math (TAX-EXCLUSIVE items) ═
 // machine hardcoded the inclusive formula, froze totalFinal at the NET amount,
 // and routes/sales.js then rejected the sale for not matching its own
 // net × 1.15. The owner's example is the first assertion.
+// v8.2 — the customer-facing UNIT price snaps to a whole riyal. This used to
+// assert 16 → 2.40 → 18.40, which is exactly what the owner rejected: he sells
+// at whole riyals and the till printed halalas on every standard-rated row.
+// net/vat are now derived FROM the rounded gross, so the invariant below still
+// holds exactly — that is what the sale journal and ZATCA require.
 t = M.lineTotals({ qty: 1, unitPrice: 16, vatCategory: 'S', taxInclusive: false });
-check('the owner\'s case — 16.00 net → vat 2.40, customer pays 18.40',
-  near(t.net, 16) && near(t.vat, 2.4) && near(t.gross, 18.4), t);
+check('the owner\'s case — 16.00 net rings up as a whole 18',
+  near(t.gross, 18) && near(t.net, 15.65) && near(t.vat, 2.35), t);
 check('net + vat === gross exactly', near(t.net + t.vat, t.gross), t);
+// Rounded per UNIT, so a quoted "18 each" really does cost 36 for two.
+t = M.lineTotals({ qty: 2, unitPrice: 16, vatCategory: 'S', taxInclusive: false });
+check('the whole unit price multiplies cleanly — 2 × 18 = 36', near(t.gross, 36), t);
 t = M.lineTotals({ qty: 2, unitPrice: 20, vatCategory: 'S', taxInclusive: false });
 check('2 × 20 net → 40.00 + 6.00 = 46.00', near(t.net, 40) && near(t.vat, 6) && near(t.gross, 46), t);
 t = M.lineTotals({ qty: 3, unitPrice: 10, vatCategory: 'Z', taxInclusive: false });
 check('zero-rated exclusive line adds NO vat', near(t.gross, 30) && t.vat === 0, t);
 // An ABSENT flag must behave like the DB does today, not like the old default.
 t = M.lineTotals({ qty: 1, unitPrice: 16, vatCategory: 'S' });
-check('absent flag → EXCLUSIVE (matches every current menu row)', near(t.gross, 18.4), t);
+check('absent flag → EXCLUSIVE (matches every current menu row)', near(t.gross, 18), t);
 // The flag has to actually change the money, or the bug is back.
 check('inclusive and exclusive differ for the same price',
   !near(M.lineTotals({ qty: 1, unitPrice: 16, vatCategory: 'S', taxInclusive: true }).gross,

@@ -17,7 +17,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -33,19 +33,9 @@ const SEGMENT = "modifiers";
 // on every load). So: the ratios render as OVERALL KPIs (dimensionless — both
 // facts can compute grand totals), and the per-kind breakdown carries the
 // modifier-fact-only measures (qty + lines).
-const KPI_METRICS = ["modifier_qty", "modifiers_per_item", "attach_rate"] as const;
-const KIND_METRICS = ["modifier_qty", "modifier_lines"] as const;
-/** The one modifier dimension in the registry: modifier_kind (m.kind). */
-const DIMS = ["modifier_kind"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-// The per-kind breakdown is the exportable grain: the KPI ratios are
-// cross-fact and dimensionless (see KIND_METRICS note above).
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...KIND_METRICS],
-  dimensions: [...DIMS],
-  sort: [{ by: "modifier_qty", dir: "desc" }],
-}));
+// Both queries live in lib/reportRegistry as `kpis` and `byKind`; the
+// ExportMenu reads `byKind` from the same place, because the per-kind breakdown
+// is the exportable grain (the KPI ratios are cross-fact and dimensionless).
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -103,16 +93,16 @@ export default function Modifiers() {
 
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
+  const kpiSpec = reportQuerySpec(SEGMENT, "kpis", filters);
+  const kindSpec = reportQuerySpec(SEGMENT, "byKind", filters);
   const kpiBody: AnalyticsQueryBody = {
     ...base,
-    metrics: [...KPI_METRICS],
-    dimensions: [],
+    ...kpiSpec,
     ...(compare ? { compare } : {}),
   };
   const kindBody: AnalyticsQueryBody = {
     ...base,
-    metrics: [...KIND_METRICS],
-    dimensions: [...DIMS],
+    ...kindSpec,
     sort: [{ by: "modifier_qty", dir: "desc" }],
     ...(compare ? { compare } : {}),
   };

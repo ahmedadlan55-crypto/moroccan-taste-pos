@@ -22,75 +22,81 @@
  * once by a regrouping that was otherwise correct, and caught only by an
  * adversarial reviewer reading the emitted SQL.
  *
- * So the rule is pinned structurally instead of trusted.
+ * WHY THIS FILE NO LONGER READS Executive.tsx AS TEXT
+ *   The metric groups moved into lib/reportRegistry, which is where every
+ *   report's requests are now declared. Reading the declaration is strictly
+ *   stronger than scraping a source literal: it holds for EVERY report, not
+ *   just the executive one, and it cannot be fooled by a page that computes its
+ *   metric list instead of writing it out. The set of void-lifting metrics
+ *   likewise comes from lib/contract (mirrored from the server and proven
+ *   equal to it in contract.test.ts) rather than from a hardcoded pair.
  */
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-
-const EXECUTIVE = path.resolve(__dirname, "../pages/Executive.tsx");
-
-/** Metrics whose SQL tests `status = 'voided'` — they lift the exclusion. */
-const VOID_METRICS = ["voids_count", "voids_value"];
+import { LIMITS, METRIC_FACTS, VOID_LIFTING_METRICS } from "../lib/contract";
+import { REPORTS, REPORT_BY_ID, type ReportSpec } from "../lib/reportRegistry";
 
 /**
  * Metrics counted over the ORDER population. If the exclusion is lifted, every
- * one of these silently starts counting voided orders.
- * `avg_ticket` / `avg_items_per_order` are derived from `orders`, so they
- * inherit the denominator and are listed too.
+ * one of these silently starts counting voided orders. Derived, not listed: any
+ * non-void metric whose facts include `order` shares the contaminated
+ * statement — which is exactly the planner's own condition.
  */
-const ORDER_POPULATION = [
-  "orders",
-  "avg_ticket",
-  "avg_items_per_order",
-  "guests",
-  "fees_total",
-  "rounding_total",
-  "returns_count",
-];
-
-/** The string array literal assigned to `const <name> = [ … ]`. */
-function metricGroup(src: string, name: string): string[] {
-  const start = src.indexOf(`const ${name} = [`);
-  expect(start, `${name} not found — was it renamed?`).toBeGreaterThan(-1);
-  const open = src.indexOf("[", start);
-  const close = src.indexOf("]", open);
-  return [...src.slice(open, close).matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+function orderPopulationMetrics(metrics: readonly string[]): string[] {
+  return metrics.filter(
+    (m) => !VOID_LIFTING_METRICS.includes(m) && (METRIC_FACTS[m] ?? []).includes("order"),
+  );
 }
 
-describe("the executive statement's request groups", () => {
-  const src = fs.readFileSync(EXECUTIVE, "utf8");
-  const groups = ["SUMMARY_METRICS_A", "SUMMARY_METRICS_B", "SUMMARY_METRICS_C"].map((name) => ({
-    name,
-    metrics: metricGroup(src, name),
-  }));
+const ANALYTICS_REPORTS = REPORTS.filter((r) => r.engine === "analytics" && !r.dynamic);
 
-  it("each stays within the planner's 12-metric ceiling", () => {
-    for (const g of groups) {
-      expect(g.metrics.length, `${g.name} exceeds MAX_METRICS`).toBeLessThanOrEqual(12);
+describe("every declared request stays inside the planner's ceiling", () => {
+  it.each(ANALYTICS_REPORTS.map((r) => [r.id, r] as const))("%s", (_id, report: ReportSpec) => {
+    for (const q of report.queries) {
+      const all = [...q.metrics, ...(q.capMetrics ?? [])];
+      expect(all.length, `${report.id}/${q.id} exceeds MAX_METRICS`).toBeLessThanOrEqual(
+        LIMITS.MAX_METRICS,
+      );
     }
   });
+});
 
-  it("never puts a void metric beside an order-population metric", () => {
-    for (const g of groups) {
-      const voids = g.metrics.filter((m) => VOID_METRICS.includes(m));
-      if (voids.length === 0) continue;
-      const contaminated = g.metrics.filter((m) => ORDER_POPULATION.includes(m));
-      expect(
-        contaminated,
-        `${g.name} asks for ${voids.join("+")} beside ${contaminated.join(", ")} — ` +
-          "the planner will drop the void exclusion for those too (planner.js:356)",
-      ).toEqual([]);
+describe("no request mixes a void metric with the order population", () => {
+  it("across EVERY report, not just the executive statement", () => {
+    const violations: string[] = [];
+    for (const report of ANALYTICS_REPORTS) {
+      for (const q of report.queries) {
+        const all = [...q.metrics, ...(q.capMetrics ?? [])];
+        const voids = all.filter((m) => VOID_LIFTING_METRICS.includes(m));
+        if (voids.length === 0) continue;
+        const contaminated = orderPopulationMetrics(all);
+        if (contaminated.length > 0) {
+          violations.push(
+            `${report.id}/${q.id} asks for ${voids.join("+")} beside ${contaminated.join(", ")} — ` +
+              "the planner will drop the void exclusion for those too (planner.js:356)",
+          );
+        }
+      }
     }
+    expect(violations).toEqual([]);
+  });
+});
+
+describe("the guard is not met by simply dropping the figures", () => {
+  const executive = REPORT_BY_ID.executive;
+  const allExecutive = executive.queries.flatMap((q) => [...q.metrics, ...(q.capMetrics ?? [])]);
+
+  it("the executive statement still asks for the void figures somewhere", () => {
+    for (const m of ["voids_count", "voids_value"]) expect(allExecutive).toContain(m);
   });
 
-  it("still asks for the void figures somewhere — the guard must not be met by dropping them", () => {
-    const all = groups.flatMap((g) => g.metrics);
-    for (const m of VOID_METRICS) expect(all).toContain(m);
+  it("…and still asks for the order figures somewhere", () => {
+    for (const m of ["orders", "avg_ticket"]) expect(allExecutive).toContain(m);
   });
 
-  it("still asks for the order figures somewhere", () => {
-    const all = groups.flatMap((g) => g.metrics);
-    for (const m of ["orders", "avg_ticket"]) expect(all).toContain(m);
+  it("the voids report still carries both counts and values", () => {
+    const voids = REPORT_BY_ID.voids.queries.flatMap((q) => q.metrics);
+    for (const m of ["voids_count", "voids_value", "returns_count", "returns_value"]) {
+      expect(voids).toContain(m);
+    }
   });
 });

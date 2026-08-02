@@ -9,16 +9,32 @@
  * POST /api/analytics/query with wall-clock timing.
  *
  * MEASUREMENT CONTRACT (decided + documented):
- *   Each query runs FOUR times —
+ *   Each query runs in FOUR phases —
  *     1. untimed warm-up with noCache:true   (JIT + buffer-pool warm)
  *     2. MEASURED COLD with noCache:true     ← the asserted number (pure SQL
  *        path; QueryService's 60s memo is bypassed on read AND write)
  *     3. untimed cache-populate (no noCache)
  *     4. MEASURED WARM (no noCache — served from the in-memory memo)
+ *   Phases 2 and 4 are sampled REPEATS times and the MEDIAN is what is
+ *   asserted and reported. Same protocol as before, sampled instead of
+ *   guessed: a single wall-clock sample on a machine that is also running
+ *   MySQL is noise, and a budget decided by noise is a budget that will flap
+ *   in the gate. min/max ride along in the report so the spread is visible.
  *   The assertion is on COLD: rollout decisions need the SQL truth, not the
  *   memo. WARM is reported alongside so the memo's benefit is visible.
- *   Limits: COMMON < 2000ms, COMPLEX < 5000ms (cold).
+ *   Limits: COMMON < 2000ms, COMPLEX < 5000ms (cold), WARM < 250ms.
  *
+ * TWO IDENTITIES. Most scenarios run as `admin` — global scope, every
+ *   capability, no scope clause. One runs as the sandbox's `perf_manager`
+ *   (seed-perf.js): role `manager` holds analytics.view but NOT
+ *   analytics.cost.view, and its warehouse grants cover every seeded branch. It
+ *   is the only way to measure a capability-MASKED, branch-SCOPED request at
+ *   full volume — an admin token can never mask anything
+ *   (lib/warehouseScope.isGlobalScope → scope.loadCaps returns the full set).
+ *   That scenario ASSERTS meta.maskedMetrics: a masked request that silently
+ *   stopped masking would otherwise pass while measuring the wrong plan.
+ *
+
  * ROUTING HONESTY: meta.freshness.source is captured per query. In this wave
  * lib/analytics/freshness.js hard-codes source:'live' (rollup ROUTING is a
  * later wave — the rollup TABLES exist and are populated); the harness
@@ -27,10 +43,19 @@
  * rather than "the SQL is slow".
  *
  * EXPLAIN ASSERTIONS (run via mysql2 directly, EXPLAIN FORMAT=JSON):
- *   A. For 3 representative rollup-eligible queries the LIVE plan (built with
- *      lib/analytics/planner.js, global scope) must NOT full-scan any fact
- *      table — fails on e.g. "table_name":"analytics_order_facts" with
- *      "access_type":"ALL".
+ *   A. EVERY scenario's LIVE plan (built with lib/analytics/planner.js, under
+ *      that scenario's own scope) must NOT full-scan a fact table — fails on
+ *      e.g. "table_name":"analytics_order_facts" with "access_type":"ALL".
+ *      Checking only a hand-picked few let an unindexed date basis or an
+ *      unindexed returns path through unmeasured, which is precisely the class
+ *      of defect this assertion exists to catch.
+ *      A scan that is genuinely CORRECT is allowed only by an explicit
+ *      EXPLAIN_ALLOWLIST entry naming the scenario, the table and the reason —
+ *      never by relaxing the rule. (A range covering ~three quarters of the
+ *      table is the honest case: an index range scan over almost every row,
+ *      with a random-order row lookup per hit, is strictly worse than reading
+ *      the table once, and MySQL choosing the scan there is the optimizer being
+ *      right.)
  *   B. The equivalent rollup-table reads (analytics_daily_branch /
  *      analytics_daily_payment / analytics_hourly_branch) must use their PK
  *      (access_type range on the business_day prefix, never ALL) — proving
@@ -75,6 +100,21 @@ if (!process.env.JWT_SECRET) fail('JWT_SECRET missing from the environment (.env
 
 const COMMON_LIMIT_MS = 2000;
 const COMPLEX_LIMIT_MS = 5000;
+// The memo is an in-process Map lookup plus JSON transport; anything slower
+// means the request did NOT hit it (a cache key that varies per call, say).
+const WARM_LIMIT_MS = 250;
+
+// Username of the non-global identity seed-perf.js provisions. See the
+// TWO IDENTITIES note above.
+const PERF_USER = 'perf_manager';
+
+// Samples per measured phase. 3 is the smallest count with a meaningful
+// median; --repeats raises it when a number is being argued about.
+const REPEATS = Math.max(1, Number(flag('repeats', 3)) | 0);
+function median(xs) {
+  const s = xs.slice().sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+}
 
 // ── date helpers (string math, mirrors seed-perf.js) ─────────────────────────
 function addDays(iso, n) {
@@ -126,10 +166,39 @@ async function explainJson(conn, sql, params) {
   return collectTables(JSON.parse(String(raw)), []);
 }
 
-const FACT_TABLES = new Set([
-  'analytics_order_facts', 'ar_document_lines', 'analytics_payment_facts',
-  'analytics_till_facts', 'analytics_modifier_facts',
-]);
+/*
+ * EXPLAIN FORMAT=JSON reports `table_name` as the ALIAS whenever the query
+ * aliases the table — and EVERY fact's FROM clause aliases every table it
+ * touches (registry/facts.js: `FROM analytics_order_facts f JOIN ar_documents
+ * doc …`). So the old hard-coded FACT_TABLES set, matched against table_name,
+ * compared "analytics_order_facts" to "f" and never matched: the "no full scan
+ * of a fact table" assertion has been structurally incapable of failing. It
+ * printed `f:ALL` on its own console line and reported ALL PASS underneath.
+ *
+ * Both halves are now derived from the registry's own FROM strings, so the
+ * alias map and the table set cannot drift from the facts — and a fact added
+ * later (a rollup fact, say) is covered the moment it is registered.
+ */
+const { FACTS } = require('../../lib/analytics/registry/facts');
+const ALIAS_TO_TABLE = (() => {
+  const map = new Map();
+  for (const f of Object.values(FACTS)) {
+    const re = /(?:FROM|JOIN)\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)/g;
+    let hit;
+    while ((hit = re.exec(String(f.from || '')))) map.set(hit[2], hit[1]);
+  }
+  return map;
+})();
+/** alias (or a bare table name) → the real table it refers to. */
+const resolveTable = (name) => ALIAS_TO_TABLE.get(String(name)) || String(name);
+const FACT_TABLES = new Set(ALIAS_TO_TABLE.values());
+
+/**
+ * Scans that are the optimizer being RIGHT, not an index being missing.
+ * { scenario: <exact name>, table, reason }. Anything not listed here fails.
+ * A reason is mandatory — an allowlist without one is just a disabled check.
+ */
+const EXPLAIN_ALLOWLIST = [];
 
 // ── main ─────────────────────────────────────────────────────────────────────
 (async () => {
@@ -178,6 +247,38 @@ const FACT_TABLES = new Set([
       { id: 1, username: 'admin', role: 'admin', tokenVersion: 1 },
       process.env.JWT_SECRET, { expiresIn: '2h' });
 
+    // ── the second identity (masked + branch-scoped) ─────────────────────────
+    // Resolved through the REAL resolver, against the REAL sandbox rows, then
+    // asserted. A masked scenario whose user turned out to be global (nothing
+    // masked) or grant-less (planner emits 1=0 → every number a fabricated
+    // zero) would still return 200 quickly and would be pure theatre.
+    const scopeLib = require('../../lib/analytics/scope');
+    const [[pu]] = await raw.query(
+      'SELECT id, username, role FROM users WHERE username = ? LIMIT 1', [PERF_USER]);
+    if (!pu) fail(`sandbox has no "${PERF_USER}" user — re-run seed-perf.js (it provisions the non-global identity the masked scenario needs).`);
+    const perfUser = { id: pu.id, username: pu.username, role: pu.role };
+    const mgrScope = await scopeLib.resolveScope(raw, perfUser);
+    if (mgrScope.all) fail(`"${PERF_USER}" resolves to GLOBAL scope (role=${pu.role}) — nothing can mask, the scenario would measure the admin plan.`);
+    if (!mgrScope.branchIds.length) fail(`"${PERF_USER}" has ZERO branch grants — the planner would emit 1=0 and every measured number would be a fabricated zero.`);
+    if (mgrScope.caps.has('analytics.cost.view')) fail(`"${PERF_USER}" HAS analytics.cost.view — the masked scenario would mask nothing.`);
+    const scopedMgr = jwt.sign(
+      { id: perfUser.id, username: perfUser.username, role: perfUser.role, tokenVersion: 1 },
+      process.env.JWT_SECRET, { expiresIn: '2h' });
+    console.log(`[perf-check] second identity: ${perfUser.username} (role=${perfUser.role}) → ` +
+      `${mgrScope.branchIds.length} branches, ${mgrScope.caps.size} caps, no analytics.cost.view`);
+
+    // Branch/channel ids for the drill-down filters, read from the sandbox so
+    // the filter matches real rows instead of a guessed literal.
+    const [brRows] = await raw.query(
+      'SELECT branch_id FROM analytics_order_facts GROUP BY branch_id ORDER BY branch_id LIMIT 4');
+    const FILTER_BRANCHES = brRows.map((r) => String(r.branch_id));
+    const [chRows] = await raw.query(
+      'SELECT channel_id FROM analytics_order_facts WHERE channel_id IS NOT NULL GROUP BY channel_id ORDER BY channel_id LIMIT 2');
+    const FILTER_CHANNELS = chRows.map((r) => String(r.channel_id));
+    if (FILTER_BRANCHES.length < 2 || !FILTER_CHANNELS.length) {
+      fail('sandbox has too few branches/channels to pin a drill-down filter against.');
+    }
+
     // ── the canonical suite ──────────────────────────────────────────────────
     const D7 = R(7), D30 = R(30), D60 = R(60), D90 = R(90);
     const QUERIES = [
@@ -216,35 +317,103 @@ const FACT_TABLES = new Set([
         dimensions: ['cashier', 'business_day'], range: D60, limit: 500 } },
       { name: 'method×day×branch 60d', limit: COMPLEX_LIMIT_MS, body: {
         metrics: ['payments_in', 'refunds_out'], dimensions: ['payment_method', 'business_day', 'branch'], range: D60, limit: 500 } },
+
+      // ── W6 additions: the shapes the suite above never covered ─────────────
+      // Sales BY DAY on its own. "daily net by branch" measures branch×day, and
+      // "discounts by day" measures a discount column — neither exercises the
+      // plain one-dimension sales trend, which is the single most-opened report.
+      { name: 'sales by day 30d', limit: COMMON_LIMIT_MS, body: {
+        metrics: ['net_ex_vat', 'gross_product_sales', 'orders', 'avg_ticket'],
+        dimensions: ['business_day'], range: D30, limit: 40 } },
+      // Sales BY BRANCH with no compare — "branch compare prevPeriod" plans two
+      // windows, so it could never show what one window costs.
+      { name: 'sales by branch 30d', limit: COMMON_LIMIT_MS, body: {
+        metrics: ['net_ex_vat', 'orders', 'guests', 'avg_ticket'], dimensions: ['branch'], range: D30 } },
+      // Returns + voids together: two facts (return + order), and the ONLY
+      // shape where the planner keeps voided rows in (a voids_* metric on the
+      // statement suppresses the excluded_voided default — planner.js).
+      { name: 'returns & voids by branch 90d', limit: COMMON_LIMIT_MS, body: {
+        metrics: ['returns_value', 'returns_net', 'returns_count', 'qty_returned', 'voids_count', 'voids_value'],
+        dimensions: ['branch'], range: D90 } },
+      // A filtered drill-down: three pinned filters + an item grouping. Every
+      // metric here is line-fact on purpose — `orders` is order-fact and
+      // menu_item does not exist there, which the planner rejects as
+      // ANALYTICS_UNSUPPORTED_COMBINATION rather than silently mis-joining.
+      { name: 'drill-down items, 3 filters pinned 30d', limit: COMMON_LIMIT_MS, body: {
+        metrics: ['net_ex_vat', 'qty_sold', 'gross_product_sales', 'discounts_line'],
+        dimensions: ['menu_item'], range: D30,
+        filters: [
+          { dimension: 'branch', op: 'in', values: FILTER_BRANCHES },
+          { dimension: 'channel', op: 'in', values: FILTER_CHANNELS },
+          { dimension: 'order_type', op: 'eq', value: 'dine_in' },
+        ],
+        sort: [{ by: 'net_ex_vat', dir: 'desc' }], limit: 50 } },
+      // Capability-masked AND branch-scoped — runs as perf_manager, and asserts
+      // that the cost metrics actually came back masked.
+      { name: 'masked cost metrics, scoped manager 30d', limit: COMMON_LIMIT_MS,
+        as: 'manager', expectMasked: ['cogs', 'gross_profit', 'margin_pct'], body: {
+          metrics: ['net_ex_vat', 'orders', 'avg_ticket', 'cogs', 'gross_profit', 'margin_pct'],
+          dimensions: ['branch'], range: D30 } },
+      // Taxes by category × rate: STORED vat columns only, across the line fact
+      // AND the return fact (net_vat = vat_amount − returns_vat is the only
+      // figure a VAT return can actually be filed on).
+      { name: 'taxes by vat category×rate 90d', limit: COMPLEX_LIMIT_MS, body: {
+        metrics: ['net_ex_vat', 'vat_amount', 'returns_net', 'returns_vat', 'net_vat'],
+        dimensions: ['vat_category', 'vat_rate'], range: D90, limit: 100 } },
+      // The widest window the planner will accept (MAX_RANGE_DAYS = 400).
+      { name: 'full-window 400d branch×day', limit: COMPLEX_LIMIT_MS, body: {
+        metrics: ['net_ex_vat', 'orders', 'invoice_total', 'gross_product_sales'],
+        dimensions: ['branch', 'business_day'], range: R(400), limit: 500 } },
     ];
 
-    const timedCall = async (body) => {
+    const timedCall = async (body, tok) => {
       const t0 = process.hrtime.bigint();
-      const r = await call(port, 'POST', '/api/analytics/query', admin, body);
+      const r = await call(port, 'POST', '/api/analytics/query', tok || admin, body);
       const ms = Number(process.hrtime.bigint() - t0) / 1e6;
       return { ms, r };
     };
 
     const results = [];
     for (const q of QUERIES) {
+      const tok = q.as === 'manager' ? scopedMgr : admin;
       const cold = Object.assign({}, q.body, { noCache: true });
-      await timedCall(cold);                               // 1. warm-up (untimed)
-      const { ms: coldMs, r: coldR } = await timedCall(cold); // 2. MEASURED COLD
-      await timedCall(q.body);                             // 3. cache populate
-      const { ms: warmMs, r: warmR } = await timedCall(q.body); // 4. MEASURED WARM
-      const okShape = coldR.status === 200 && coldR.body && coldR.body.success === true &&
+      await timedCall(cold, tok);                               // 1. warm-up (untimed)
+      const coldSamples = [];                                   // 2. MEASURED COLD ×REPEATS
+      let coldR = null;
+      for (let i = 0; i < REPEATS; i++) { const s = await timedCall(cold, tok); coldSamples.push(s.ms); coldR = s.r; }
+      await timedCall(q.body, tok);                             // 3. cache populate
+      const warmSamples = [];                                   // 4. MEASURED WARM ×REPEATS
+      let warmR = null;
+      for (let i = 0; i < REPEATS; i++) { const s = await timedCall(q.body, tok); warmSamples.push(s.ms); warmR = s.r; }
+      const coldMs = median(coldSamples), warmMs = median(warmSamples);
+      let okShape = coldR.status === 200 && coldR.body && coldR.body.success === true &&
         coldR.body.data && (q.body.dimensions ? (coldR.body.data.rows || []).length > 0 : !!coldR.body.data.totals);
       const source = coldR.body && coldR.body.meta && coldR.body.meta.freshness
         ? coldR.body.meta.freshness.source : 'n/a';
-      const pass = okShape && coldMs < q.limit;
+      const masked = (coldR.body && coldR.body.meta && coldR.body.meta.maskedMetrics) || [];
+      // A masked scenario that stopped masking is measuring the WRONG plan —
+      // it would compute the cost metrics it claims to be proving are absent.
+      let maskErr = null;
+      if (q.expectMasked) {
+        const missing = q.expectMasked.filter((m) => !masked.includes(m));
+        if (missing.length) { maskErr = `expected masked [${missing.join(', ')}], meta.maskedMetrics=[${masked.join(', ')}]`; okShape = false; }
+      }
+      const warmOk = warmR.status === 200 && warmMs < WARM_LIMIT_MS;
+      const pass = okShape && coldMs < q.limit && warmOk;
       results.push({
-        name: q.name, coldMs, warmMs, limit: q.limit, source, pass,
+        name: q.name, coldMs, warmMs, limit: q.limit, source, pass, masked,
+        as: q.as || 'admin',
+        coldMin: Math.min(...coldSamples), coldMax: Math.max(...coldSamples),
+        warmMin: Math.min(...warmSamples), warmMax: Math.max(...warmSamples),
         rows: coldR.body && coldR.body.data ? (coldR.body.data.rows || []).length : 0,
-        shapeErr: okShape ? null : `status=${coldR.status} success=${coldR.body && coldR.body.success} code=${coldR.body && coldR.body.code} rows=${coldR.body && coldR.body.data ? (coldR.body.data.rows || []).length : 'n/a'}`,
+        shapeErr: okShape ? null : (maskErr || `status=${coldR.status} success=${coldR.body && coldR.body.success} code=${coldR.body && coldR.body.code} rows=${coldR.body && coldR.body.data ? (coldR.body.data.rows || []).length : 'n/a'}`),
+        warmErr: warmOk ? null : `warm ${warmMs.toFixed(0)}ms vs ${WARM_LIMIT_MS}ms (status ${warmR.status})`,
         warmStatus: warmR.status,
       });
-      console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${q.name}: cold ${coldMs.toFixed(0)}ms / warm ${warmMs.toFixed(0)}ms (limit ${q.limit}ms, source=${source}, rows=${results[results.length - 1].rows})` +
-        (results[results.length - 1].shapeErr ? '  ← ' + results[results.length - 1].shapeErr : ''));
+      const rec = results[results.length - 1];
+      console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${q.name}: cold ${coldMs.toFixed(0)}ms / warm ${warmMs.toFixed(0)}ms (limit ${q.limit}ms, source=${source}, rows=${rec.rows}, as=${rec.as}` +
+        (masked.length ? `, masked=[${masked.join(',')}]` : '') + ')' +
+        (rec.shapeErr ? '  ← ' + rec.shapeErr : '') + (rec.warmErr ? '  ← ' + rec.warmErr : ''));
     }
 
     // ── EXPLAIN assertions ───────────────────────────────────────────────────
@@ -253,20 +422,34 @@ const FACT_TABLES = new Set([
     const { ANALYTICS_CAPS } = require('../../lib/analytics/scope');
     const scope = { all: true, branchIds: [], caps: new Set(ANALYTICS_CAPS) };
     const explainFailures = [];
+    const scanReport = [];   // every observed fact-table scan, allowed or not
 
-    // A. live plans of the 3 representative rollup-eligible queries must not
-    //    full-scan a fact table.
-    const explainable = QUERIES.filter((q) => q.explain);
-    for (const q of explainable) {
-      const plan = planner.plan(Object.assign({}, q.body), scope, {});
+    // A. EVERY scenario's live plan, under ITS OWN scope, must not full-scan a
+    //    fact table. The scenario's scope matters: the manager plan carries an
+    //    extra `f.branch_id IN (…)` the admin plan does not, and that changes
+    //    which index the optimizer picks.
+    for (const q of QUERIES) {
+      const qScope = q.as === 'manager' ? mgrScope : scope;
+      const plan = planner.plan(Object.assign({}, q.body), qScope, {});
       for (const st of plan.statements) {
         const tables = await explainJson(raw, st.rows.sql, st.rows.params);
         for (const t of tables) {
-          if (FACT_TABLES.has(t.table) && t.access === 'ALL') {
-            explainFailures.push(`LIVE "${q.name}" fact=${st.fact}: full scan of ${t.table} (access_type=ALL)`);
+          const tbl = resolveTable(t.table);
+          if (!FACT_TABLES.has(tbl)) continue;
+          // access_type 'index' is a full scan of the INDEX — every row still
+          // read, just in key order. Recorded, not failed: the rule the brief
+          // sets is on ALL, and inflating it here would be moving the goalposts
+          // in the other direction.
+          if (t.access === 'index') { scanReport.push({ scenario: q.name, fact: st.fact, table: tbl, kind: 'index', allowed: true, reason: 'full INDEX scan (access_type=index) — reported, not asserted on' }); continue; }
+          if (t.access !== 'ALL') continue;
+          const allowed = EXPLAIN_ALLOWLIST.find(
+            (a) => a.scenario === q.name && a.table === tbl && a.reason);
+          scanReport.push({ scenario: q.name, fact: st.fact, table: tbl, kind: 'ALL', allowed: !!allowed, reason: allowed ? allowed.reason : null });
+          if (!allowed) {
+            explainFailures.push(`LIVE "${q.name}" fact=${st.fact}: full scan of ${tbl} (alias ${t.table}, access_type=ALL)`);
           }
         }
-        const summary = tables.map((t) => `${t.table}:${t.access}${t.key ? '(' + t.key + ')' : ''}`).join(', ');
+        const summary = tables.map((t) => `${resolveTable(t.table)}:${t.access}${t.key ? '(' + t.key + ')' : ''}`).join(', ');
         console.log(`  live  ${q.name} [fact=${st.fact}] → ${summary}`);
       }
     }
@@ -298,22 +481,36 @@ const FACT_TABLES = new Set([
 
     // ── report ───────────────────────────────────────────────────────────────
     const nameW = Math.max(...results.map((r) => r.name.length));
-    console.log('\n── perf results (cold = noCache SQL path, warm = 60s memo) ──');
-    console.log(`  ${'query'.padEnd(nameW)}  ${'cold ms'.padStart(8)}  ${'warm ms'.padStart(8)}  ${'limit'.padStart(6)}  source  result`);
+    console.log(`\n── perf results (cold = noCache SQL path, warm = 60s memo; median of ${REPEATS}) ──`);
+    console.log(`  ${'query'.padEnd(nameW)}  ${'cold ms'.padStart(8)}  ${'cold rng'.padStart(11)}  ${'warm ms'.padStart(8)}  ${'limit'.padStart(6)}  ${'rows'.padStart(5)}  source  result`);
     for (const r of results) {
-      console.log(`  ${r.name.padEnd(nameW)}  ${r.coldMs.toFixed(0).padStart(8)}  ${r.warmMs.toFixed(0).padStart(8)}  ${String(r.limit).padStart(6)}  ${String(r.source).padEnd(6)}  ${r.pass ? 'PASS' : 'FAIL'}`);
+      const rng = `${r.coldMin.toFixed(0)}-${r.coldMax.toFixed(0)}`;
+      console.log(`  ${r.name.padEnd(nameW)}  ${r.coldMs.toFixed(0).padStart(8)}  ${rng.padStart(11)}  ${r.warmMs.toFixed(0).padStart(8)}  ${String(r.limit).padStart(6)}  ${String(r.rows).padStart(5)}  ${String(r.source).padEnd(6)}  ${r.pass ? 'PASS' : 'FAIL'}`);
     }
     const breaches = results.filter((r) => !r.pass);
     console.log('──────────────────────────────────────────────────────────────');
-    console.log(`  queries: ${results.length - breaches.length}/${results.length} PASS`);
+    console.log(`  scenarios: ${results.length - breaches.length}/${results.length} PASS  (warm limit ${WARM_LIMIT_MS}ms)`);
     console.log(`  EXPLAIN assertions: ${explainFailures.length === 0 ? 'ALL PASS' : explainFailures.length + ' FAILED'}`);
     for (const f of explainFailures) console.log('    ✗ ' + f);
-    const liveRouted = results.filter((r) => r.source === 'live').length;
-    console.log(`  routing: ${liveRouted}/${results.length} answered from source='live' — rollup ROUTING is not wired in this wave (lib/analytics/freshness.js hard-codes 'live'); the rollup tables are populated and their PK plans are asserted above.`);
+    const allowedScans = scanReport.filter((s) => s.allowed);
+    if (allowedScans.length) {
+      console.log(`  allowed / reported scans (${allowedScans.length}) — each with a written reason:`);
+      for (const s of allowedScans) console.log(`    · ${s.scenario} / ${s.table} [${s.kind}]: ${s.reason}`);
+    }
+    // ROUTING: reported, never asserted — this harness measures, it does not
+    // decide whether rollup routing has landed. The breakdown IS the evidence.
+    const bySource = new Map();
+    for (const r of results) bySource.set(r.source, (bySource.get(r.source) || 0) + 1);
+    const srcSummary = [...bySource.entries()].map(([s, n]) => `${s}=${n}`).join(', ');
+    console.log(`  routing (meta.freshness.source): ${srcSummary} of ${results.length} scenarios.`);
+    if (bySource.size === 1 && bySource.has('live')) {
+      console.log(`    every scenario answered LIVE — rollup routing is not visible in the response envelope at this commit; the rollup tables are populated and their PK plans are asserted above.`);
+    }
     if (breaches.length) {
       console.log('\n  breaches:');
       for (const b of breaches) {
         console.log(`    ${b.name}: cold ${b.coldMs.toFixed(0)}ms vs ${b.limit}ms` +
+          (b.warmErr ? ` | ${b.warmErr}` : '') +
           (b.shapeErr ? ` (shape: ${b.shapeErr})` : '') +
           (b.source === 'live' ? ' — rollup-eligible query answered live (planner routing, not SQL, if the live plan above is index-clean)' : ''));
       }

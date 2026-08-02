@@ -14,7 +14,7 @@ import { parseQtyPrefix } from "@/components/ProductGrid";
 import { applyIntegerKey } from "@/components/Numpad";
 import { parseQtyInput } from "@/components/QtyPad";
 import { LOW_WAREHOUSE_QTY, resolveStockState } from "@/components/StockPip";
-import { displayUnitPrice, effectiveUnitPrice } from "@/lib/cartMath";
+import { cartTotals, displayUnitPrice, effectiveUnitPrice } from "@/lib/cartMath";
 import { fmtPrice, fmtQty } from "@/lib/format";
 import type { Catalog, CatalogItem } from "@/lib/types";
 
@@ -107,9 +107,59 @@ describe("fmtPrice — clean when whole, honest when not", () => {
     expect(fmtPrice(18.4)).toBe("18.40");
   });
 
-  it("a row still holding an untuned price shows its fraction on the card", () => {
+  it("a row holding an untuned price still reaches the card as a whole riyal", () => {
+    // 9.57 NET → 11.0055 → 11. fmtPrice would happily print "11.01"; it never
+    // gets the chance, because the register rounds the UNIT price before the
+    // card ever formats it. The stored value no longer decides what the
+    // customer sees — which is the whole point of doing it in the math.
     renderGrid(catalog([item({ price: 9.57 })]));
-    expect(screen.getByRole("button", { name: /شاي مغربي/ })).toHaveTextContent("11.01");
+    expect(screen.getByRole("button", { name: /شاي مغربي/ })).toHaveTextContent("11");
+  });
+});
+
+// ── The owner's actual cart, from the screenshot he sent ────────────────────
+// One Karak box + three thermal bottles rang up 124.97 with «Tax (included)
+// 16.29». Every figure on that screen was arithmetically correct and every one
+// of them had halalas, which is not how this shop sells. The rounding lives in
+// the register's math now, so the till is right whatever the database holds —
+// no price edit, no button, no migration.
+describe("the till totals the owner's real cart in whole riyals", () => {
+  it("124.97 becomes 125, and net + VAT still equals it exactly", () => {
+    const line = (unitPrice: number) => ({
+      qty: 1, unitPrice, lineDiscount: 0, vatCategory: "S" as const, taxInclusive: false,
+    });
+    const totals = cartTotals(
+      [line(17.3913), line(30.4261), line(30.4261), line(30.4261)],
+      null,
+      15,
+    );
+    expect(totals.total).toBe(125);
+    expect(Number.isInteger(totals.total)).toBe(true);
+    // The invariant the sale journal and ZATCA both assert.
+    expect(Math.round((totals.netTotal + totals.vatTotal) * 100) / 100).toBe(totals.total);
+  });
+
+  it("a single bottle is 35 — the number he circled", () => {
+    const totals = cartTotals(
+      [{ qty: 1, unitPrice: 30.4261, lineDiscount: 0, vatCategory: "S", taxInclusive: false }],
+      null,
+      15,
+    );
+    expect(totals.total).toBe(35);
+    expect(totals.vatTotal).toBe(4.57);
+  });
+
+  it("rounds the UNIT, so two bottles cost exactly twice one", () => {
+    const one = cartTotals([{ qty: 1, unitPrice: 30.4261, lineDiscount: 0, vatCategory: "S", taxInclusive: false }], null, 15);
+    const two = cartTotals([{ qty: 2, unitPrice: 30.4261, lineDiscount: 0, vatCategory: "S", taxInclusive: false }], null, 15);
+    expect(two.total).toBe(one.total * 2);
+  });
+
+  it("survives the float trap: 50 net is 58, never 57", () => {
+    // 50 × 1.15 is 57.49999999999999 in IEEE-754. Rounding that raw loses a
+    // whole riyal on every such row.
+    const t = cartTotals([{ qty: 1, unitPrice: 50, lineDiscount: 0, vatCategory: "S", taxInclusive: false }], null, 15);
+    expect(t.total).toBe(58);
   });
 });
 

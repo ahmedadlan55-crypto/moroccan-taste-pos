@@ -700,6 +700,13 @@ export const accounting = {
     },
   },
 
+  // The screen's chrome only. The rest of SalesPosting.tsx is still hardcoded
+  // Arabic — translating it fully is a separate job; these two are what the
+  // bilingual sweep inspects (page heading + subtitle).
+  salesPosting: {
+    title: "Sales posting",
+    subtitle: "Sales do not reach the general ledger until they are posted from here.",
+  },
   invValuation: {
     title: "Inventory Valuation",
     subtitle: "Current inventory value = quantity × recorded item cost, per item and warehouse — computed by the server.",

@@ -145,12 +145,19 @@ request:
 
 A 200 with plausible-looking zeros is why this survived: nothing alerted, and the
 screen looked like a company with no transactions rather than a broken endpoint.
-`/accounting/balance-sheet` renders those zeros, and
-`modules/accounting/lib/ratios.ts` computes the **financial ratios** from the same
-zeroed payload. `equity-changes.js` then calls the balance sheet internally
-*without passing `req.user`*, so the capability guard answered 401 and
-`equity-changes` returned 500 — that 500 was the visible symptom of an invisible
-bug.
+`/accounting/balance-sheet` renders those zeros. `equity-changes.js` then calls
+the balance sheet internally *without passing `req.user`*, so the capability
+guard answered 401 and `equity-changes` returned 500 — that 500 was the visible
+symptom of an invisible bug.
+
+**Correction.** An earlier draft of this document, and the commit message it
+quotes, also claimed the **financial-ratios** screen was reading the same zeroed
+payload. That is wrong, and the blast radius is smaller than stated:
+`FinancialRatios.tsx:28` calls `/erp/reports/balance-sheet` — a *different*
+handler at `routes/erp-core.js:2316` that does its own `SUM(debit)/SUM(credit)`
+aggregation, never requires `lib/coa/tree`, and has no `coaTree` shadow. Only the
+`-ifrs` endpoint was affected, and only `/accounting/balance-sheet` consumes it.
+**One screen was showing zeros, not two.**
 
 Three changes, all required (fixing any one alone leaves the 500):
 
@@ -261,7 +268,64 @@ whatever is on screen. Doing that for someone else's UI change — and for a POS
 snapshot whose instability is caused by mutable seed data — would convert a
 visible problem into an invisible one.
 
-## 5. Risks and open items
+---
+
+## 5. Post-deploy audit: two defects this work shipped, and fixed
+
+After the push, a verification pass re-derived every user-visible claim from the
+code and checked it against the built bundle. It found two real defects that the
+gate had not — both mine, both now fixed with tests that fail on the shipped code.
+
+### 5.1 Lot genealogy rendered blank — on new orders AND old ones
+
+Migration 0027 created `production_material_allocations` **empty**, and the
+detail endpoint switched its genealogy source to it. Two separate failures:
+
+* **Pre-deploy orders** showed "No genealogy links". The data was never lost —
+  `production_output_lots` is still written today — it simply stopped being read.
+* **New orders** rendered `— ← (5)`: blank lot numbers on every row. The ledger
+  serialises **camelCase** and sends no row `id`, but
+  `production.adapter.ts` still read **snake_case**. Only `qty` lined up. The
+  adapter takes `any`, so TypeScript could not see it, and no test fed it the
+  real server shape.
+
+For a food business this is the recall question — "which lots went into this
+batch" — so the fix restores the linkage rather than leaving it blank.
+`loadGenealogy` now falls back to `production_output_lots` when the ledger has no
+rows for an order, flagged `approximate: true`: the lot **linkage** there is
+real, but the per-output **quantity** split is not (the old writer attributed the
+whole order's consumption to every output lot — the exact defect the ledger
+exists to fix). The UI shows a note and marks those quantities `≈`.
+
+### 5.2 Saving a recipe left the product with NO active recipe
+
+`saveRecipe`'s revise branch inserted the new version with `status` hardcoded to
+`'draft'`/`is_active=0`, while the code below still archived the previous active
+version and cascaded cost on `status === 'active'`. Both legacy writers
+(`POST /api/erp/bom`, `POST /api/menu/:id/recipe-bom`) pass `activate: true`, and
+migration 0024 marks **every** pre-existing recipe `'active'` — so the revise
+branch is the normal path, not the rare one.
+
+Net effect of one save: old version archived, new version a draft, product left
+with no active recipe, and `menu.bom_id` pointing at that draft — while the
+response reported success. The create and edit branches both honoured `status`
+correctly; only revise ignored it. Fixed by honouring it there too. The
+"never edit an active recipe in place" rule still holds: it is a new version row
+either way.
+
+The new ERP recipe page was never exposed to this (it saves a draft, then calls
+the separate activate endpoint), so this hit API and legacy-shell callers.
+
+### Proof the tests have teeth
+
+Both fixes were mutation-tested by restoring the exact shipped code:
+
+| Reverted to shipped code | Result |
+|---|---|
+| revise branch hardcodes `'draft'` | 3 assertions fail — `the product is NOT left without an active recipe -> []` and `menu.bom_id ... -> bom_status: "draft"` |
+| adapter reads snake_case only | 3 of 4 fail — `expected null to be 'IN-0004'`, and blank React keys |
+
+## 6. Risks and open items
 
 Stated plainly rather than buried.
 

@@ -197,7 +197,27 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
       // Sheet legend can show which Saudi-tax bucket each account hits.
       accountClass:  a.account_class || 'detail',
       reportSection: a.report_section || null,
-      taxNature:     a.tax_nature || 'none'
+      taxNature:     a.tax_nature || 'none',
+      // 0028 — the columns that let the UI STATE what an account is instead of
+      // inferring it. Without them the tree falls back to guessing roots from
+      // the code set ['1'..'5'], which is simply wrong in production where the
+      // roots are 100000..500000, and a contra account reads as abnormal
+      // because its normal side had to be derived from `type`. The client
+      // normalizer tolerates their absence; only sending them makes it exact.
+      companyId:         a.company_id || null,
+      normalBalance:     a.normal_balance || null,
+      isContra:          !!a.is_contra,
+      contraOfAccountId: a.contra_of_account_id || null,
+      isPostable:        a.is_postable == null ? null : !!a.is_postable,
+      isControl:         !!a.is_control,
+      cashFlowActivity:  a.cash_flow_activity || null,
+      status:            a.status || (a.is_active ? 'active' : 'archived'),
+      version:           a.version == null ? null : Number(a.version),
+      isSystemRoot:      !!a.is_system_root,
+      systemManaged:     !!a.system_managed,
+      classCode:         a.class_code || null,
+      sourceEntityType:  a.source_entity_type || null,
+      sourceEntityId:    a.source_entity_id || null,
     })));
   } catch (e) {
     // v7.5 — was res.json([]): a DB fault rendered as "the chart of accounts

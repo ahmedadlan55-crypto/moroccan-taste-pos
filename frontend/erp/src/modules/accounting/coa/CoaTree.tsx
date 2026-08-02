@@ -1,279 +1,407 @@
-// ── CoaTree — the left pane: type chips + search + a collapsible account tree ─
-// Builds the tree from the FLAT account list (parentId), shows a rollup balance
-// on folders, and keeps matches reachable (matches + ancestors, auto-expanded)
-// while searching. The page owns selection / filter / search state.
+// ── CoaTree — a REAL accessible tree over the chart of accounts ─────────────
+// Presentational: the page owns search, filters, the open-set and selection.
+//
+// WHAT CHANGED AND WHY IT MATTERS
+//
+// The previous tree was a nest of `<div role="button" tabIndex={0}>`. To a
+// screen reader that is a pile of unrelated buttons — no depth, no parent, no
+// "3 of 12", no expanded state — and to a keyboard user it is one Tab stop per
+// account, which on production's ~600-account chart means 600 stops to reach
+// the bottom. This is the WAI-ARIA tree pattern instead:
+//
+//   * role="tree" > role="treeitem" > role="group" > role="treeitem" …
+//   * aria-level / aria-posinset / aria-setsize / aria-expanded / aria-selected
+//   * ONE tab stop for the whole tree (roving tabindex), arrows to move
+//   * ArrowUp/ArrowDown/Home/End walk the VISIBLE rows; the expand/collapse
+//     arrows are direction-aware, because in RTL "forward" is ArrowLeft.
 
-import { useEffect, useMemo, useRef } from "react";
-import { ChevronDown, ChevronLeft, FileText, Folder, FolderOpen, Search } from "lucide-react";
-import { Badge, Card, Input } from "@/shared/ui";
-import { useLocalStorage } from "@/shared/hooks";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Folder,
+  FolderOpen,
+  Unlink,
+} from "lucide-react";
+import { Badge } from "@/shared/ui";
 import { cn } from "@/shared/lib";
-import { useT } from "@/i18n";
+import { useT, useLang } from "@/i18n";
+import type { GlAccount } from "../api";
 import {
-  GL_ACCOUNT_TYPES,
-  glTypeLabel,
-  type GlAccount,
-  type GlAccountType,
-} from "../api";
-import {
-  Money,
-  accountMatches,
+  BalanceAmount,
+  accountName,
   buildChildrenMap,
   computeRollups,
-  getRoots,
+  getTreeRoots,
   isFolderAccount,
   nodeDisplayBalance,
+  type CoaHealth,
 } from "./coaModel";
 
-type TypeFilter = GlAccountType | "all";
-
 export interface CoaTreeProps {
+  /** The FULL chart — the tree needs it to resolve parents of matches. */
   accounts: GlAccount[];
+  /** Ids passing the page's search + filters; null means "no filtering". */
+  matchIds: Set<string> | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  typeFilter: TypeFilter;
-  onTypeFilter: (value: TypeFilter) => void;
-  search: string;
-  onSearch: (value: string) => void;
+  /** Enter / double-click — open the routed detail page. */
+  onActivate?: (id: string) => void;
+  openIds: Set<string>;
+  onToggle: (id: string) => void;
+  health: CoaHealth;
+  /** Hide rows whose displayed balance rounds to zero. */
+  hideZero?: boolean;
+  className?: string;
+  emptyLabel?: string;
 }
 
-interface NodeCtx {
-  byParent: Map<string, GlAccount[]>;
-  rollups: Map<string, number>;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  isOpen: (id: string) => boolean;
-  toggle: (id: string) => void;
-  searching: boolean;
-  visible: Set<string>;
+interface FlatRow {
+  account: GlAccount;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  posinset: number;
+  setsize: number;
+  parentId: string | null;
 }
 
 export function CoaTree({
   accounts,
+  matchIds,
   selectedId,
   onSelect,
-  typeFilter,
-  onTypeFilter,
-  search,
-  onSearch,
+  onActivate,
+  openIds,
+  onToggle,
+  health,
+  hideZero = false,
+  className,
+  emptyLabel,
 }: CoaTreeProps) {
   const t = useT();
+  const lang = useLang();
+  const rtl = lang !== "en";
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+
   const byParent = useMemo(() => buildChildrenMap(accounts), [accounts]);
   const rollups = useMemo(() => computeRollups(accounts, byParent), [accounts, byParent]);
   const byId = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const roots = useMemo(() => getTreeRoots(accounts), [accounts]);
 
-  const roots = useMemo(() => {
-    const all = getRoots(accounts);
-    return typeFilter === "all" ? all : all.filter((r) => r.type === typeFilter);
-  }, [accounts, typeFilter]);
-
-  // Per-type counts for the filter chips.
-  const counts = useMemo(() => {
-    const map = new Map<TypeFilter, number>();
-    map.set("all", accounts.length);
-    for (const tp of GL_ACCOUNT_TYPES) map.set(tp, 0);
-    for (const a of accounts) map.set(a.type, (map.get(a.type) ?? 0) + 1);
-    return map;
-  }, [accounts]);
-
-  // Search → matches + their ancestors are visible; ancestors are force-open.
-  const searching = search.trim().length > 0;
+  // Filtering keeps every match REACHABLE: the match plus its whole ancestor
+  // chain stays visible, and those ancestors are force-open. Hiding a parent
+  // would hide the match with it.
   const { visible, forceOpen } = useMemo(() => {
+    if (!matchIds) return { visible: null as Set<string> | null, forceOpen: null as Set<string> | null };
     const vis = new Set<string>();
     const open = new Set<string>();
-    if (!searching) return { visible: vis, forceOpen: open };
-    for (const a of accounts) {
-      if (!accountMatches(a, search)) continue;
-      vis.add(a.id);
-      let cur: GlAccount | undefined = a;
-      while (cur?.parentId) {
-        const parent = byId.get(cur.parentId);
-        if (!parent || vis.has(parent.id)) {
-          if (parent) open.add(parent.id);
-          break;
-        }
-        vis.add(parent.id);
-        open.add(parent.id);
-        cur = parent;
+    for (const id of matchIds) {
+      vis.add(id);
+      let cursor = byId.get(id)?.parentId ?? null;
+      let hops = 0;
+      while (cursor && hops < 64) {
+        open.add(cursor);
+        if (vis.has(cursor)) break;
+        vis.add(cursor);
+        cursor = byId.get(cursor)?.parentId ?? null;
+        hops += 1;
       }
     }
     return { visible: vis, forceOpen: open };
-  }, [accounts, byId, search, searching]);
+  }, [matchIds, byId]);
 
-  // Persisted open-set; seed with the roots on first load so the tree opens expanded.
-  const [openArr, setOpenArr] = useLocalStorage<string[]>("erp.coa.open", []);
-  const openSet = useMemo(() => new Set(openArr), [openArr]);
-  const seeded = useRef(false);
+  const isOpen = useCallback(
+    (id: string) => (forceOpen ? forceOpen.has(id) || openIds.has(id) : openIds.has(id)),
+    [forceOpen, openIds],
+  );
+
+  // The visible rows in DOM order — one array drives BOTH rendering and every
+  // keyboard move, so the two can never disagree about what "next row" means.
+  const rows = useMemo(() => {
+    const out: FlatRow[] = [];
+    const walk = (list: GlAccount[], depth: number, parentId: string | null) => {
+      const shown = list.filter((a) => {
+        if (visible && !visible.has(a.id)) return false;
+        if (hideZero) {
+          const kids = (byParent.get(a.id) ?? []).length > 0;
+          const bal = nodeDisplayBalance(a, depth, kids, rollups);
+          // A zero-balance folder still matters when something under it is not
+          // zero, so only leaves are dropped.
+          if (Math.abs(bal) < 0.005 && !kids) return false;
+        }
+        return true;
+      });
+      shown.forEach((a, i) => {
+        const children = byParent.get(a.id) ?? [];
+        const hasChildren = children.length > 0;
+        const expanded = hasChildren && isOpen(a.id);
+        out.push({
+          account: a,
+          depth,
+          hasChildren,
+          expanded,
+          posinset: i + 1,
+          setsize: shown.length,
+          parentId,
+        });
+        if (expanded) walk(children, depth + 1, a.id);
+      });
+    };
+    walk(roots, 0, null);
+    return out;
+  }, [roots, byParent, visible, isOpen, hideZero, rollups]);
+
+  const order = useMemo(() => rows.map((r) => r.account.id), [rows]);
+  // The single tab stop: the selection when it is on screen, else the first row.
+  const tabStopId = selectedId && order.includes(selectedId) ? selectedId : (order[0] ?? null);
+
+  const focusRow = useCallback((id: string | undefined) => {
+    if (!id) return;
+    rowRefs.current.get(id)?.focus();
+  }, []);
+
+  // Keydown lives on the TREE, not on each item: a handler per row would fire
+  // again on every ancestor as the event bubbles, and a single flat order is
+  // the only way Home/End can mean what they say.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const active = document.activeElement as HTMLElement | null;
+      const id = active?.getAttribute("data-account-id");
+      if (!id) return;
+      const idx = order.indexOf(id);
+      if (idx < 0) return;
+      const row = rows[idx];
+      const expandKey = rtl ? "ArrowLeft" : "ArrowRight";
+      const collapseKey = rtl ? "ArrowRight" : "ArrowLeft";
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          focusRow(order[Math.min(idx + 1, order.length - 1)]);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          focusRow(order[Math.max(idx - 1, 0)]);
+          break;
+        case "Home":
+          e.preventDefault();
+          focusRow(order[0]);
+          break;
+        case "End":
+          e.preventDefault();
+          focusRow(order[order.length - 1]);
+          break;
+        case expandKey:
+          e.preventDefault();
+          if (row.hasChildren && !row.expanded) onToggle(id);
+          else if (row.hasChildren && row.expanded) focusRow(order[idx + 1]);
+          break;
+        case collapseKey:
+          e.preventDefault();
+          if (row.hasChildren && row.expanded) onToggle(id);
+          else if (row.parentId) focusRow(row.parentId);
+          break;
+        case "Enter":
+          e.preventDefault();
+          onSelect(id);
+          onActivate?.(id);
+          break;
+        case " ":
+        case "Spacebar":
+          e.preventDefault();
+          onSelect(id);
+          break;
+        default:
+          break;
+      }
+    },
+    [order, rows, rtl, onToggle, onSelect, onActivate, focusRow],
+  );
+
+  // Drop refs for rows that are gone, so the map cannot grow without bound
+  // across filter changes on a large chart.
   useEffect(() => {
-    if (seeded.current || accounts.length === 0) return;
-    seeded.current = true;
-    if (openArr.length === 0) setOpenArr(getRoots(accounts).map((r) => r.id));
-  }, [accounts, openArr.length, setOpenArr]);
+    const live = new Set(order);
+    for (const key of rowRefs.current.keys()) if (!live.has(key)) rowRefs.current.delete(key);
+  }, [order]);
 
-  const ctx: NodeCtx = {
-    byParent,
-    rollups,
-    selectedId,
-    onSelect,
-    isOpen: (id) => (searching ? forceOpen.has(id) : openSet.has(id)),
-    toggle: (id) =>
-      setOpenArr((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])),
-    searching,
-    visible,
+  if (rows.length === 0) {
+    return (
+      <p className={cn("px-3 py-10 text-center text-sm font-medium text-slate-400", className)}>
+        {emptyLabel ?? t("accounting.coa.noMatches")}
+      </p>
+    );
+  }
+
+  // Render NESTED (treeitem > group > treeitem) rather than flat, so assistive
+  // tech gets the containment relationship and not just an aria-level number.
+  // `rows` is still the flat visible order the keyboard handler walks — one
+  // source of truth, two consumers.
+  let cursor = 0;
+  const renderLevel = (depth: number): JSX.Element[] => {
+    const out: JSX.Element[] = [];
+    while (cursor < rows.length && rows[cursor].depth === depth) {
+      const row = rows[cursor];
+      cursor += 1;
+      const a = row.account;
+      const issues = health.byAccount.get(a.id) ?? [];
+      const structural =
+        issues.includes("strayRoot") || issues.includes("orphan") || issues.includes("cycle");
+      const folder = isFolderAccount(a, row.hasChildren);
+      const selected = selectedId === a.id;
+      const balance = nodeDisplayBalance(a, row.depth, row.hasChildren, rollups);
+      const inactive = !a.isActive || a.status === "archived";
+      const children = row.expanded ? renderLevel(depth + 1) : [];
+
+      out.push(
+        <div
+          key={a.id}
+          role="treeitem"
+          data-account-id={a.id}
+          aria-level={row.depth + 1}
+          aria-posinset={row.posinset}
+          aria-setsize={row.setsize}
+          aria-expanded={row.hasChildren ? row.expanded : undefined}
+          aria-selected={selected}
+          tabIndex={tabStopId === a.id ? 0 : -1}
+          ref={(el) => {
+            if (el) rowRefs.current.set(a.id, el);
+            else rowRefs.current.delete(a.id);
+          }}
+          // stopPropagation, because a child treeitem is nested INSIDE its
+          // parent treeitem: without it one click would select the whole
+          // ancestor chain, deepest-last.
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(a.id);
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onActivate?.(a.id);
+          }}
+          className="group/item block outline-none"
+        >
+          <div
+            style={{ paddingInlineStart: `${row.depth * 1.15 + 0.25}rem` }}
+            className={cn(
+              // min-h-11 = the 44px touch target the design system mandates.
+              "flex min-h-11 cursor-pointer items-center gap-2 rounded-xl py-2 pe-1 ps-2 transition",
+              selected ? "bg-teal-50 ring-1 ring-teal-200" : "hover:bg-slate-50",
+              "group-focus-visible/item:ring-4 group-focus-visible/item:ring-teal-100",
+            )}
+          >
+            {row.hasChildren ? (
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-hidden="true"
+                aria-label={row.expanded ? t("accounting.coa.collapse") : t("accounting.coa.expand")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle(a.id);
+                }}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-200/70 hover:text-slate-600"
+              >
+                {row.expanded ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : rtl ? (
+                  <ChevronLeft className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+              </button>
+            ) : (
+              <span className="h-6 w-6 shrink-0" aria-hidden="true" />
+            )}
+
+            <span
+              className={cn(
+                "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
+                structural
+                  ? "bg-amber-50 text-amber-700"
+                  : folder
+                    ? "bg-teal-50 text-teal-700"
+                    : "bg-slate-100 text-slate-500",
+              )}
+              aria-hidden="true"
+            >
+              {structural ? (
+                issues.includes("orphan") ? (
+                  <Unlink className="h-4 w-4" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4" />
+                )
+              ) : folder ? (
+                row.expanded ? (
+                  <FolderOpen className="h-4 w-4" />
+                ) : (
+                  <Folder className="h-4 w-4" />
+                )
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+            </span>
+
+            <span dir="ltr" className="shrink-0 font-mono text-xs font-bold tabular-nums text-slate-400">
+              {a.code}
+            </span>
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-sm",
+                selected ? "font-extrabold text-teal-800" : "font-bold text-slate-700",
+              )}
+            >
+              {accountName(a, lang)}
+            </span>
+
+            {structural && (
+              <Badge tone="warning" className="shrink-0">
+                {issues.includes("orphan")
+                  ? t("accounting.coa.health.orphanShort")
+                  : issues.includes("cycle")
+                    ? t("accounting.coa.health.cycleShort")
+                    : t("accounting.coa.health.strayShort")}
+              </Badge>
+            )}
+            {inactive && (
+              <Badge tone="neutral" className="shrink-0">
+                {t("accounting.common.suspended")}
+              </Badge>
+            )}
+            <BalanceAmount
+              account={a}
+              value={balance}
+              debitLabel={t("accounting.coa.dr")}
+              creditLabel={t("accounting.coa.cr")}
+              className="shrink-0 text-xs"
+            />
+          </div>
+
+          {children.length > 0 && (
+            <div role="group" aria-label={accountName(a, lang)}>
+              {children}
+            </div>
+          )}
+        </div>,
+      );
+    }
+    return out;
   };
 
-  const visibleRoots = searching ? roots.filter((r) => visible.has(r.id)) : roots;
-
-  const chips: Array<{ key: TypeFilter; label: string }> = [
-    { key: "all", label: t("common.all") },
-    ...GL_ACCOUNT_TYPES.map((tp) => ({ key: tp as TypeFilter, label: glTypeLabel(t, tp) })),
-  ];
+  const tree = renderLevel(0);
 
   return (
-    <Card className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-slate-100 p-4">
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {chips.map((c) => {
-            const active = typeFilter === c.key;
-            return (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => onTypeFilter(c.key)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
-                  active
-                    ? "border-teal-200 bg-teal-50 text-teal-700"
-                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700",
-                )}
-                aria-pressed={active}
-              >
-                {c.label}
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 text-[10px] font-extrabold tabular-nums",
-                    active ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-500",
-                  )}
-                >
-                  {counts.get(c.key) ?? 0}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <Input
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder={t("accounting.coa.searchPlaceholder")}
-          leading={<Search className="h-4 w-4" />}
-          aria-label={t("accounting.coa.searchAria")}
-        />
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {visibleRoots.length === 0 ? (
-          <p className="px-3 py-10 text-center text-sm font-medium text-slate-400">
-            {searching || typeFilter !== "all" ? t("accounting.coa.noMatches") : t("accounting.coa.noAccounts")}
-          </p>
-        ) : (
-          visibleRoots.map((root) => <CoaNode key={root.id} node={root} depth={0} ctx={ctx} />)
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function CoaNode({ node, depth, ctx }: { node: GlAccount; depth: number; ctx: NodeCtx }) {
-  const t = useT();
-  const children = ctx.byParent.get(node.id) ?? [];
-  const hasChildren = children.length > 0;
-  const visibleChildren = ctx.searching
-    ? children.filter((c) => ctx.visible.has(c.id))
-    : children;
-  const folder = isFolderAccount(node, hasChildren);
-  const open = ctx.isOpen(node.id);
-  const selected = ctx.selectedId === node.id;
-  const balance = nodeDisplayBalance(node, depth, hasChildren, ctx.rollups);
-
-  return (
-    <div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => ctx.onSelect(node.id)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            ctx.onSelect(node.id);
-          }
-        }}
-        style={{ paddingInlineStart: `${depth * 1.15 + 0.25}rem` }}
-        className={cn(
-          "group flex cursor-pointer items-center gap-2 rounded-xl py-2 pl-2 pr-1 transition",
-          selected ? "bg-teal-50 ring-1 ring-teal-200" : "hover:bg-slate-50",
-        )}
-      >
-        {hasChildren ? (
-          <button
-            type="button"
-            aria-label={open ? t("accounting.coa.collapse") : t("accounting.coa.expand")}
-            onClick={(e) => {
-              e.stopPropagation();
-              ctx.toggle(node.id);
-            }}
-            className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-200/70 hover:text-slate-600"
-          >
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </button>
-        ) : (
-          <span className="h-6 w-6 shrink-0" aria-hidden="true" />
-        )}
-
-        <span
-          className={cn(
-            "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
-            folder ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-500",
-          )}
-          aria-hidden="true"
-        >
-          {folder ? (
-            open && hasChildren ? (
-              <FolderOpen className="h-4 w-4" />
-            ) : (
-              <Folder className="h-4 w-4" />
-            )
-          ) : (
-            <FileText className="h-4 w-4" />
-          )}
-        </span>
-
-        <span dir="ltr" className="shrink-0 font-mono text-xs font-bold text-slate-400 tabular-nums">
-          {node.code}
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-sm",
-            selected ? "font-extrabold text-teal-800" : "font-bold text-slate-700",
-          )}
-        >
-          {node.nameAr}
-        </span>
-
-        {!node.isActive && (
-          <Badge tone="neutral" className="shrink-0">
-            {t("accounting.common.suspended")}
-          </Badge>
-        )}
-        <Money value={balance} className="shrink-0 text-xs" />
-      </div>
-
-      {open && hasChildren && (
-        <div>
-          {visibleChildren.map((child) => (
-            <CoaNode key={child.id} node={child} depth={depth + 1} ctx={ctx} />
-          ))}
-        </div>
-      )}
+    <div
+      role="tree"
+      aria-label={t("accounting.coa.treeAria")}
+      className={cn("min-w-0", className)}
+      onKeyDown={onKeyDown}
+    >
+      {tree}
     </div>
   );
 }

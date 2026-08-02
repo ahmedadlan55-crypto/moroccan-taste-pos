@@ -1,10 +1,10 @@
-// ── AccountDetail — the right pane: account hero, lifecycle actions, ledger ───
-// Shows the selected account with a rollup (folder) / own (leaf) balance, the
-// write actions gated on `accounting.accounts.manage`, and the recent movements
-// for leaf accounts.
+// ── AccountDetail — the account hero, lifecycle actions and recent ledger ────
+// Rendered both as the desktop second pane on the list page and as the body of
+// the routed /…/:id page. Every write action is a callback the caller turns
+// into a NAVIGATION, so this component never owns a dialog.
 
 import { useMemo, useState } from "react";
-import { Pencil, Plus, Power, Trash2 } from "lucide-react";
+import { ArrowLeftRight, ExternalLink, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -20,24 +20,26 @@ import {
 } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { formatDate } from "@/shared/lib";
-import { useT, type TFunction } from "@/i18n";
+import { useLang, useT, type TFunction } from "@/i18n";
 import {
   glTypeLabel,
-  GL_TYPE_NATURE,
   useAccountLedger,
   useDeleteGlAccount,
   useSetAccountActive,
   type GlAccount,
 } from "../api";
+import { MANAGE_CAP } from "./routes";
 import {
+  BalanceAmount,
   Money,
-  ROOT_CODES,
+  accountName,
   buildChildrenMap,
+  computeRollups,
   fmtMoney,
   isFolderAccount,
+  isSystemRoot,
+  normalSide,
 } from "./coaModel";
-
-const MANAGE_CAP = "accounting.accounts.manage" as const;
 
 function mapError(t: TFunction, raw: string | undefined): string {
   const s = raw ?? "";
@@ -54,10 +56,24 @@ export interface AccountDetailProps {
   accounts: GlAccount[];
   onEdit: (account: GlAccount) => void;
   onAddChild: (parent: GlAccount) => void;
+  onMove?: (account: GlAccount) => void;
+  /** Only the embedded (second-pane) variant offers "open the full page". */
+  onOpenFull?: (account: GlAccount) => void;
+  /** Where to go after a successful delete (the routed page navigates away). */
+  onDeleted?: () => void;
 }
 
-export function AccountDetail({ account, accounts, onEdit, onAddChild }: AccountDetailProps) {
+export function AccountDetail({
+  account,
+  accounts,
+  onEdit,
+  onAddChild,
+  onMove,
+  onOpenFull,
+  onDeleted,
+}: AccountDetailProps) {
   const t = useT();
+  const lang = useLang();
   const canManage = useCan(MANAGE_CAP);
   const { toast } = useToast();
   const setActive = useSetAccountActive();
@@ -69,28 +85,19 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
   const byParent = useMemo(() => buildChildrenMap(accounts), [accounts]);
   const hasChildren = (byParent.get(account.id) ?? []).length > 0;
   const folder = isFolderAccount(account, hasChildren);
-  const rollup = useMemo(() => {
-    // Folder balance = self + all descendants; leaves show their own balance.
-    if (!folder) return Number(account.balance) || 0;
-    let sum = Number(account.balance) || 0;
-    const walk = (id: string) => {
-      for (const child of byParent.get(id) ?? []) {
-        sum += Number(child.balance) || 0;
-        walk(child.id);
-      }
-    };
-    walk(account.id);
-    return sum;
-  }, [account, byParent, folder]);
+  // Rollup at EVERY depth — the shared memoized walk, not a private one that
+  // could drift from what the tree shows for the same account.
+  const rollups = useMemo(() => computeRollups(accounts, byParent), [accounts, byParent]);
+  const shown = folder ? (rollups.get(account.id) ?? account.balance) : Number(account.balance) || 0;
 
-  const nature = GL_TYPE_NATURE[account.type];
+  const systemRoot = isSystemRoot(account, accounts);
   const canDelete =
-    !account.isFolder &&
-    !hasChildren &&
-    account.movementCount === 0 &&
-    !ROOT_CODES.has(account.code);
+    !account.isFolder && !hasChildren && account.movementCount === 0 && !systemRoot;
+  const canMove = !systemRoot;
 
-  // Ledger is only meaningful for leaf accounts.
+  const parent = account.parentId ? accounts.find((a) => a.id === account.parentId) : null;
+  const dangling = !!account.parentId && !parent;
+
   const ledgerId = folder ? null : account.id;
   const ledger = useAccountLedger(ledgerId);
   const lines = ledger.data ?? [];
@@ -105,9 +112,13 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
             toast({ tone: "error", title: mapError(t, res.error) });
             return;
           }
-          toast({ tone: "success", title: next ? t("accounting.coa.detail.activated") : t("accounting.coa.detail.deactivated") });
+          toast({
+            tone: "success",
+            title: next ? t("accounting.coa.detail.activated") : t("accounting.coa.detail.deactivated"),
+          });
         },
-        onError: (e) => toast({ tone: "error", title: mapError(t, e instanceof Error ? e.message : "") }),
+        onError: (e) =>
+          toast({ tone: "error", title: mapError(t, e instanceof Error ? e.message : "") }),
       },
     );
   }
@@ -122,6 +133,7 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
         }
         setConfirmOpen(false);
         toast({ tone: "success", title: t("accounting.coa.detail.deleted") });
+        onDeleted?.();
       },
       onError: (e) => setDeleteError(mapError(t, e instanceof Error ? e.message : "")),
     });
@@ -136,54 +148,108 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <code
                 dir="ltr"
-                className="rounded-lg bg-slate-100 px-2 py-0.5 font-mono text-xs font-extrabold text-slate-600 tabular-nums"
+                className="rounded-lg bg-slate-100 px-2 py-0.5 font-mono text-xs font-extrabold tabular-nums text-slate-600"
               >
                 {account.code}
               </code>
               <Badge tone="teal">{glTypeLabel(t, account.type)}</Badge>
-              <Badge tone="neutral">{nature === "debit" ? t("accounting.coa.detail.natureDebit") : t("accounting.coa.detail.natureCredit")}</Badge>
+              <Badge tone="neutral">
+                {normalSide(account) === "debit"
+                  ? t("accounting.coa.detail.natureDebit")
+                  : t("accounting.coa.detail.natureCredit")}
+              </Badge>
+              {account.isContra && <Badge tone="purple">{t("accounting.coa.contra")}</Badge>}
               {folder && <Badge tone="info">{t("accounting.coa.folder")}</Badge>}
+              {systemRoot && <Badge tone="warning">{t("accounting.coa.systemRoot")}</Badge>}
+              {account.systemManaged && <Badge tone="warning">{t("accounting.coa.systemManaged")}</Badge>}
               {!account.isActive && <Badge tone="neutral">{t("accounting.common.suspended")}</Badge>}
             </div>
-            <h2 className="truncate text-xl font-extrabold text-slate-900">{account.nameAr}</h2>
-            {account.nameEn && (
-              <p dir="ltr" className="mt-0.5 truncate text-sm font-medium text-slate-400">
-                {account.nameEn}
-              </p>
-            )}
+            <h2 className="truncate text-xl font-extrabold text-slate-900">
+              {accountName(account, lang)}
+            </h2>
+            <p
+              dir={lang === "en" ? "rtl" : "ltr"}
+              className="mt-0.5 truncate text-sm font-medium text-slate-400"
+            >
+              {lang === "en" ? account.nameAr : account.nameEn}
+            </p>
+            <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs font-bold text-slate-500">
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.form.parent")}: </dt>
+                <dd className="inline">
+                  {parent
+                    ? `${parent.code} — ${accountName(parent, lang)}`
+                    : dangling
+                      ? t("accounting.coa.health.orphanShort")
+                      : t("accounting.coa.form.root")}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.form.level")}: </dt>
+                <dd className="inline tabular-nums">{account.level}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.col.section")}: </dt>
+                <dd className="inline">
+                  {account.reportSection || t("accounting.coa.filter.sectionNone")}
+                </dd>
+              </div>
+            </dl>
           </div>
-          <div className="text-left">
+          <div className="text-end">
             <div className="text-[11px] font-bold text-slate-400">
               {folder ? t("accounting.coa.detail.rollupBalance") : t("accounting.coa.detail.balance")}
             </div>
-            <Money value={rollup} strong className="text-2xl" />
+            <BalanceAmount
+              account={account}
+              value={shown}
+              debitLabel={t("accounting.coa.dr")}
+              creditLabel={t("accounting.coa.cr")}
+              strong
+              className="text-2xl"
+            />
           </div>
         </div>
 
-        {canManage && (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => onEdit(account)}>
-              <Pencil className="h-4 w-4" /> {t("common.edit")}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {onOpenFull && (
+            <Button variant="secondary" onClick={() => onOpenFull(account)}>
+              <ExternalLink className="h-4 w-4" /> {t("accounting.coa.detail.openFull")}
             </Button>
-            <Button variant="secondary" onClick={() => onAddChild(account)}>
-              <Plus className="h-4 w-4" /> {t("accounting.coa.detail.addChild")}
-            </Button>
-            <Button variant="secondary" onClick={toggleActive} loading={setActive.isPending}>
-              <Power className="h-4 w-4" /> {account.isActive ? t("accounting.coa.detail.deactivate") : t("accounting.coa.detail.activate")}
-            </Button>
-            {canDelete && (
-              <Button
-                variant="danger"
-                onClick={() => {
-                  setDeleteError(null);
-                  setConfirmOpen(true);
-                }}
-              >
-                <Trash2 className="h-4 w-4" /> {t("common.delete")}
+          )}
+          {canManage && (
+            <>
+              <Button variant="secondary" onClick={() => onEdit(account)}>
+                <Pencil className="h-4 w-4" /> {t("common.edit")}
               </Button>
-            )}
-          </div>
-        )}
+              <Button variant="secondary" onClick={() => onAddChild(account)}>
+                <Plus className="h-4 w-4" /> {t("accounting.coa.detail.addChild")}
+              </Button>
+              {onMove && canMove && (
+                <Button variant="secondary" onClick={() => onMove(account)}>
+                  <ArrowLeftRight className="h-4 w-4" /> {t("accounting.coa.move.action")}
+                </Button>
+              )}
+              <Button variant="secondary" onClick={toggleActive} loading={setActive.isPending}>
+                <Power className="h-4 w-4" />{" "}
+                {account.isActive
+                  ? t("accounting.coa.detail.deactivate")
+                  : t("accounting.coa.detail.activate")}
+              </Button>
+              {canDelete && (
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setConfirmOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" /> {t("common.delete")}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Recent movements */}
@@ -210,18 +276,21 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
           ) : ledger.error ? (
             <ErrorState error={ledger.error} />
           ) : lines.length === 0 ? (
-            <EmptyState title={t("accounting.coa.detail.noMovements")} body={t("accounting.coa.detail.noMovementsBody")} />
+            <EmptyState
+              title={t("accounting.coa.detail.noMovements")}
+              body={t("accounting.coa.detail.noMovementsBody")}
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[40rem] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-                    <th className="px-3 py-2 text-right">{t("accounting.common.date")}</th>
-                    <th className="px-3 py-2 text-right">{t("accounting.common.journalNo")}</th>
-                    <th className="px-3 py-2 text-right">{t("accounting.common.statement")}</th>
-                    <th className="px-3 py-2 text-left">{t("accounting.common.debit")}</th>
-                    <th className="px-3 py-2 text-left">{t("accounting.common.credit")}</th>
-                    <th className="px-3 py-2 text-left">{t("accounting.common.balance")}</th>
+                    <th className="px-3 py-2 text-start">{t("accounting.common.date")}</th>
+                    <th className="px-3 py-2 text-start">{t("accounting.common.journalNo")}</th>
+                    <th className="px-3 py-2 text-start">{t("accounting.common.statement")}</th>
+                    <th className="px-3 py-2 text-end">{t("accounting.common.debit")}</th>
+                    <th className="px-3 py-2 text-end">{t("accounting.common.credit")}</th>
+                    <th className="px-3 py-2 text-end">{t("accounting.common.balance")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -241,17 +310,17 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
                       <td className="px-3 py-1.5 text-slate-700">
                         {l.entryDesc || l.journalDesc || "—"}
                       </td>
-                      <td className="px-3 py-1.5 text-left">
-                        <span dir="ltr" className="tabular-nums font-semibold text-slate-700">
+                      <td className="px-3 py-1.5 text-end">
+                        <span dir="ltr" className="font-semibold tabular-nums text-slate-700">
                           {l.debit ? fmtMoney(l.debit) : "—"}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-left">
-                        <span dir="ltr" className="tabular-nums font-semibold text-slate-700">
+                      <td className="px-3 py-1.5 text-end">
+                        <span dir="ltr" className="font-semibold tabular-nums text-slate-700">
                           {l.credit ? fmtMoney(l.credit) : "—"}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-left">
+                      <td className="px-3 py-1.5 text-end">
                         <Money value={l.balance} className="text-xs" />
                       </td>
                     </tr>
@@ -266,7 +335,7 @@ export function AccountDetail({ account, accounts, onEdit, onAddChild }: Account
       <ConfirmDialog
         open={confirmOpen}
         title={t("accounting.coa.detail.deleteTitle")}
-        description={t("accounting.coa.detail.deleteDesc", { name: account.nameAr })}
+        description={t("accounting.coa.detail.deleteDesc", { name: accountName(account, lang) })}
         tone="danger"
         confirmLabel={t("common.delete")}
         processing={del.isPending}

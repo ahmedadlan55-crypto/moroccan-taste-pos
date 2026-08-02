@@ -1,12 +1,34 @@
 // ── Chart-of-Accounts shared model helpers ─────────────────────────────────
-// Small, dependency-free utilities shared by the tree, detail and form. Keeps
-// the four screen files lean: tree building from the FLAT account list, rollup
-// balances, folder detection and the tri-color money cell all live here.
+// Dependency-free utilities shared by the tree, the table, the detail, the
+// health page and the forms. Tree building from the FLAT account list, rollup
+// balances at every depth, root/folder detection, the natural-balance (Dr/Cr)
+// money cell and the structural diagnostics all live here.
+//
+// THREE RULES THIS FILE EXISTS TO ENFORCE
+//
+//  1. A ROOT IS A FLAG, NOT A CODE. `is_system_root` (migration 0028) is the
+//     authority. The 1..5 code set survives ONLY as a fallback for a server
+//     that has not surfaced the column yet — in production the roots are
+//     100000..500000, so a hardcoded set hides the entire chart.
+//
+//  2. EVERY ACCOUNT IS REACHABLE. A parentless account that is not a system
+//     root, and an account whose parentId resolves to nothing, are both real
+//     defects. They render at the top of the tree carrying an issue badge
+//     rather than vanishing — an invisible account cannot be fixed.
+//
+//  3. SIGN IS NOT A VERDICT. A liability with a credit balance is normal and a
+//     contra asset with a credit balance is normal; both are NEGATIVE in the
+//     raw debit-minus-credit figure the server sends. Colour follows
+//     `isAbnormalBalance`, never the raw sign.
 
 import { cn } from "@/shared/lib";
-import type { GlAccount } from "../api";
+import { GL_TYPE_NATURE, type GlAccount } from "../api";
 
-/** Top-level account codes (الأصول/الالتزامات/حقوق الملكية/الإيرادات/المصروفات). */
+/**
+ * Legacy top-level account codes (الأصول/الالتزامات/حقوق الملكية/الإيرادات/
+ * المصروفات). FALLBACK ONLY — see rule 1 above. Correct in the dev chart,
+ * wrong in production, which is why `is_system_root` outranks it everywhere.
+ */
 export const ROOT_CODES = new Set(["1", "2", "3", "4", "5"]);
 
 // English-digit, 2-decimal grouping — matches the app-wide numbering policy
@@ -18,6 +40,9 @@ const MONEY_FMT = new Intl.NumberFormat("en-US", {
 export function fmtMoney(value: number | null | undefined): string {
   return MONEY_FMT.format(Number(value) || 0);
 }
+
+/** Below this a balance is treated as zero (money is stored to 2 decimals). */
+export const ZERO_EPSILON = 0.005;
 
 /** Sort by displayOrder (null → last) then code, matching the legacy tree order. */
 export function sortAccounts(list: GlAccount[]): GlAccount[] {
@@ -44,17 +69,66 @@ export function buildChildrenMap(accounts: GlAccount[]): Map<string, GlAccount[]
   return byParent;
 }
 
-/** The tree roots: codes 1..5 → level===1 → parentId==null (in that order). */
+/**
+ * True when this chart states its own roots — i.e. at least one row carries
+ * `is_system_root`. Distinguishing "no row has the flag" (fall back) from
+ * "rows have the flag and it is false here" (believe it) is the whole point of
+ * the column being OPTIONAL in the GlAccount type.
+ */
+export function hasSystemRootFlag(accounts: GlAccount[]): boolean {
+  return accounts.some((a) => a.isSystemRoot === true);
+}
+
+/** Is this account one of the five protected class roots? */
+export function isSystemRoot(account: GlAccount, accounts?: GlAccount[]): boolean {
+  if (account.isSystemRoot === true) return true;
+  // Only trust the legacy code set while NOTHING in the chart carries the flag.
+  if (accounts && hasSystemRootFlag(accounts)) return false;
+  if (account.isSystemRoot === false) return false;
+  return ROOT_CODES.has(account.code);
+}
+
+/**
+ * The five SYSTEM roots: flagged rows when the column is present, else the
+ * legacy code set → level 1 → parentless (in that order).
+ */
 export function getRoots(accounts: GlAccount[]): GlAccount[] {
+  const flagged = accounts.filter((a) => a.isSystemRoot === true);
+  if (flagged.length > 0) return sortAccounts(flagged);
   let roots = accounts.filter((a) => ROOT_CODES.has(a.code));
   if (roots.length === 0) roots = accounts.filter((a) => a.level === 1);
   if (roots.length === 0) roots = accounts.filter((a) => a.parentId == null);
   return sortAccounts(roots);
 }
 
-/** A node is a folder when flagged, or a root code, or it has children. */
+/**
+ * Everything that must render at depth 0: the system roots PLUS every stray
+ * root (parentless, not a system root) and every orphan (parentId pointing at
+ * an account that does not exist). Rule 2 — the tree shows the chart it HAS,
+ * not the chart it wishes it had.
+ */
+export function getTreeRoots(accounts: GlAccount[]): GlAccount[] {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const system = getRoots(accounts);
+  const systemIds = new Set(system.map((a) => a.id));
+  const extras = accounts.filter(
+    (a) => !systemIds.has(a.id) && (a.parentId == null || !byId.has(a.parentId)),
+  );
+  return [...system, ...sortAccounts(extras)];
+}
+
+/** A node is a folder when flagged, or a system root, or it has children. */
 export function isFolderAccount(account: GlAccount, hasChildren: boolean): boolean {
-  return account.isFolder || ROOT_CODES.has(account.code) || hasChildren;
+  return account.isFolder || ROOT_CODES.has(account.code) || account.isSystemRoot === true || hasChildren;
+}
+
+/**
+ * Can journal entries be posted here? `is_postable` (0028) when the server
+ * states it; otherwise the historical rule — not a folder and no children.
+ */
+export function isPostingAccount(account: GlAccount, hasChildren: boolean): boolean {
+  if (account.isPostable !== undefined) return account.isPostable;
+  return !isFolderAccount(account, hasChildren);
 }
 
 /** Rollup balance per account: self.balance + Σ descendants.balance (memoized). */
@@ -93,31 +167,205 @@ export function descendantIds(id: string, byParent: Map<string, GlAccount[]>): S
 }
 
 /**
- * The balance to SHOW for a node: rollup for folders at depth ≤ 2, own balance
- * for leaves (and deeper folders). `depth` is 0 for roots.
+ * The balance to SHOW for a node: the ROLLUP for every folder at EVERY depth,
+ * the own balance for posting leaves.
+ *
+ * This used to read `depth <= 2`, which meant a level-3 group silently showed
+ * its own (usually zero) balance while its children carried the money — the
+ * deeper the chart, the more of it read as empty. Production's six-digit chart
+ * is four and five levels deep, so the cutoff hid most of the totals.
  */
 export function nodeDisplayBalance(
   account: GlAccount,
-  depth: number,
+  _depth: number,
   hasChildren: boolean,
   rollups: Map<string, number>,
 ): number {
-  if (isFolderAccount(account, hasChildren) && depth <= 2) {
-    return rollups.get(account.id) ?? account.balance;
+  if (isFolderAccount(account, hasChildren)) {
+    return rollups.get(account.id) ?? Number(account.balance) ?? 0;
   }
   return Number(account.balance) || 0;
 }
 
-/** True when the query matches the account's Arabic name or code (case-insensitive). */
+// ── Natural balance (Dr/Cr) ─────────────────────────────────────────────────
+
+export type BalanceSide = "debit" | "credit";
+
+function flipSide(side: BalanceSide): BalanceSide {
+  return side === "debit" ? "credit" : "debit";
+}
+
+/**
+ * The side this account NATURALLY sits on.
+ *
+ * `normal_balance` in 0028 is seeded straight from `type`, so it knows nothing
+ * about contra accounts — accumulated depreciation is typed `asset` (debit)
+ * yet naturally carries a credit. `is_contra` therefore flips the answer, and
+ * that flip is exactly what stops every contra account from being reported as
+ * abnormal.
+ */
+export function normalSide(account: GlAccount): BalanceSide {
+  const declared = account.normalBalance;
+  const base: BalanceSide =
+    declared === "debit" || declared === "credit"
+      ? declared
+      : (GL_TYPE_NATURE[account.type] ?? "debit");
+  return account.isContra ? flipSide(base) : base;
+}
+
+/**
+ * Convert the server's signed figure (Σ debit − credit) into the amount as the
+ * account naturally reads it: positive means "the expected side".
+ */
+export function naturalAmount(account: GlAccount, signed: number): number {
+  return normalSide(account) === "debit" ? signed : -signed;
+}
+
+/** A balance is abnormal only when it sits on the side the account never should. */
+export function isAbnormalBalance(account: GlAccount, signed: number): boolean {
+  return naturalAmount(account, signed) < -ZERO_EPSILON;
+}
+
+/** The side a balance ACTUALLY sits on (flipped from normal when abnormal). */
+export function actualSide(account: GlAccount, signed: number): BalanceSide {
+  const side = normalSide(account);
+  return naturalAmount(account, signed) < -ZERO_EPSILON ? flipSide(side) : side;
+}
+
+// ── Search ─────────────────────────────────────────────────────────────────
+
+/**
+ * True when the query matches the Arabic name, the ENGLISH name, or the code.
+ *
+ * nameEn was missing here, so an English-speaking user searching "Cash" got
+ * "no matching accounts" on a chart that contains it — while the very same
+ * screen was rendering that English name in the tree.
+ */
 export function accountMatches(account: GlAccount, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
-    account.nameAr.toLowerCase().includes(q) || account.code.toLowerCase().includes(q)
+    account.nameAr.toLowerCase().includes(q) ||
+    account.nameEn.toLowerCase().includes(q) ||
+    account.code.toLowerCase().includes(q)
   );
 }
 
-/** Signed money cell: LTR + tabular, positive → emerald, negative → rose, ~0 → slate. */
+/** The name to render for a language, degrading to the other when blank. */
+export function accountName(account: GlAccount, lang: string): string {
+  if (lang === "en") return account.nameEn || account.nameAr;
+  return account.nameAr || account.nameEn;
+}
+
+// ── Structural + classification diagnostics ────────────────────────────────
+
+export type CoaIssueKind = "strayRoot" | "orphan" | "unmapped" | "abnormal" | "cycle";
+
+export interface CoaHealth {
+  /** Parentless accounts that are not system roots. */
+  strayRoots: GlAccount[];
+  /** Accounts whose parentId points at an account that does not exist. */
+  orphans: GlAccount[];
+  /** Posting accounts with no statement section — reports have to guess. */
+  unmapped: GlAccount[];
+  /** Accounts whose balance sits on the wrong side (contra-aware). */
+  abnormal: GlAccount[];
+  /** Accounts that are their own ancestor. */
+  cycles: GlAccount[];
+  /** accountId → the issues it has (drives the tree/table badges). */
+  byAccount: Map<string, CoaIssueKind[]>;
+  /** Distinct accounts carrying at least one issue. */
+  totalIssues: number;
+}
+
+/**
+ * Every diagnostic in one pass. Deliberately NOT hidden behind a toggle — the
+ * screen surfaces the count in the KPI row and badges the rows themselves.
+ */
+export function computeHealth(
+  accounts: GlAccount[],
+  byParent: Map<string, GlAccount[]>,
+  rollups: Map<string, number>,
+): CoaHealth {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const systemIds = new Set(getRoots(accounts).map((a) => a.id));
+
+  const strayRoots: GlAccount[] = [];
+  const orphans: GlAccount[] = [];
+  const unmapped: GlAccount[] = [];
+  const abnormal: GlAccount[] = [];
+  const cycles: GlAccount[] = [];
+  const byAccount = new Map<string, CoaIssueKind[]>();
+
+  const flag = (a: GlAccount, kind: CoaIssueKind) => {
+    const list = byAccount.get(a.id);
+    if (list) {
+      if (!list.includes(kind)) list.push(kind);
+    } else byAccount.set(a.id, [kind]);
+  };
+
+  for (const a of accounts) {
+    const hasChildren = (byParent.get(a.id) ?? []).length > 0;
+
+    if (a.parentId == null) {
+      if (!systemIds.has(a.id)) {
+        strayRoots.push(a);
+        flag(a, "strayRoot");
+      }
+    } else if (!byId.has(a.parentId)) {
+      orphans.push(a);
+      flag(a, "orphan");
+    }
+
+    // Cycle: walk up; if we come back to ourselves the chart is self-referential.
+    let cursor: string | null | undefined = a.parentId;
+    const seen = new Set<string>([a.id]);
+    let hops = 0;
+    while (cursor && hops < 64) {
+      if (cursor === a.id || seen.has(cursor)) {
+        cycles.push(a);
+        flag(a, "cycle");
+        break;
+      }
+      seen.add(cursor);
+      cursor = byId.get(cursor)?.parentId ?? null;
+      hops += 1;
+    }
+
+    if (isPostingAccount(a, hasChildren) && !a.reportSection) {
+      unmapped.push(a);
+      flag(a, "unmapped");
+    }
+
+    const shown = nodeDisplayBalance(a, a.level - 1, hasChildren, rollups);
+    if (isAbnormalBalance(a, shown)) {
+      abnormal.push(a);
+      flag(a, "abnormal");
+    }
+  }
+
+  return {
+    strayRoots,
+    orphans,
+    unmapped,
+    abnormal,
+    cycles,
+    byAccount,
+    totalIssues: byAccount.size,
+  };
+}
+
+// ── Money cells ────────────────────────────────────────────────────────────
+
+/**
+ * Raw signed amount — LTR + tabular, deliberately TONE-NEUTRAL.
+ *
+ * It used to paint positive emerald and negative rose, which reported every
+ * liability, every equity account and all of revenue as a problem: those are
+ * credit-natured, so their normal balance IS negative in Σ(debit − credit).
+ * Judging a balance is `BalanceAmount`'s job; this one just prints a number
+ * (running ledger balances, debit/credit columns).
+ */
 export function Money({
   value,
   className,
@@ -128,14 +376,73 @@ export function Money({
   strong?: boolean;
 }) {
   const n = Number(value) || 0;
-  const tone =
-    Math.abs(n) < 0.005 ? "text-slate-400" : n > 0 ? "text-emerald-600" : "text-rose-600";
   return (
     <span
       dir="ltr"
-      className={cn("tabular-nums", strong ? "font-extrabold" : "font-semibold", tone, className)}
+      className={cn(
+        "tabular-nums",
+        strong ? "font-extrabold" : "font-semibold",
+        Math.abs(n) < ZERO_EPSILON ? "text-slate-400" : "text-slate-700",
+        className,
+      )}
     >
       {fmtMoney(n)}
+    </span>
+  );
+}
+
+export interface BalanceAmountProps {
+  account: GlAccount;
+  /** The server's signed figure, Σ(debit − credit). */
+  value: number | null | undefined;
+  /** Localized "Dr" / "Cr" labels — the caller owns t(). */
+  debitLabel: string;
+  creditLabel: string;
+  className?: string;
+  strong?: boolean;
+  /** Hide the Dr/Cr tag (dense tree rows). */
+  hideSide?: boolean;
+}
+
+/**
+ * The natural balance cell: magnitude + the side it sits on. Rose ONLY when
+ * the balance is genuinely abnormal for this account (contra-aware), never for
+ * the raw sign.
+ */
+export function BalanceAmount({
+  account,
+  value,
+  debitLabel,
+  creditLabel,
+  className,
+  strong = false,
+  hideSide = false,
+}: BalanceAmountProps) {
+  const signed = Number(value) || 0;
+  const natural = naturalAmount(account, signed);
+  const abnormal = isAbnormalBalance(account, signed);
+  const zero = Math.abs(natural) < ZERO_EPSILON;
+  const side = actualSide(account, signed);
+  const tone = abnormal ? "text-rose-600" : zero ? "text-slate-400" : "text-slate-700";
+
+  return (
+    <span className={cn("inline-flex items-baseline gap-1", className)}>
+      <span
+        dir="ltr"
+        className={cn("tabular-nums", strong ? "font-extrabold" : "font-semibold", tone)}
+      >
+        {fmtMoney(Math.abs(natural))}
+      </span>
+      {!hideSide && !zero && (
+        <span
+          className={cn(
+            "text-[10px] font-extrabold uppercase tracking-wide",
+            abnormal ? "text-rose-500" : "text-slate-400",
+          )}
+        >
+          {side === "debit" ? debitLabel : creditLabel}
+        </span>
+      )}
     </span>
   );
 }

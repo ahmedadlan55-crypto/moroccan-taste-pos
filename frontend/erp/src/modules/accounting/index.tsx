@@ -49,8 +49,27 @@ const ROUTES: Record<string, () => JSX.Element> = {
   "/accounting/dimensions": DimensionsPage,
 };
 
+/**
+ * Manifest leaves that OWN their subtree (subRoutes:true) and therefore must be
+ * matched by PREFIX, before the exact-path table below. The table is a lookup
+ * keyed on the full pathname, so `/accounting/chart-of-accounts/new` misses it
+ * entirely and used to render NotFound — every deep link and every hard refresh
+ * inside the chart of accounts died there. Prefix first, exact second.
+ */
+const SUBTREES: Array<{ base: string; Page: () => JSX.Element }> = [
+  { base: "/accounting/chart-of-accounts", Page: ChartOfAccountsPage },
+];
+
 export default function AccountingModule() {
   const { pathname } = useLocation();
-  const Page = ROUTES[normalizeRoutePath(pathname)];
+  const normalized = normalizeRoutePath(pathname);
+
+  for (const { base, Page } of SUBTREES) {
+    // `=== base` covers the bare route; the trailing slash keeps a future
+    // `/accounting/chart-of-accounts-archive` from being swallowed by it.
+    if (normalized === base || normalized.startsWith(`${base}/`)) return <Page />;
+  }
+
+  const Page = ROUTES[normalized];
   return Page ? <Page /> : <NotFound />;
 }

@@ -163,6 +163,26 @@ export const ALL_CAPS = [
   // gates on finance.gl.post — a different act from reading a report, and so
   // a different capability. routes/erp/sales-posting.js enforces it.
   "finance.gl.post",
+  // Package H corrective gate — the SAME class of mismatch as
+  // 'finance.reports.view' above, on the Chart of Accounts this time.
+  //
+  //   routes/erp.js:119  GET  /erp/gl/accounts            → finance.gl.view
+  //   routes/erp.js:166  POST /erp/gl/accounts/:id/folder → finance.accounts.manage
+  //   routes/erp.js:200  POST /erp/gl/accounts/import     → finance.accounts.manage
+  //   routes/erp.js:751  POST /erp/gl/accounts/:id/move   → finance.accounts.manage
+  //   routes/erp.js:843  POST /erp/gl/accounts            → finance.accounts.manage
+  //   routes/erp.js:924  DELETE /erp/gl/accounts/:id      → finance.accounts.manage
+  //
+  // Neither id existed in this catalog, so the screen gated reads on
+  // 'accounting.view' and writes on 'accounting.accounts.manage' — two keys NO
+  // backend route enforces. The observable defect: an AUDITOR is granted
+  // finance.gl.view server-side (db/migrations/finance/capabilities.js) and the
+  // API answers them, but 'accounting.view' is FIN-only, so the nav hid the
+  // chart of accounts from the one role whose whole job is reading the books.
+  // Added as their own keys rather than renaming the accounting.* pair, per
+  // this file's stated policy of never renaming existing keys.
+  "finance.gl.view",
+  "finance.accounts.manage",
   // ── Accounting write caps (E1 — UI-only gating; backend stays authoritative) ──
   "accounting.accounts.manage",
   "accounting.journals.create",

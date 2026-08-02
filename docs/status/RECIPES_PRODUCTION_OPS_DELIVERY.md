@@ -120,46 +120,148 @@ Two real defects were found by this spec and are fixed:
    case-insensitive; a binary/`_bin` collation would turn every deep link into a
    404 that looked like missing data.
 
-### Full gate
+---
 
-25/37 steps ran before it stopped at the first failure, and **every step this
-work added or touched passed**: `static:design-tokens`, `static:rtl-literals`,
-`erp:tsc`, `erp:vitest`, `root:tests`, `backend:recipes-api`,
-`backend:production-integrity`, `backend:operations-api`,
-`audit:mutation-guards`, plus all three `schema:*` steps and both builds.
+## 4. The report failures — found pre-existing, then fixed
 
-The full ERP E2E suite (`e2e:erp`, 124 tests across four viewport projects) runs
-**88 passed / 4 skipped**, with five failing specs. EVERY ONE was reproduced on
-an untouched `origin/main` worktree — none is caused by this work:
+Seven checks failed when this branch was first gated. **Every one was reproduced
+on an untouched `origin/main` worktree**, so none is caused by this work. They
+were then fixed anyway, on request, because one of them was not a stale test at
+all — it was a live financial defect.
 
-| Failing spec | Cause | Proof it is pre-existing |
-|---|---|---|
-| `erp.spec.ts` closure gate | `500 GET /api/erp/reports/equity-changes` | Same endpoint returns **500 on baseline and on this branch**, curled side by side (ports 3401 vs 3400) |
-| `rc-bilingual.spec.ts` | the same equity-changes 500 | as above |
-| `crud-writes.spec.ts` | "the price persisted: expected 25, received 25.2174" | **Identical failure, identical numbers**, running the same spec from a baseline worktree |
-| `sales-analytics.spec.ts` | expects 16 hub sections, finds 17 | the reports registry is untouched by this branch (`git diff --stat` over `modules/reports`, `routes/analytics`, `lib/analytics` = 0) |
-| `sales-hub-rbac.spec.ts` | expects 15, finds 16 — same extra section | as above |
+### 4.1 The balance sheet was returning zeros in production. Silently.
 
-The last three sit in the sales-reports area, which is the work in flight on
-`release/sales-reports-final`; fixing them from this branch would collide with
-it. The equity-changes 500 is an accounting-report defect worth its own task.
+This surfaced as a red E2E test. It is a shipped bug on `main` affecting every
+request:
 
-TWO GATE STEPS FAIL, and BOTH ARE PRE-EXISTING — verified, not assumed:
+* `routes/erp/reports/balance-sheet.js:29` imports `coaTree` at module scope.
+* `:543` opens a `try`; `:567` and `:577` use `coaTree`.
+* `:911` declares `const coaTree` **inside that same block**. A `const` hoists to
+  the top of its block without initialising, so the module import is in the
+  temporal dead zone for the whole block — and `:567` throws `ReferenceError`
+  before it ever reaches the line that would have defined it.
+* A bare `catch` at `:931` swallowed it and returned **HTTP 200 with an
+  all-zero balance sheet** and `isBalanced: false`, logging nothing.
 
-* `backend:sales-fixes` → `dashboardPayments.api.test.js`, 18 passed / 2 failed
-  on `marginBasis` expecting `cogs` but getting `proxy`. Reproduced **identically
-  on an untouched `origin/main` worktree** (same 18/2, same two assertions).
-* `audit:retired-surfaces` → `e2e/erp/sales-hub-redirects.spec.ts` references the
-  retired `/accounting/sales-analytics` and `/pos-admin/reports` paths but is not
-  on the audit's allow-list. That file is untouched by this branch and was
-  introduced by `origin/main`'s own commit `c05a66a3`; the audit and the spec
-  disagree in the baseline.
+A 200 with plausible-looking zeros is why this survived: nothing alerted, and the
+screen looked like a company with no transactions rather than a broken endpoint.
+`/accounting/balance-sheet` renders those zeros, and
+`modules/accounting/lib/ratios.ts` computes the **financial ratios** from the same
+zeroed payload. `equity-changes.js` then calls the balance sheet internally
+*without passing `req.user`*, so the capability guard answered 401 and
+`equity-changes` returned 500 — that 500 was the visible symptom of an invisible
+bug.
 
-Neither is fixed here: both sit in the sales-reports area, which is exactly the
-work in flight on `release/sales-reports-final`, and touching it from this branch
-would collide with it.
+Three changes, all required (fixing any one alone leaves the 500):
 
-## 4. Risks and open items
+1. Rename the local at `:911` to `coaTreeView`. The JSON key stays `coaTree`, so
+   the API contract does not change.
+2. The `catch` now logs with the request id and marks the response
+   `degraded: true`. Swallowing is how this hid for so long; the next failure in
+   here will be visible.
+3. `fetchBalanceSheetIfrs(asOfDate, user)` threads the caller's identity through.
+   Safe because the caller already passed the *same* `finance.reports.view`
+   capability the balance sheet demands — this forwards an
+   already-authorised identity, it does not bypass the guard. The caller's guard
+   also now rejects a `degraded` body instead of reporting zeros as fact.
+
+**Verified live, not just by test**: `/api/erp/reports/balance-sheet-ifrs` returns
+`totalAssets 5286.25` with `isBalanced: true`, and `/api/erp/reports/equity-changes`
+returns 200 with a clean server log.
+
+### 4.2 Four stale expectations that had outlived the code
+
+| Check | Why it was wrong |
+|---|---|
+| `sales-hub-rbac.spec.ts` expected 15 sections | `SalesAnalyticsHub.tsx` has **17**, of which only 2 are gated; a manager holds one of those two capabilities, so a manager sees **16**. `hub.test.tsx` already derives 16 from the registry and passes. |
+| `audit:retired-surfaces` | `sales-hub-redirects.spec.ts` **must** name the retired paths — that is what proves the redirects work. The allow-list was widened in `8e644768`; the file arrived later in `c05a66a3` and was never added. |
+| `crud-writes.spec.ts` expected price 25 | Since `f83f39f9` a written price is rounded so the **customer-facing** amount is a whole riyal: `25 → ×1.15 = 28.75 → 29 → ÷1.15 = 25.2174`. The stored value is correct. 25 is unreachable under *either* reading, so no re-read of the form rescues it. |
+| `dashboardPayments` `marginBasis` | The test seeds a row into `analytics_daily_branch`, a **derived** table, for a (branch, day) pair it had itself marked dirty — the worker then deletes and rebuilds it to `cogs = 0`. |
+
+For `crud-writes` the magic number is gone: the test now asserts the invariant the
+rounding guard actually promises — that the customer pays a whole riyal — instead
+of pinning a literal that rots the next time the VAT rate moves.
+
+For `dashboardPayments`, `ANALYTICS_DISABLE_WORKER=1` alone did **not** fix it,
+and the reason is worth recording: the suite runs against the dev database
+without pinning `_test`, so *any* other server process sharing that database
+drains the dirty queue. A watcher showed the row appearing with `cogs=90` at
++8.4 s and being rebuilt to `cogs=0` at +13.7 s while the spawned server had
+correctly logged `[analytics-worker] disabled via env` — two stray dev servers on
+ports 3000/3061 were doing it. The fix seeds a date that was never enqueued as
+dirty, so no worker in any process has a reason to touch it. Confirmed 20/20 on
+three consecutive runs **with the stray servers still running**.
+
+### 4.3 One genuine i18n gap, unmasked by the fix above
+
+`rc-bilingual` reports the first problem it finds, so the equity-changes 500 was
+hiding this: `/accounting/sales-posting` rendered an Arabic heading in English
+chrome. `SalesPosting.tsx` does not use `useT` at all. The page **heading** — the
+part the sweep inspects, and the first thing an English user reads — is now
+translated through two new `accounting` keys present in both dictionaries. The
+rest of that screen is deliberately left hardcoded: translating it fully is its
+own task, and folding it into a report fix would hide it.
+
+### 4.4 Left alone, deliberately
+
+* **`sales-analytics.spec.ts` (expects 16, finds 17).** Already fixed on your
+  `release/sales-reports-final` branch — 16 finished commits across 89 files.
+  Fixing it here would duplicate your work and guarantee a conflict.
+* **`MenuItemPage.tsx:227,258` was missed by `0b4d86e`.** The two sibling screens
+  moved to customer-pays semantics; the product create/edit form still posts the
+  raw number, so typing 25 there yields a 29.00 customer price — the exact trap
+  that commit set out to remove. **This is a money-semantics change** and does not
+  belong inside a test-fix commit.
+* **`marginBasis: 'cogs'` may be unreachable in production.** All eight
+  `analytics_daily_branch` rows in dev carry `cogs = 0.00`, sourced from
+  `ar_document_lines.cost_snapshot`. Worth its own investigation.
+
+### 4.5 Final gate: 34 of 37 steps pass
+
+The gate stops at the first failure, so the remaining steps were run individually
+with `--only=` to get a complete picture rather than a truncated one.
+
+| | |
+|---|---|
+| **Passing** | all 3 `schema:*` (the release chain applies every migration to an EMPTY database and fails closed), both builds, `hygiene:test-residue`, `audit:retired-surfaces`, `audit:mutation-guards`, `backend:sales-fixes`, `e2e:rc-gate` **24/24**, and every static/tsc/vitest/backend step |
+| **`test:mutation:full`** | **12 mutants, 0 survived** — including `genealogy-attributes-whole-order`, the original defect |
+
+Three steps still fail. None is caused by this work, and each was traced to a
+specific commit already on `main`:
+
+1. **`audit:mutation-sales-math`** — `[mutation] FATAL: target file missing:
+   …/reports/sales/lib/pivot.ts`. The pivot table was **deliberately deleted** by
+   `390a5fdf` ("وداعًا للجدول المحوري"), which is on `main`; the audit still
+   points 14 mutants at the removed file. The audit script is byte-identical
+   between `main` and this branch — untouched here.
+
+   **Not fixed on purpose.** The file's own doctrine (see the `EQ-05` comment)
+   says to delete mutants whose subject is gone — but that removes 14 real
+   guards, and the natural replacement targets (`grouping.ts`, `filters.ts`,
+   `api.ts`) are being **rewritten on `release/sales-reports-final`**, where
+   mutants pinned to verbatim source snippets would break your merge. Deleting
+   guard coverage is your call, not something to slip into a test-fix commit.
+
+2. **`e2e:erp` — 8 failures.** Four are `sales-analytics` expecting 16 hub
+   sections and finding 17: already fixed on your branch. The other four are
+   stale PNG baselines — `0b4d86e8` added the "Make them whole" button and the
+   three price columns and never regenerated them. The pixel diff shows exactly
+   that button and nothing else.
+
+3. **`e2e:pos` — 9 `toHaveScreenshot` failures.** This branch does not touch
+   `frontend/pos` at all (`git diff --stat` = empty). Run on an untouched
+   `origin/main` worktree, POS fails a **superset** of these — the same
+   `rtl-visual` snapshots plus `responsive`, `bilingual-flow` and
+   `critical-cashier-shift`. The diff shows catalog *data* drift (item counts and
+   names), not a UI change: the baseline is pinned to a seeded catalog that grows
+   every time anyone runs the suite.
+
+Regenerating those baselines is a one-command fix, but it permanently blesses
+whatever is on screen. Doing that for someone else's UI change — and for a POS
+snapshot whose instability is caused by mutable seed data — would convert a
+visible problem into an invisible one.
+
+## 5. Risks and open items
 
 Stated plainly rather than buried.
 

@@ -6,7 +6,8 @@ const { ensureCoreAccounts, nextFlatJournalNumber } = require('../lib/glPosting'
 // to seed or refresh the chart of accounts in one click.
 const COA_TEMPLATE = require('../db/coa-template.json');
 // v5.11.3 — developer-only guard for destructive journal endpoints.
-const { guardDeveloper } = require('../lib/transactionGuards');
+// guardBreakGlass fences the one endpoint that deletes the whole ledger.
+const { guardDeveloper, guardBreakGlass } = require('../lib/transactionGuards');
 // FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
 const requireCapability = require('../middleware/requireCapability');
 const coaTree = require('../lib/coa/tree');
@@ -23,6 +24,7 @@ const { logAudit } = require('../lib/auditLogger');
 function _actor(req) {
   return (req.user && (req.user.username || req.user.name)) || '';
 }
+
 
 // FC-P1 — server-side journal-line validation shared by create + edit. Every
 // posting line must reference an EXISTING, ACTIVE, LEAF (postable) account, so
@@ -951,7 +953,9 @@ router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), asy
 // v7.5 SECURITY — every seed/repair endpoint below rewrites the chart of
 // accounts (and some create journals). They were reachable with ANY
 // authenticated token. Same capability as the other COA mutations above.
-router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'), async (req, res) => {
+router.post('/gl/coa/wipe-and-seed',
+  guardBreakGlass('محو دليل الحسابات وإعادة بذره'),
+  requireCapability('finance.accounts.manage'), async (req, res) => {
   const phrase = (req.body && req.body.confirmPhrase) || '';
   if (phrase !== 'WIPE-COA-CONFIRMED') {
     return res.status(400).json({ success: false, error: 'تأكيد ناقص أو خاطئ' });

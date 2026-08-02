@@ -988,4 +988,43 @@ router.get('/diagnose/:id', async (req, res) => {
   } catch (e) { res.json({ error: e.message }); }
 });
 
+// ── Purge ALL purchasing + goods-receipt data ───────────────────────────────
+// POST /api/purchases/purge   { preview?: true } | { confirm: "DELETE" }
+//
+// Lives here rather than under /api/procurement because that namespace is
+// gated behind PROCUREMENT_P2P_ENABLE — a cleanup tool that disappears when a
+// feature flag is off is a cleanup tool nobody can reach when they need it.
+//
+// ADMIN ONLY, and PREVIEW BY DEFAULT. This deletes financial history and
+// unwinds the stock those receipts created; it cannot be undone. A caller must
+// send an explicit confirm string, so no accidental POST can trigger it.
+router.post('/purge', requireRole('admin'), async (req, res) => {
+  try {
+    const purge = require('../lib/procurementPurge');
+    const plan = await purge.planPurge(db);
+    const confirm = String((req.body && req.body.confirm) || '');
+
+    if (confirm !== 'DELETE') {
+      // Preview: exact counts, zero writes.
+      return res.json({ success: true, applied: false, ...plan });
+    }
+    if (plan.empty) {
+      return res.json({ success: true, applied: false, ...plan, note: 'لا توجد بيانات مشتريات لحذفها' });
+    }
+
+    const removed = await purge.applyPurge(db, plan);
+    try {
+      await db.query(
+        `INSERT INTO audit_logs (user_username, action, entity_type, entity_id, details, created_at)
+         VALUES (?, 'procurement_purge', 'procurement', 'ALL', ?, NOW())`,
+        [(req.user && req.user.username) || 'system',
+         JSON.stringify({ removed, stockUnwound: plan.stockUnwind.length })]);
+    } catch (_) { /* audit is best-effort; the purge DID run */ }
+
+    res.json({ success: true, applied: true, removed, ...plan });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 module.exports = router;

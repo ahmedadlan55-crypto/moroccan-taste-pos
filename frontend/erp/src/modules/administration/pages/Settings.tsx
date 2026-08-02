@@ -18,6 +18,7 @@ import { z } from "@/shared/schemas";
 import { useCan } from "@/app/providers";
 import { useT, type TFunction } from "@/i18n";
 import { ensureAck, type MutationAck } from "../_common";
+import { ProcurementPurge } from "../ProcurementPurge";
 
 type SettingsMap = Record<string, string>;
 
@@ -200,6 +201,10 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Destructive administration lives at the BOTTOM, after everything
+              routine, and behind its own preview + typed confirmation. */}
+          <ProcurementPurge />
 
           {canManage && (
             <FormActions sticky>

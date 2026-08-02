@@ -275,6 +275,46 @@ async function ensureSchema() {
   const bomList = await req('GET', '/api/erp/bom', token);
   check('GET /api/erp/bom still returns an array on success', bomList.status === 200 && Array.isArray(bomList.body), bomList.status);
 
+  // 4) SAVE-AND-ACTIVATE OVER AN ALREADY-ACTIVE RECIPE.
+  // Both legacy writers pass activate:true. Because migration 0024 marks every
+  // pre-existing recipe 'active', that save takes the REVISE branch — which used
+  // to insert the new version as a hardcoded draft while the code below still
+  // archived the previous active version and cascaded cost on `status`. Net
+  // effect: the product was left with NO active recipe and menu.bom_id pointing
+  // at a draft. Nothing asserted the product's state AFTER a second save, which
+  // is exactly why it shipped. This asserts the invariant, not the HTTP status.
+  // CAKE already carries an ACTIVE recipe by this point (the duplicate-fold save
+  // above), so this single save is the revise path — one save is enough to show
+  // the defect, and asserting after ONE keeps a second save from repairing the
+  // state and hiding it.
+  const [beforeActive] = await conn.query(
+    "SELECT id FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')='menu' AND status='active'", [P + 'CAKE']);
+  check('precondition: the product HAS an active recipe before this save', beforeActive.length === 1, beforeActive);
+
+  const revised = await req('POST', '/api/menu/' + P + 'CAKE/recipe-bom', token, {
+    yieldQuantity: 1, lines: [{ componentItemId: P + 'SUGAR', quantity: 7 }],
+  });
+  check('save-and-activate over an ACTIVE recipe answers 200', revised.status === 200, revised.body);
+
+  const [actives] = await conn.query(
+    "SELECT id, version, status, is_active FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')='menu' AND status='active'",
+    [P + 'CAKE']);
+  check('DB EFFECT: the product is NOT left without an active recipe', actives.length >= 1, actives);
+  check('DB EFFECT: exactly ONE active version, and it is the one just saved',
+    actives.length === 1 && actives[0].id === revised.body.bomId && Number(actives[0].is_active) === 1, actives);
+  // The cascade sets menu.bom_id unconditionally, so pointing at the new row is
+  // NOT the invariant — pointing at a row that is actually ACTIVE is.
+  const [linked] = await conn.query(
+    `SELECT m.bom_id, m.cost, m.cost_source, b.status AS bom_status
+       FROM menu m LEFT JOIN bom b ON b.id = m.bom_id WHERE m.id=?`, [P + 'CAKE']);
+  check('DB EFFECT: menu.bom_id points at an ACTIVE recipe, not a draft',
+    linked.length === 1 && linked[0].bom_id === revised.body.bomId && linked[0].bom_status === 'active', linked);
+  check('DB EFFECT: the cascaded cost is this save\'s cost (7 x 0.02 = 0.14)',
+    linked.length === 1 && near(linked[0].cost, 0.14) && linked[0].cost_source === 'recipe', linked);
+  const [priorVersion] = await conn.query('SELECT status, is_active FROM bom WHERE id=?', [beforeActive[0].id]);
+  check('DB EFFECT: the version it replaced is archived, not left active alongside it',
+    priorVersion.length === 1 && priorVersion[0].status === 'archived' && Number(priorVersion[0].is_active) === 0, priorVersion);
+
   console.log('\n' + (_f === 0 ? 'ALL PASS' : 'FAILURES') + ': ' + _p + ' passed, ' + _f + ' failed\n');
   if (_f > 0) console.log(boot.slice(-2500));
   await cleanup();

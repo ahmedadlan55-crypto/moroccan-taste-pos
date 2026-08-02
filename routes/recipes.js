@@ -1041,14 +1041,24 @@ async function saveRecipe(o) {
     } else if (revising) {
       bomId = 'BOM-' + Date.now() + '-' + crypto.randomBytes(3).toString('hex');
       newVersion = maxVersion + 1; newRowVersion = 1; action = 'revise';
+      // The revision carries the REQUESTED status, exactly like the create and
+      // edit branches above and below. It used to hardcode 'draft'/is_active=0
+      // while the code below still archived the previous active version and
+      // cascaded cost on `status === 'active'` — so a caller that asked to
+      // activate (both legacy writers do) ended up with the old version
+      // archived, the new one a draft, and menu.bom_id pointing at that draft:
+      // a product with NO active recipe. Migration 0024 marks every existing
+      // recipe 'active', so `revising` is the normal path, not the rare one.
+      // The "never edit an active recipe in place" rule is still honoured —
+      // this is a NEW version row either way.
       await conn.query(
         `INSERT INTO bom (id, product_id, product_source, version, row_version, status, yield_quantity,
                           yield_unit, yield_unit_id, is_active, effective_from, effective_to, notes,
                           consumption_warehouse_id, needs_review, revision_of, created_by, updated_by, updated_at)
-         VALUES (?,?,?,?,1,'draft',?,?,?,0,?,?,?,?,?,?,?,?,NOW())`,
-        [bomId, productId, source, newVersion, header.yield_quantity, header.yield_unit, header.yield_unit_id,
-         header.effective_from, header.effective_to, header.notes, header.consumption_warehouse_id,
-         header.needs_review, target.id, actor, actor]);
+         VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
+        [bomId, productId, source, newVersion, status, header.yield_quantity, header.yield_unit, header.yield_unit_id,
+         status === 'active' ? 1 : 0, header.effective_from, header.effective_to, header.notes,
+         header.consumption_warehouse_id, header.needs_review, target.id, actor, actor]);
     } else {
       bomId = target.id; newVersion = Number(target.version) || 1; action = 'edit';
       const [u] = await conn.query(

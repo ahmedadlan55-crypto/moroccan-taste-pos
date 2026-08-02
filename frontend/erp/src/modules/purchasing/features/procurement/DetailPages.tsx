@@ -142,8 +142,9 @@ export function ReceiptDetailPage() {
       </Section>
       <Section icon={PackageCheck} title={t("purchasing.lines.title")}>
         <Table head={<><Th>{t("purchasing.col.item")}</Th><Th left>{t("purchasing.lines.entered")}</Th><Th left>{t("purchasing.lines.base")}</Th><Th left>{t("purchasing.lines.unitCost")}</Th><Th>{t("purchasing.lines.lot")}</Th><Th>{t("purchasing.lines.expiry")}</Th><Th left>{t("purchasing.col.total")}</Th></>}>
+          {/* الاسم أولًا والكود آخر ملاذ — كان هذا العمود يعرض item_id وحده. */}
           {lines.map((l, i) => (
-            <tr key={i}><Td>{s(l.item_id)}</Td><Td left>{n(l.entered_qty)} {s(l.entered_unit_code, "")}</Td><Td left>{n(l.base_qty)}</Td>
+            <tr key={i}><Td>{s(l.item_name, s(l.item_id))}</Td><Td left>{n(l.entered_qty)} {s(l.entered_unit_code, "")}</Td><Td left>{n(l.base_qty)}</Td>
               <Td left>{formatCurrency(n(l.base_unit_cost))}</Td><Td>{s(l.lot_no)}</Td><Td>{l.expiry_date ? formatDate(s(l.expiry_date, "")) : "—"}</Td><Td left bold>{formatCurrency(n(l.line_total))}</Td></tr>
           ))}
         </Table>

@@ -31,6 +31,38 @@ async function _assertSupplierActive(conn, supplierId) {
   return s[0];
 }
 
+/**
+ * يملأ اسم الصنف من سجلّ الأصناف نفسه.
+ *
+ * كان السطر يأخذ الاسم من العميل ويقع على '' عند غيابه — فكل أمر شراء أُنشئ
+ * من أي مسار لا يرسل itemName (الـAPI مباشرةً، أو أي شاشة غير شاشة الإنشاء)
+ * خزّن اسمًا فارغًا. والنتيجة أن الشاشة تعرض عمود صنف فارغًا أو الكود وحده،
+ * وهو ما رآه المالك: «لا افهم لما تضع لي الكود بدون اسم الصنف».
+ *
+ * الاسم يُقرأ من الخادم لا يُستقبل: العميل قد يرسله خاطئًا أو لا يرسله، بينما
+ * inv_items هي المرجع. والقيمة المرسلة تفوز فقط إن كان الصنف غير موجود في
+ * السجلّ (صنف حرّ)، وإلا فالكود آخر ملاذ — أفضل من خانة فارغة.
+ *
+ * لقطة لا مرجعًا حيًّا: الاسم يُجمَّد على السطر وقت الإنشاء، فإعادة تسمية صنف
+ * لاحقًا لا تُعيد كتابة أوامر شراء تاريخية.
+ */
+async function _fillItemNames(conn, lines) {
+  const ids = [...new Set(lines.map((l) => l.itemId).filter(Boolean))];
+  if (!ids.length) return lines;
+  const byId = {};
+  try {
+    const [rows] = await conn.query(
+      `SELECT id, name FROM inv_items WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+    for (const r of rows) if (r.name) byId[r.id] = String(r.name);
+  } catch (_) { /* سجلّ الأصناف غائب — نُبقي ما أرسله العميل */ }
+  for (const l of lines) {
+    const resolved = byId[l.itemId];
+    if (resolved) l.itemName = resolved;
+    else if (!l.itemName) l.itemName = String(l.itemId || '');
+  }
+  return lines;
+}
+
 function _computeLines(rawLines, standardRate) {
   if (!Array.isArray(rawLines) || !rawLines.length) throw err('VALIDATION_ERROR', 'أمر الشراء يتطلب سطرًا واحدًا على الأقل');
   return rawLines.map((l) => {
@@ -46,6 +78,7 @@ function _computeLines(rawLines, standardRate) {
     }, standardRate);
     return Object.assign(c, {
       itemId: l.itemId || l.item_id,
+      // اسم مبدئي من العميل إن وُجد؛ و_fillItemNames أدناه هو المرجع.
       itemName: l.itemName || l.item_name || '',
       enteredUnitId: l.enteredUnitId || l.unitId || null,
       enteredUnitCode: l.enteredUnitCode || l.unit || null,
@@ -77,6 +110,7 @@ router.post('/', requireCapability('purchase_orders.create'), async (req, res) =
          b.orderDate || new Date().toISOString().slice(0, 10), b.expectedDate || null, b.expectedDate || null,
          b.warehouseId || null, b.brandId || null, b.branchId || null, b.costCenterId || null, b.currency || 'SAR',
          totals.subtotal, totals.discountAmount, totals.vatAmount, totals.total, b.notes || null, actor, H.idemOf(req)]);
+      await _fillItemNames(conn, lines);
       for (const l of lines) {
         await conn.query(
           `INSERT INTO po_lines
@@ -196,6 +230,7 @@ router.patch('/:id', requireCapability('purchase_orders.edit_draft'), async (req
         const lines = _computeLines(b.lines || b.items, standardRate);
         const totals = calc.computeTotals(lines);
         await conn.query('DELETE FROM po_lines WHERE po_id = ?', [req.params.id]);
+        await _fillItemNames(conn, lines);
         for (const l of lines) {
           await conn.query(
             `INSERT INTO po_lines (id, po_id, item_id, item_name, qty, unit_price, vat_rate, vat_amount, total, received_qty,

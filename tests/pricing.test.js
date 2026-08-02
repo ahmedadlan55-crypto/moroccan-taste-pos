@@ -26,12 +26,20 @@ function check(name, cond) {
 }
 const eq = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-9;
 
-// ── EXCLUSIVE (every current menu row) — VAT is ADDED on top ───────────────
+// ── EXCLUSIVE (every current menu row) — VAT is ADDED on top, then the
+// customer-facing unit price is SNAPPED TO A WHOLE RIYAL (v8.2).
+//
+// These three used to assert 16 → 16.00 + 2.40 = 18.40. That is the arithmetic
+// the owner rejected: he sells at whole riyals and the till was printing
+// halalas on every standard-rated row. The gross is now rounded FIRST and
+// net/vat derived from it, so the customer pays 18 and `net + vat === gross`
+// still holds exactly — which is what the sale journal and ZATCA require.
 {
   const s = pricing.splitLinePrice(16, false, 15);
-  check('exclusive 16 @15% → net 16.00', eq(s.net, 16));
-  check('exclusive 16 @15% → vat 2.40', eq(Math.round(s.vat * 100) / 100, 2.4));
-  check('exclusive 16 @15% → gross 18.40 (the owner\'s example)', eq(Math.round(s.grossPrecise * 100) / 100, 18.4));
+  check('exclusive 16 @15% → gross snaps to a whole 18', eq(s.grossPrecise, 18));
+  check('exclusive 16 @15% → net 15.65 (derived FROM the rounded gross)', eq(s.net, 15.65));
+  check('exclusive 16 @15% → vat 2.35', eq(s.vat, 2.35));
+  check('exclusive 16 @15% → net + vat === gross exactly', eq(Math.round((s.net + s.vat) * 100) / 100, 18));
   check('exclusive: net + vat === gross EXACTLY', eq(s.net + s.vat, s.grossPrecise));
 }
 {

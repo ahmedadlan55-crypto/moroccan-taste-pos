@@ -197,12 +197,12 @@ describe("the derived tender ladder on the cash tab", () => {
   });
 
   it("slot 0 keeps the pinned «المبلغ بالضبط» label and sets the exact amount", () => {
-    openDialog(makeCtx({ cart: cartOf(37.25) }));
+    openDialog(makeCtx({ cart: cartOf(37) }));
     const row = screen.getByRole("button", { name: "المبلغ بالضبط" });
     fireEvent.click(row);
-    expect(screen.getByLabelText(/المستلَم من العميل/)).toHaveValue(37.25);
+    expect(screen.getByLabelText(/المستلَم من العميل/)).toHaveValue(37);
     expect(screen.getByText("الباقي للعميل")).toBeInTheDocument();
-    // …and the rest of the ladder for 37.25 is 40 / 50 / 100.
+    // …and the rest of the ladder for 37 is 40 / 50 / 100.
     for (const label of ["40", "50", "100"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
@@ -210,9 +210,13 @@ describe("the derived tender ladder on the cash tab", () => {
 });
 
 describe("split fill-remainder", () => {
-  /** 73.50 bill, 50.00 already in cash — the brief's 23.50 mental subtraction. */
+  /** 74.00 bill, 50.00 already in cash — the brief's mental subtraction, now
+   *  over a whole-riyal bill. It used to be 73.50; whole-riyal shelf pricing
+   *  (cartMath.wholeUnitGross) means a line can no longer land on a halala, so
+   *  a 73.50 total is not a bill this register can produce. The behaviour under
+   *  test — the tender ladder and the split fill — is unchanged. */
   function splitCtx(overrides: Parameters<typeof makeCtx>[0] = {}) {
-    return makeCtx({ supervisor: true, cart: cartOf(73.5), ...overrides });
+    return makeCtx({ supervisor: true, cart: cartOf(74), ...overrides });
   }
 
   it("fills the ACTIVE leg with total − the other legs, and the sum row goes green", () => {
@@ -221,9 +225,9 @@ describe("split fill-remainder", () => {
     fireEvent.change(screen.getByLabelText("كاش"), { target: { value: "50" } });
     fireEvent.focus(screen.getByLabelText("شبكة"));
     const fill = screen.getByRole("button", { name: "املأ المبلغ المتبقي في الخانة المحددة" });
-    expect(fill).toHaveTextContent("المتبقي: 23.50");
+    expect(fill).toHaveTextContent("المتبقي: 24.00");
     fireEvent.click(fill);
-    expect(screen.getByLabelText("شبكة")).toHaveValue(23.5);
+    expect(screen.getByLabelText("شبكة")).toHaveValue(24);
     expect(screen.getByText("المجموع مطابق")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /تأكيد الدفع/ })).toBeEnabled();
   });
@@ -235,9 +239,9 @@ describe("split fill-remainder", () => {
     fireEvent.focus(screen.getByLabelText("شبكة"));
     fireEvent.change(screen.getByLabelText("شبكة"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "املأ المبلغ المتبقي في الخانة المحددة" }));
-    expect(screen.getByLabelText("شبكة")).toHaveValue(23.5);
+    expect(screen.getByLabelText("شبكة")).toHaveValue(24);
     fireEvent.click(screen.getByRole("button", { name: "املأ المبلغ المتبقي في الخانة المحددة" }));
-    expect(screen.getByLabelText("شبكة")).toHaveValue(23.5);
+    expect(screen.getByLabelText("شبكة")).toHaveValue(24);
   });
 
   it("clamps at zero: an over-tendered other leg cannot fill a negative amount", () => {
@@ -260,7 +264,7 @@ describe("split fill-remainder", () => {
     expect(fill).toBeDisabled();
     fireEvent.click(fill);
     expect(credit.value).toBe("");
-    expect(screen.getByText("0.00 / 73.50")).toBeInTheDocument();
+    expect(screen.getByText("0.00 / 74.00")).toBeInTheDocument();
     // The pad is inert for the same reason, and says so.
     expect(screen.getByTestId("numpad")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByTestId("numpad-hint")).toHaveTextContent("مشرفًا/مديرًا");
@@ -270,7 +274,7 @@ describe("split fill-remainder", () => {
     openDialog(splitCtx());
     fireEvent.click(screen.getByRole("tab", { name: TAB.split }));
     fireEvent.click(screen.getByRole("button", { name: "املأ المبلغ المتبقي في الخانة المحددة" }));
-    expect(screen.getByLabelText("كاش")).toHaveValue(73.5);
+    expect(screen.getByLabelText("كاش")).toHaveValue(74);
     expect(screen.getByText("المجموع مطابق")).toBeInTheDocument();
   });
 });

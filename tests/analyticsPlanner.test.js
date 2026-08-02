@@ -84,7 +84,22 @@ console.log('\n── totals statement shape ──');
 test('totals = GROUP BY <exprs> WITH ROLLUP + GROUPING flag per dimension', () => {
   const p = planner.plan(req({ dimensions: ['branch', 'business_day'] }), GLOBAL);
   const t = p.statements[0].totals.sql;
-  ok(/WITH ROLLUP$/.test(t.trim()), 'totals must end WITH ROLLUP');
+  // A cautionary pair. The original assertion was `/WITH ROLLUP$/` — it pinned
+  // the MECHANISM (the statement ending at WITH ROLLUP) and broke the moment
+  // the detail rows began being discarded in SQL, which was the improvement.
+  // I replaced it with `/HAVING \(GROUPING\(/` and made the identical mistake
+  // one layer down: that spelling then broke when HAVING had to reference the
+  // select alias instead, because restating a wrapped expression inside HAVING
+  // is a MySQL error (see analyticsTotalsExecutable.test.js).
+  //
+  // So this asserts only what a TEXT test can honestly claim: the grouping is a
+  // ROLLUP, and the detail rows are discarded by the server rather than by Node.
+  // Whether the SQL is valid, and whether it returns the right levels, is
+  // settled by executing it — that is analyticsTotalsExecutable's job, and it
+  // is the one that has to stay green.
+  ok(/WITH ROLLUP\b/.test(t), 'totals must GROUP BY … WITH ROLLUP');
+  ok(/\bHAVING\b/.test(t), 'totals must discard detail rows in SQL, not in Node');
+  ok(/HAVING \([^)]*g\d+/.test(t), 'the HAVING must filter on the GROUPING flags');
   ok(/GROUPING\(f\.branch_id\) AS g0/.test(t), 'GROUPING flag g0 missing');
   // date dims are select-wrapped; GROUPING/GROUP BY must reuse the EXACT
   // wrapped expression (ONLY_FULL_GROUP_BY matches by text)

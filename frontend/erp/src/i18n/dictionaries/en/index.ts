@@ -11,11 +11,13 @@ import { menu } from "./menu";
 import { menuRest } from "./menuRest";
 import { misc } from "./misc";
 import { nav } from "./nav";
+import { operations } from "./operations";
 import { overview } from "./overview";
 import { people } from "./people";
 import { posAdmin } from "./posAdmin";
 import { production } from "./production";
 import { purchasing } from "./purchasing";
+import { recipes } from "./recipes";
 import { sales } from "./sales";
 import { salesReports } from "./salesReports";
 import { sharedUi } from "./sharedUi";
@@ -49,11 +51,13 @@ export const en = {
   menuRest,
   misc,
   nav,
+  operations,
   overview,
   people,
   posAdmin,
   production,
   purchasing,
+  recipes,
   sales,
   salesReports,
   sharedUi,

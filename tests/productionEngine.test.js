@@ -33,8 +33,18 @@ check('over-issue within tolerance ok (100 planned, 105 issued @10%)', P.checkOv
 check('over-issue beyond tolerance fails (100 planned, 111 issued @10%)', !P.checkOverIssue(100, 100, 11, 0.10).ok);
 check('over-issue exact cap ok', P.checkOverIssue(100, 0, 110, 0.10).ok && !P.checkOverIssue(100, 0, 110.01, 0.10).ok);
 check('over-production mirrors (planned 50, produced 40+waste 5, +10 good @10%)', P.checkOverProduction(50, 40, 5, 10, 0, 0.10).ok && !P.checkOverProduction(50, 40, 5, 10, 1, 0.10).ok);
-check('waste allowance: pct=0 never role-gates', !P.wasteAllowanceExceeded(100, 0, 50, 0));
+// SEMANTICS CHANGED — this used to assert 'pct=0 never role-gates'. Under that
+// rule a zero-scrap order was indistinguishable from an unconfigured one; 0 was
+// ALSO the column default and what both create routes wrote when the field was
+// omitted, so the gate never fired on ANY order in the system. NULL is now the
+// "no explicit policy" value and 0 means what it says. Migration 0027 rewrote
+// every existing 0 to NULL, so no historical order changed behaviour.
+check('waste allowance: NULL = no explicit policy, not gated', !P.wasteAllowanceExceeded(100, 0, 50, null));
+check('waste allowance: pct=0 now gates ANY waste', P.wasteAllowanceExceeded(100, 0, 0.001, 0));
+check('waste allowance: pct=0 does not gate a zero-waste event', !P.wasteAllowanceExceeded(100, 0, 0, 0));
 check('waste allowance: 5% of 100 → 5 ok, 5.5 exceeded', !P.wasteAllowanceExceeded(100, 2, 3, 5) && P.wasteAllowanceExceeded(100, 2, 3.5, 5));
+check('hasExplicitScrapAllowance distinguishes 0 from null',
+  P.hasExplicitScrapAllowance(0) === true && P.hasExplicitScrapAllowance(null) === false);
 
 console.log('\n═══ productionEngine — output event costing ═══');
 // WIP 1000, planned 100, nothing produced → first event of 40 good:

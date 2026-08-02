@@ -32,6 +32,8 @@ const C = require('../lib/inventoryTxContract');
 const IDEM = require('../lib/idempotencyStore');
 const L = require('../lib/lotLedger');
 const IU = require('../lib/itemUnits');
+const PA = require('../lib/productionAllocation');
+const requireCapability = require('../middleware/requireCapability');
 const { recomputeInvItemStock } = require('../lib/stockRecompute');
 const requireRole = require('../middleware/auth').requireRole;
 
@@ -83,16 +85,45 @@ async function _nextNumber(conn) {
   return 'PRD-' + ymd + '-' + String(Number(r[0] && r[0].s) || 1).padStart(4, '0');
 }
 
+// AUDIT — FAIL-CLOSED.
+//
+// This used to wrap the INSERT in `try { … } catch (_) { /* best-effort */ }`
+// and then unconditionally return a SYNTHESIZED event object, which the route
+// echoes to the client as `auditEvent`. So a caller saw a populated audit
+// record for a row that was never written, and every V2 production mutation
+// could commit stock and GL with no timeline entry. That directly contradicts
+// this repo's own written contract in lib/auditLogger.js:45-68 ("a journal that
+// gets approved/posted/reversed with NO audit trail is a compliance gap this
+// repo has already been burned by once").
+//
+// The INSERT runs on the caller's transaction connection, so if it fails the
+// whole state change rolls back with it — which is the point.
 async function _audit(conn, docId, action, fromStatus, toStatus, actor, note, payload) {
   const q = conn || db;
-  try {
-    await q.query(
-      'INSERT INTO inv_tx_events (id, doc_type, doc_id, action, from_status, to_status, actor, note, payload_json) VALUES (?,?,?,?,?,?,?,?,?)',
-      ['EV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), 'production', docId, action, fromStatus || null, toStatus || null, actor || '', String(note || '').slice(0, 500), payload ? JSON.stringify(payload).slice(0, 8000) : null]
-    );
-  } catch (_) { /* audit best-effort */ }
+  await q.query(
+    'INSERT INTO inv_tx_events (id, doc_type, doc_id, action, from_status, to_status, actor, note, payload_json) VALUES (?,?,?,?,?,?,?,?,?)',
+    ['EV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), 'production', docId, action, fromStatus || null, toStatus || null, actor || '', String(note || '').slice(0, 500), payload ? JSON.stringify(payload).slice(0, 8000) : null]
+  );
   return { docType: 'production', docId, action, fromStatus: fromStatus || null, toStatus: toStatus || null, actor: actor || '', at: new Date().toISOString() };
 }
+
+// Guard BOTH warehouses a production order touches. The order relieves stock in
+// `warehouse_id` and receives it in `output_warehouse_id`; guarding only one of
+// them let a user scoped to just one side move stock in the other. Every
+// mutation and every read below goes through this.
+function _guardBothWarehouses(req, res, doc) {
+  if (!req.guardWh) return true;
+  if (!req.guardWh(res, doc.warehouse_id)) return false;
+  const outWh = doc.output_warehouse_id || doc.warehouse_id;
+  if (outWh !== doc.warehouse_id && !req.guardWh(res, outWh)) return false;
+  return true;
+}
+
+// The calendar day a journal belongs to, in the company's timezone — never the
+// process-local or UTC day. See lib/accountingDate.js for the bug that module
+// exists to kill (00:00-02:59 Riyadh posting to the previous ledger day while
+// the invoice said today).
+const { journalDate } = require('../lib/accountingDate');
 
 async function _loadWarehouse(id, conn) {
   const q = conn || db;
@@ -121,23 +152,59 @@ async function _productName(q, productId) {
   } catch (_) { return ''; }
 }
 
-// BOM expansion (same math as legacy create: qty × batches × (1 + waste_pct)).
+// BOM expansion (same math as legacy create: qty × batches × (1 + waste_pct)),
+// with TWO corrections.
+//
+// 1. DUPLICATE COMPONENTS ARE COLLAPSED. A BOM listing the same component twice
+//    used to produce TWO production_consumption rows, and the issue path then
+//    built its plan with `new Map(planRows.map(r => [r.item_id, r]))`, which
+//    keeps only the LAST one. Consequences, all silent: the over-issue cap was
+//    computed against a fraction of the true requirement, only one row's
+//    qty_actual ever moved, and the orphan row reported a permanent phantom
+//    shortage in /availability and a permanent -100% quantity variance in
+//    /variance-report. Collapsing here (and on the recipe write side, see
+//    lib/recipeEngine.canonicalizeLines) makes the plan single-valued by
+//    construction. Aggregation is on the EXPANDED quantity, so the total
+//    material demand is unchanged.
+//
+// 2. `base_quantity` is preferred over `quantity` so a line entered in a major
+//    unit (1 KG of a gram-based item) expands in BASE units like the rest of the
+//    stock system, instead of expanding the raw typed number.
 async function _expandBom(q, bomId, qtyPlanned, warehouseId) {
-  const [bomRows] = await q.query('SELECT id, product_id, yield_quantity, yield_unit FROM bom WHERE id=? AND is_active=1', [bomId]);
+  const [bomRows] = await q.query(
+    "SELECT id, product_id, product_source, version, yield_quantity, yield_unit FROM bom WHERE id=? AND (is_active=1 OR status='active')", [bomId]);
   if (!bomRows.length) throw _err('VALIDATION_ERROR', 'الوصفة (BOM) غير موجودة أو غير نشطة: ' + bomId);
   const bom = bomRows[0];
   const yieldQ = Number(bom.yield_quantity) || 1;
   const batches = Number(qtyPlanned) / yieldQ;
-  const [lines] = await q.query('SELECT * FROM bom_lines WHERE bom_id=?', [bomId]);
+  const [lines] = await q.query('SELECT * FROM bom_lines WHERE bom_id=? ORDER BY line_no, id', [bomId]);
   if (!lines.length) throw _err('VALIDATION_ERROR', 'الوصفة بلا مكوّنات — أضف مكوّنات أولًا');
-  const out = [];
+
+  const byItem = new Map();
+  const order = [];
   for (const l of lines) {
     const waste = Number(l.waste_pct || 0) / 100;
-    const qty = P.round4(Number(l.quantity) * batches * (1 + waste));
-    const unitCost = await E.getEffectiveCost(q, l.component_item_id, warehouseId);
-    out.push({ itemId: l.component_item_id, qty, unitCost: P.round4(unitCost), lineTotal: P.round2(qty * unitCost) });
+    const net = Number(l.base_quantity != null ? l.base_quantity : l.quantity);
+    const qty = P.round4(net * batches * (1 + waste));
+    if (byItem.has(l.component_item_id)) {
+      const prev = byItem.get(l.component_item_id);
+      prev.qty = P.round4(prev.qty + qty);
+      prev.mergedFrom += 1;
+    } else {
+      byItem.set(l.component_item_id, { itemId: l.component_item_id, qty, mergedFrom: 1 });
+      order.push(l.component_item_id);
+    }
   }
-  return { bom, batches, lines: out };
+  const out = [];
+  for (const id of order) {
+    const r = byItem.get(id);
+    const unitCost = await E.getEffectiveCost(q, id, warehouseId);
+    out.push({
+      itemId: id, qty: r.qty, mergedFrom: r.mergedFrom,
+      unitCost: P.round4(unitCost), lineTotal: P.round2(r.qty * unitCost),
+    });
+  }
+  return { bom, batches, lines: out, mergedComponents: out.filter((l) => l.mergedFrom > 1).map((l) => l.itemId) };
 }
 
 async function _insertConsumption(conn, orderId, warehouseId, expanded) {
@@ -222,7 +289,22 @@ router.post('/preview-availability', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const p = C.parseListQuery(req.query, ['created_at', 'planned_date', 'status', 'order_number', 'qty_planned'], ALL_STATUSES);
-    const sc = req.whScopeClause ? req.whScopeClause('po.warehouse_id') : { sql: '', params: [] };
+    // SCOPE ON BOTH WAREHOUSES. This used to clause only `po.warehouse_id`,
+    // while the user-supplied ?warehouseId filter below deliberately matched
+    // EITHER column — so read scope and the write guards disagreed about which
+    // orders a user owns. A user scoped to the output warehouse alone could not
+    // see the orders they were allowed to receive into.
+    const scSrc = req.whScopeClause ? req.whScopeClause('po.warehouse_id') : { sql: '', params: [] };
+    const scOut = req.whScopeClause ? req.whScopeClause('po.output_warehouse_id') : { sql: '', params: [] };
+    // Both clauses arrive as ' AND (…)'. An order is visible when EITHER end is
+    // in scope, so they are OR-ed rather than AND-ed. An empty clause means
+    // "global scope" — then no restriction applies at all.
+    const sc = (!scSrc.sql || !scOut.sql)
+      ? { sql: '', params: [] }
+      : {
+        sql: ' AND ((1=1' + scSrc.sql + ') OR (po.output_warehouse_id IS NOT NULL AND 1=1' + scOut.sql + '))',
+        params: (scSrc.params || []).concat(scOut.params || []),
+      };
     const where = ['1=1'];
     const params = [];
     if (p.status) { where.push('po.status=?'); params.push(p.status); }
@@ -286,7 +368,7 @@ router.get('/:id', async (req, res) => {
   try {
     const doc = await _loadOrder(req.params.id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     doc.product_name = await _productName(db, doc.product_id);
     doc.product_tracking_mode = await L.getTrackingMode(db, doc.product_id);
     const [wh] = await db.query('SELECT id, name FROM warehouses WHERE id IN (?, ?)', [doc.warehouse_id, doc.output_warehouse_id || doc.warehouse_id]);
@@ -316,12 +398,12 @@ router.get('/:id', async (req, res) => {
            AND lm.reference_id IN (?) ORDER BY lm.id`, [eventIds]);
       lotMovements = lm;
     }
-    const [genealogy] = await db.query(
-      `SELECT pol.*, wl1.lot_number AS output_lot_number, wl2.lot_number AS component_lot_number
-       FROM production_output_lots pol
-       LEFT JOIN inventory_lots wl1 ON wl1.id=pol.output_lot_id
-       LEFT JOIN inventory_lots wl2 ON wl2.id=pol.component_lot_id
-       WHERE pol.work_order_id=? ORDER BY pol.created_at`, [doc.id]);
+    // Genealogy now comes from the ALLOCATION LEDGER, which attributes each
+    // consumed quantity to exactly ONE output event. The old read of
+    // production_output_lots reported the order's whole consumption against
+    // every output lot (see lib/productionAllocation.js for the full defect).
+    const genealogy = await PA.loadGenealogy(db, doc.id);
+    const allocationIntegrity = await PA.verifyIntegrity(db, doc.id);
     const [events] = await db.query("SELECT * FROM inv_tx_events WHERE doc_type='production' AND doc_id=? ORDER BY created_at ASC, id ASC", [doc.id]);
     const [movements] = await db.query(
       `SELECT * FROM inventory_movements WHERE (reference_type IN ('prod_issue','prod_output','prod_issue_reverse','prod_output_reverse') AND reference_id IN (?))
@@ -346,7 +428,7 @@ router.get('/:id', async (req, res) => {
       data: doc,
       plan: plan.map((r) => Object.assign(r, { remaining: P.round4(Number(r.qty_planned) - Number(r.qty_actual)) })),
       issueEvents: issueEvents.map((ev) => Object.assign(ev, { lines: issueLines.filter((l) => l.issue_event_id === ev.id) })),
-      outputs, lotMovements, genealogy, timeline: events, movements, journals,
+      outputs, lotMovements, genealogy, allocationIntegrity, timeline: events, movements, journals,
     });
   } catch (e) { _catch(res, e); }
 });
@@ -379,7 +461,11 @@ router.post('/', BACKOFFICE, async (req, res) => {
     if (idem.mode === 'proceed') idemId = idem.idemId;
 
     const expanded = await _expandBom(db, b.bomId, qtyPlanned, warehouseId);
-    const scrapPct = (b.allowedScrapPct != null && Number.isFinite(Number(b.allowedScrapPct))) ? Number(b.allowedScrapPct) : 0;
+    // NULL, not 0 — 0 is now an EXPLICIT zero-scrap policy that gates any waste.
+    // Defaulting an omitted field to 0 would silently put every new order under
+    // a zero-tolerance gate nobody asked for.
+    const scrapPct = (b.allowedScrapPct != null && b.allowedScrapPct !== '' && Number.isFinite(Number(b.allowedScrapPct)))
+      ? Number(b.allowedScrapPct) : null;
     const priority = (typeof b.priority === 'string' && b.priority) ? b.priority.slice(0, 20) : 'normal';
     const batchNo = (typeof b.batchNumber === 'string' && b.batchNumber.trim()) ? b.batchNumber.trim().slice(0, 80) : null;
 
@@ -421,7 +507,7 @@ router.patch('/:id', BACKOFFICE, async (req, res) => {
     const doc = await _loadOrder(id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(doc);
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     P.assertCanEdit(doc.status);
     const b = req.body || {};
     const bomId = b.bomId || doc.bom_id;
@@ -434,7 +520,11 @@ router.patch('/:id', BACKOFFICE, async (req, res) => {
     if (!(await _loadWarehouse(warehouseId))) return _fail(res, 'VALIDATION_ERROR', 'مستودع المواد غير موجود');
     if (!(await _loadWarehouse(outputWarehouseId))) return _fail(res, 'VALIDATION_ERROR', 'مستودع الإخراج غير موجود');
     const expanded = await _expandBom(db, bomId, qtyPlanned, warehouseId);
-    const scrapPct = (b.allowedScrapPct != null && Number.isFinite(Number(b.allowedScrapPct))) ? Number(b.allowedScrapPct) : Number(doc.allowed_scrap_pct) || 0;
+    // `|| 0` here would have turned a stored NULL ("default policy") into an
+    // explicit zero-scrap gate on every draft edit. Keep NULL as NULL.
+    const scrapPct = (b.allowedScrapPct != null && b.allowedScrapPct !== '' && Number.isFinite(Number(b.allowedScrapPct)))
+      ? Number(b.allowedScrapPct)
+      : (doc.allowed_scrap_pct == null ? null : Number(doc.allowed_scrap_pct));
 
     const out = await db.withTransaction(async (conn) => {
       const [r] = await conn.query(
@@ -469,7 +559,7 @@ router.post('/:id/approve', MGR, async (req, res) => {
     const doc = await _loadOrder(id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(doc);
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     P.assertCanApprove(doc.status);
     if (MAKER_CHECKER && !_isAdmin(req) && doc.created_by && doc.created_by === actor) {
       return _fail(res, 'PERMISSION_DENIED', 'لا يمكن لمُنشئ أمر الإنتاج اعتماده بنفسه (Maker–Checker)');
@@ -499,7 +589,7 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
     const pre = await _loadOrder(id);
     if (!pre) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(pre);
-    if (req.guardWh && !req.guardWh(res, pre.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, pre)) return;
     P.assertCanIssue(pre.status);
     if (!Array.isArray(b.lines) || !b.lines.length) return _fail(res, 'VALIDATION_ERROR', 'حدّد سطرًا واحدًا على الأقل للإصدار');
     const laborCost = Number(b.laborCost) || 0;
@@ -623,7 +713,7 @@ router.post('/:id/issue-materials', BACKOFFICE, async (req, res) => {
           materialsCost, laborCost, overheadCost,
           inventoryCode: E.inventoryAccountFor(srcWh),
           warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id,
-          journalDate: _today(), postedBy: actor, referenceId: eventId,
+          journalDate: journalDate(), postedBy: actor, referenceId: eventId,
           description: 'إصدار مواد إنتاج ' + doc.order_number + ' — حدث ' + eventNo,
         });
         const j = await gl.postJournal(conn, spec);
@@ -686,7 +776,7 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
     if (goodQty + wasteQty <= 0) return _fail(res, 'VALIDATION_ERROR', 'حدّد كمية جيدة أو هدرًا (على الأقل واحدة موجبة)');
     if (wasteQty > 0 && !String(b.wasteReason || '').trim()) return _fail(res, 'REASON_REQUIRED', 'سبب الهدر إلزامي عند تسجيل هدر');
     const outputWh = pre.output_warehouse_id || pre.warehouse_id;
-    if (req.guardWh && !req.guardWh(res, outputWh)) return;
+    if (!_guardBothWarehouses(req, res, pre)) return;
     P.assertCanOutput(pre.status);
 
     const key = IDEM.readKey(req);
@@ -709,8 +799,27 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
         e.detail = { cap: chk.cap, after: chk.after };
         throw e;
       }
-      if (P.wasteAllowanceExceeded(doc.qty_planned, doc.qty_waste, wasteQty, doc.allowed_scrap_pct) && !_isMgr(req)) {
-        throw _err('WASTE_ALLOWANCE_EXCEEDED', 'الهدر التراكمي يتجاوز السماحية المحددة (' + doc.allowed_scrap_pct + '%) — يتطلب مديرًا');
+      // SCRAP ALLOWANCE. `allowed_scrap_pct` is now NULL for "use the default
+      // policy" and 0 for "zero scrap permitted" — under the old `pct <= 0 →
+      // return false` rule a zero-scrap order was indistinguishable from an
+      // unconfigured one and the gate never fired on any order in the system.
+      //
+      // Exceeding the allowance needs BOTH a manager capability AND a recorded
+      // reason; the reason is persisted on the output row (waste_reason /
+      // waste_override_by / waste_override_at) so the override is queryable,
+      // not buried in a free-text audit note.
+      const overAllowance = P.wasteAllowanceExceeded(doc.qty_planned, doc.qty_waste, wasteQty, doc.allowed_scrap_pct);
+      let wasteOverrideBy = null;
+      if (overAllowance) {
+        const canOverride = _isMgr(req) || await requireCapability.hasCapability(req.user, 'production.complete');
+        if (!canOverride) {
+          throw _err('WASTE_ALLOWANCE_EXCEEDED',
+            'الهدر التراكمي يتجاوز السماحية المحددة (' + (doc.allowed_scrap_pct == null ? 'الافتراضية' : doc.allowed_scrap_pct + '%') + ') — يتطلب صلاحية مدير');
+        }
+        if (!String(b.wasteReason || '').trim()) {
+          throw _err('REASON_REQUIRED', 'تجاوز سماحية الهدر يتطلب سببًا مسجَّلًا');
+        }
+        wasteOverrideBy = actor;
       }
       const priced = P.priceOutputEvent({ wipBalance: wip, plannedQty: doc.qty_planned, producedSoFar: doc.qty_produced, wasteSoFar: doc.qty_waste, goodQty, wasteQty });
       const outWhRow = await _loadWarehouse(outputWh, conn);
@@ -725,6 +834,7 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
       const eventId = 'POE-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
       const affectedStock = [];
       const movementIds = [];
+      let outputLotId = null;
       if (goodQty > 0) {
         const mv = await E.applyStockMovement(conn, outputWh, doc.product_id, goodQty, priced.fgUnitCost, 'prod_output', eventId, actor);
         const prodName = await _productName(conn, doc.product_id);
@@ -734,11 +844,7 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
         if (L.isTracked(fgMode)) {
           const seq = await _seqOf(conn, mid);
           const rcv = await L.receiveInbound(conn, { warehouseId: outputWh, itemId: doc.product_id, qty: goodQty, lot: { lotNumber: batchNumber, expiryDate, unitCost: priced.fgUnitCost, sourceType: 'production', sourceId: doc.id }, trackingMode: fgMode, movementSeq: seq, movementId: mid, referenceType: 'prod_output', referenceId: eventId, reason: 'إنتاج', actor, occurredAt: now });
-          const [comp] = await conn.query('SELECT lot_id, qty FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
-          for (const cl of comp) {
-            await conn.query('INSERT INTO production_output_lots (id, work_order_id, output_lot_id, component_lot_id, qty) VALUES (?,?,?,?,?)',
-              ['POL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7), id, rcv.lotId, cl.lot_id, cl.qty]);
-          }
+          outputLotId = rcv.lotId;
           await L.assertInvariant(conn, outputWh, doc.product_id);
         }
         try { await recomputeInvItemStock(conn, doc.product_id); } catch (_) {}
@@ -749,7 +855,7 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
           fgValue: priced.fgValue, wasteValue: priced.wasteValue,
           outputWarehouseId: outputWh, warehouseId: doc.warehouse_id,
           brandId: doc.brand_id, branchId: doc.branch_id,
-          journalDate: _today(), postedBy: actor, referenceId: eventId,
+          journalDate: journalDate(), postedBy: actor, referenceId: eventId,
           description: 'إنتاج ' + doc.order_number + ' — جيد ' + goodQty + (wasteQty > 0 ? ' / هدر ' + wasteQty : ''),
         });
         const j = await gl.postJournal(conn, spec);
@@ -757,10 +863,37 @@ router.post('/:id/record-output', BACKOFFICE, async (req, res) => {
         journalId = j.journalId;
       }
       await conn.query(
-        `INSERT INTO production_output (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost, qty_waste, waste_cost, batch_number, expiry_date, produced_at, gl_journal_id, created_by, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?)`,
+        `INSERT INTO production_output (id, production_order_id, item_id, warehouse_id, qty, unit_cost, total_cost, qty_waste, waste_cost, batch_number, expiry_date, produced_at, gl_journal_id, created_by, entered_qty, entered_unit_id, entered_unit_code, conversion_factor_snapshot, base_qty, output_group_id, output_type, alloc_share, waste_reason, waste_override_by, waste_override_at, allowed_scrap_pct_snapshot)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,'primary',1,?,?,?,?)`,
         [eventId, id, doc.product_id, outputWh, goodQty, priced.fgUnitCost, priced.fgValue, wasteQty, priced.wasteValue, batchNumber, expiryDate, journalId, actor,
-         uGood.enteredQty, uGood.enteredUnitId, uGood.enteredUnitCode, outFactor, goodQty]);
+         uGood.enteredQty, uGood.enteredUnitId, uGood.enteredUnitCode, outFactor, goodQty, eventId,
+         wasteQty > 0 ? String(b.wasteReason || '').slice(0, 500) : null,
+         wasteOverrideBy, wasteOverrideBy ? new Date() : null,
+         doc.allowed_scrap_pct == null ? null : Number(doc.allowed_scrap_pct)]);
+
+      // GENEALOGY — attribute ONLY this event's share of the consumed material.
+      // The row must exist before allocateForOutput runs because the ledger
+      // references it. `isFinal` is true when this event brings cumulative
+      // output up to (or past) the plan: that event sweeps whatever material is
+      // still unattributed so nothing is left dangling.
+      const producedAfter = P.round4(Number(doc.qty_produced) + goodQty + Number(doc.qty_waste) + wasteQty);
+      const alloc = await PA.allocateForOutput(conn, {
+        productionOrderId: id,
+        outputEventId: eventId,
+        outputLotId,
+        plannedQty: Number(doc.qty_planned),
+        producedSoFar: Number(doc.qty_produced),
+        wasteSoFar: Number(doc.qty_waste),
+        goodQty, wasteQty,
+        isFinal: producedAfter >= P.round4(Number(doc.qty_planned)) - 1e-9,
+      });
+      const integrity = await PA.verifyIntegrity(conn, id);
+      if (!integrity.ok) {
+        // Refuse to commit rather than persist a genealogy that claims more
+        // material was consumed than was ever issued.
+        throw _err('ALLOCATION_EXCEEDS_CONSUMPTION',
+          'تخصيص المواد يتجاوز المستهلك — أُلغيت العملية', integrity.violations);
+      }
       // Cumulative FG unit cost = Σ good value / Σ good qty (never restated retroactively).
       const [sums] = await conn.query('SELECT COALESCE(SUM(qty),0) AS q, COALESCE(SUM(total_cost),0) AS v FROM production_output WHERE production_order_id=?', [id]);
       const totQ = Number(sums[0].q) || 0;
@@ -796,7 +929,7 @@ router.post('/:id/complete', BACKOFFICE, async (req, res) => {
     const doc = await _loadOrder(id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(doc);
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     P.assertCanComplete(doc.status);
     const [oc] = await db.query('SELECT COUNT(*) AS c FROM production_output WHERE production_order_id=?', [id]);
     if (!Number(oc[0].c)) return _fail(res, 'NO_OUTPUT_RECORDED', 'لا يمكن إكمال أمر بلا أي حدث إنتاج مسجَّل');
@@ -829,7 +962,7 @@ router.post('/:id/close', MGR, async (req, res) => {
     const pre = await _loadOrder(id);
     if (!pre) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(pre);
-    if (req.guardWh && !req.guardWh(res, pre.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, pre)) return;
     P.assertCanClose(pre.status);
     const out = await db.withTransaction(async (conn) => {
       const doc = await _loadOrder(id, conn); // FOR UPDATE
@@ -840,7 +973,7 @@ router.post('/:id/close', MGR, async (req, res) => {
       if (residual > 0.005) {
         const spec = P.glProdClose({
           variance: residual, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id,
-          journalDate: _today(), postedBy: actor, referenceId: id,
+          journalDate: journalDate(), postedBy: actor, referenceId: id,
           description: 'إغلاق أمر إنتاج ' + doc.order_number + ' — فروقات ' + residual,
         });
         const j = await gl.postJournal(conn, spec);
@@ -871,7 +1004,7 @@ router.post('/:id/cancel', MGR, async (req, res) => {
     const doc = await _loadOrder(id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(doc);
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     const hasIssues = (await _issueEventCount(id)) > 0;
     P.assertCanCancel(doc.status, hasIssues);
     const out = await db.withTransaction(async (conn) => {
@@ -900,7 +1033,7 @@ router.post('/:id/reverse', MGR, async (req, res) => {
     const pre = await _loadOrder(id);
     if (!pre) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(pre);
-    if (req.guardWh && !req.guardWh(res, pre.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, pre)) return;
     P.assertCanReverse(pre.status);
 
     const key = IDEM.readKey(req);
@@ -947,9 +1080,9 @@ router.post('/:id/reverse', MGR, async (req, res) => {
           const fwd = P.glProdOutput({
             fgValue: Number(ev.total_cost) || 0, wasteValue: Number(ev.waste_cost) || 0,
             outputWarehouseId: outputWh, warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id,
-            journalDate: _today(), postedBy: actor, referenceId: ev.id, description: 'إنتاج ' + doc.order_number,
+            journalDate: journalDate(), postedBy: actor, referenceId: ev.id, description: 'إنتاج ' + doc.order_number,
           });
-          const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: _today(), description: 'عكس إنتاج ' + doc.order_number });
+          const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: journalDate(), description: 'عكس إنتاج ' + doc.order_number });
           const j = await gl.postJournal(conn, rev);
           if (!j || !j.success) throw _err('GL_POSTING_FAILED', (j && j.error) || 'فشل قيد عكس الإنتاج');
           reverseJournalIds.push(j.journalId);
@@ -982,9 +1115,9 @@ router.post('/:id/reverse', MGR, async (req, res) => {
             materialsCost: Number(ev.materials_cost) || 0, laborCost: Number(ev.labor_cost) || 0, overheadCost: Number(ev.overhead_cost) || 0,
             inventoryCode: E.inventoryAccountFor(srcWh),
             warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id,
-            journalDate: _today(), postedBy: actor, referenceId: ev.id, description: 'إصدار مواد ' + doc.order_number,
+            journalDate: journalDate(), postedBy: actor, referenceId: ev.id, description: 'إصدار مواد ' + doc.order_number,
           });
-          const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: _today(), description: 'عكس إصدار مواد ' + doc.order_number });
+          const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: journalDate(), description: 'عكس إصدار مواد ' + doc.order_number });
           const j = await gl.postJournal(conn, rev);
           if (!j || !j.success) throw _err('GL_POSTING_FAILED', (j && j.error) || 'فشل قيد عكس الإصدار');
           reverseJournalIds.push(j.journalId);
@@ -997,15 +1130,21 @@ router.post('/:id/reverse', MGR, async (req, res) => {
 
       // 3) Undo the CLOSE variance journal (closed orders only).
       if (doc.gl_close_id && Number(doc.close_variance) > 0.005) {
-        const fwd = P.glProdClose({ variance: Number(doc.close_variance), warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, journalDate: _today(), postedBy: actor, referenceId: id, description: 'إغلاق ' + doc.order_number });
-        const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: _today(), description: 'عكس إغلاق ' + doc.order_number });
+        const fwd = P.glProdClose({ variance: Number(doc.close_variance), warehouseId: doc.warehouse_id, brandId: doc.brand_id, branchId: doc.branch_id, journalDate: journalDate(), postedBy: actor, referenceId: id, description: 'إغلاق ' + doc.order_number });
+        const rev = E.reverseSpec(fwd, { postedBy: actor, journalDate: journalDate(), description: 'عكس إغلاق ' + doc.order_number });
         const j = await gl.postJournal(conn, rev);
         if (!j || !j.success) throw _err('GL_POSTING_FAILED', (j && j.error) || 'فشل قيد عكس الإغلاق');
         reverseJournalIds.push(j.journalId);
       }
 
-      // 4) Reset consumption aggregates (audit history stays in events/lines).
+      // 4) Reset consumption aggregates (audit history stays in events/lines)
+      //    and tear the genealogy down. A reversed order must NOT keep a
+      //    backward-traceability graph pointing at lots whose balances have
+      //    been restored — a recall query against production_output_lots would
+      //    otherwise still return this order as a consumer of those lots.
       await conn.query('UPDATE production_consumption SET qty_actual=0, total_cost=0, consumed_at=NULL WHERE production_order_id=?', [id]);
+      await PA.clearAllocations(conn, id);
+      await conn.query('DELETE FROM work_order_lot_consumption WHERE work_order_id=?', [id]);
       const [u] = await conn.query(
         `UPDATE production_orders SET status='reversed', reversed_by=?, reversed_at=NOW(), reverse_reason=?, reverse_gl_ids=?, wip_balance=0, version=version+1
          WHERE id=? AND status IN ('in_progress','completed','closed') AND source='v2' AND version=?`,
@@ -1034,7 +1173,7 @@ router.delete('/:id', MGR, async (req, res) => {
     const doc = await _loadOrder(id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
     P.assertV2(doc);
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     P.assertCanDelete(doc.status);
     await db.withTransaction(async (conn) => {
       const [r] = await conn.query("DELETE FROM production_orders WHERE id=? AND status='draft' AND source='v2'", [id]);
@@ -1053,7 +1192,7 @@ router.get('/:id/availability', async (req, res) => {
   try {
     const doc = await _loadOrder(req.params.id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     const [rows] = await db.query(
       `SELECT pc.item_id, i.name AS item_name, i.unit AS item_unit, COALESCE(i.tracking_mode,'none') AS tracking_mode,
               pc.qty_planned, pc.qty_actual, pc.unit_cost, pc.warehouse_id, COALESCE(ws.qty,0) AS available
@@ -1093,7 +1232,7 @@ router.get('/:id/cost-preview', async (req, res) => {
   try {
     const doc = await _loadOrder(req.params.id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     const wip = Number(doc.wip_balance) || 0;
     const producedSoFar = (Number(doc.qty_produced) || 0) + (Number(doc.qty_waste) || 0);
     const remainingExpected = Math.max(P.round4(Number(doc.qty_planned) - producedSoFar), 0);
@@ -1124,7 +1263,7 @@ router.get('/:id/variance-report', async (req, res) => {
   try {
     const doc = await _loadOrder(req.params.id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     const [components] = await db.query(
       `SELECT pc.item_id, i.name AS item_name, i.unit AS item_unit,
               pc.qty_planned, pc.qty_actual, pc.unit_cost, pc.total_cost
@@ -1158,7 +1297,7 @@ router.get('/:id/print', async (req, res) => {
   try {
     const doc = await _loadOrder(req.params.id);
     if (!doc) { const e = new Error('أمر الإنتاج غير موجود'); e.status = 404; throw e; }
-    if (req.guardWh && !req.guardWh(res, doc.warehouse_id)) return;
+    if (!_guardBothWarehouses(req, res, doc)) return;
     doc.product_name = await _productName(db, doc.product_id);
     const [wh] = await db.query('SELECT id, name FROM warehouses WHERE id IN (?, ?)', [doc.warehouse_id, doc.output_warehouse_id || doc.warehouse_id]);
     const [plan] = await db.query(

@@ -174,6 +174,48 @@ export function nonDefaultFilterKeys(
   );
 }
 
+/**
+ * The keys whose value differs between two filter objects, as a `patch()`
+ * partial. This is what turns a DRAFT into a commit: the top bar edits a local
+ * copy and, on «تطبيق», patches ONLY what the analyst actually changed.
+ *
+ * Patching the whole object instead would work — patch() merges — but it would
+ * also rewrite keys the user never touched, which makes every URL diff and
+ * every test assertion say "everything changed". Comparing here keeps the
+ * commit honest and keeps `patch({ businessDay: false })` readable in a log.
+ *
+ * Arrays compare by ORDER as well as content, matching csvParam's own
+ * `sameArray` — a reordered selection really is a different URL.
+ */
+export function filterDiff(
+  committed: AnalyticsFilters,
+  draft: AnalyticsFilters,
+): Partial<AnalyticsFilters> {
+  const out: Partial<AnalyticsFilters> = {};
+  for (const key of Object.keys(draft) as Array<keyof AnalyticsFilters>) {
+    const a = committed[key];
+    const b = draft[key];
+    const same =
+      Array.isArray(a) && Array.isArray(b)
+        ? a.length === b.length && a.every((v, i) => v === b[i])
+        : a === b;
+    if (!same) (out as Record<string, unknown>)[key] = b;
+  }
+  return out;
+}
+
+/** Stable identity of a filter STATE (used to diff draft vs committed). */
+export function filterSignature(
+  filters: AnalyticsFilters,
+  codec: FilterCodec<AnalyticsFilters> = analyticsFilterCodec,
+): string {
+  const s = codec.serialize(filters);
+  return Object.keys(s)
+    .sort()
+    .map((k) => `${k}=${s[k] ?? ""}`)
+    .join("&");
+}
+
 // Page-local params: pages compose their OWN codec for extra keys (e.g. a
 // drill dimension) with the same primitives — useUrlFilters only ever touches
 // the keys a codec serializes, so the shared codec and a page codec coexist on

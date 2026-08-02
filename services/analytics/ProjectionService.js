@@ -90,6 +90,36 @@ function normalizeMethod(raw) {
 
 function _r2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
+// ── discount reason ─────────────────────────────────────────────────────────
+// Width of analytics_order_facts.discount_reason, which is deliberately the same
+// width as its source sales.discount_name (db/migrations/analytics/schema.js).
+// The cap below is therefore a guard against a widened source, never a routine
+// truncation.
+const DISCOUNT_REASON_MAX = 100;
+
+/**
+ * sales.discount_name → the order fact's `discount_reason` label.
+ *
+ * NULL, not '', when the sale carried no named discount. An empty string is a
+ * VALUE: it groups as its own bucket and prints as a blank row that looks like a
+ * reason nobody typed. NULL is the honest "no discount reason here", and every
+ * consumer already renders a NULL dimension key as unknown.
+ *
+ * ORDER GRAIN, HEADER NAME ONLY. `sales.line_discounts_json` can carry a reason
+ * per line, and one order can hold several different ones. There is no truthful
+ * way to collapse those into a single order-level label — picking the first, or
+ * the largest, invents a fact — so a line-discount reason is simply not an
+ * order-fact value. If it is ever needed it belongs on the LINE grain, beside
+ * the line it describes.
+ */
+function _discountReason(sale) {
+  const raw = sale && sale.discount_name;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  return s.slice(0, DISCOUNT_REASON_MAX);
+}
+
 /**
  * Resolve a sale's payment legs → [{ label, amount }], plus whether it was split.
  * Handles every persisted shape:
@@ -181,6 +211,44 @@ async function _upsertPaymentFact(db, f) {
      f.provenance || 'live']);
 }
 
+/**
+ * Delete payment legs left behind by an EARLIER projection of the same source.
+ *
+ * WHY AN UPSERT ALONE IS NOT ENOUGH
+ *   Legs are keyed UNIQUE(source_type, source_id, line_no) and written in a
+ *   `for i < legs.length` loop, so a replay only ever writes line_no 0..N-1.
+ *   Nothing removed the rows above N. Two ways that broke the books:
+ *
+ *   a) A SPLIT THAT SHRANK. Three legs re-projected as two left leg #3 in
+ *      place, so SUM(legs) exceeded the invoice's paid amount.
+ *
+ *   b) WORSE — A SPLIT THAT BECAME SINGLE. `source_type` is itself part of the
+ *      key and flips between 'pos_single' and 'pos_split'. Re-projecting a
+ *      3-leg split sale as a single payment did not overwrite anything: it
+ *      ADDED a fourth row under the other type. The sale then reported four
+ *      legs summing to roughly double what was collected.
+ *
+ *   Replays are routine, not exotic: the repair queue drains, a return
+ *   re-projects its original sale, the backfill re-runs.
+ *
+ * INVARIANT RESTORED: SUM(payment legs for a source) = the amount collected.
+ *
+ * ATOMICITY, STATED HONESTLY: this runs on whatever handle the caller passed.
+ * Called inside a transaction it inherits that atomicity; called with the pool
+ * (routes/sales.js projects fire-and-forget) the upsert and this prune are two
+ * statements, so a crash between them can leave a stale leg — exactly today's
+ * state, and self-healing on the next replay. It never opens a window where
+ * the source has NO legs, which delete-then-insert would.
+ */
+async function _pruneStalePaymentLegs(db, { sourceTypes, sourceId, keepSourceType, keepCount }) {
+  const ph = sourceTypes.map(() => '?').join(',');
+  await db.query(
+    `DELETE FROM analytics_payment_facts
+      WHERE source_id = ? AND source_type IN (${ph})
+        AND NOT (source_type = ? AND line_no < ?)`,
+    [String(sourceId), ...sourceTypes, keepSourceType, keepCount]);
+}
+
 async function _upsertTillFact(db, f) {
   await db.query(
     `INSERT INTO analytics_till_facts
@@ -258,8 +326,8 @@ async function projectPosSale(db, saleId, opts = {}) {
         guests, customer_id, status, created_by, salesperson, closed_by, payment_collector,
         discount_by, void_by, approved_by, opened_at, closed_at, paid_at,
         occurred_at_local, business_day, tz_snapshot,
-        discount_total, rounding_amount, tips_amount, fees_amount, provenance)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        discount_total, discount_reason, rounding_amount, tips_amount, fees_amount, provenance)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
        sale_id = VALUES(sale_id), pos_order_id = VALUES(pos_order_id),
        brand_id = VALUES(brand_id), branch_id = VALUES(branch_id),
@@ -270,6 +338,22 @@ async function projectPosSale(db, saleId, opts = {}) {
        closed_at = VALUES(closed_at), paid_at = VALUES(paid_at),
        occurred_at_local = VALUES(occurred_at_local), business_day = VALUES(business_day),
        tz_snapshot = VALUES(tz_snapshot), discount_total = VALUES(discount_total),
+       -- discount_reason REFRESHES — it is NOT a write-once snapshot, and the
+       -- distinction is deliberate. Compare cost_snapshot in
+       -- _projectComboChoices: that column is COALESCE-preserved because its
+       -- source (menu.cost) is EXTERNAL to the sale and drifts, so re-reading it
+       -- a year later yields a DIFFERENT number and refreshing would rewrite
+       -- history. This column's source is the sale's OWN row — sales.discount_name
+       -- — so a replay re-reads the identical value; the only way it changes is
+       -- that the sale itself changed, and then the fact SHOULD follow.
+       --
+       -- The decisive reason is the line directly above: discount_total already
+       -- refreshes. The reason is the LABEL FOR that amount. Freeze one half of
+       -- the pair and they can contradict each other — a discount edited off a
+       -- sale would leave discount_total 0 next to a reason still naming it, and
+       -- a re-labelled discount would report last month's name against this
+       -- month's money. Both halves refresh together, or the row lies.
+       discount_reason = VALUES(discount_reason),
        fees_amount = VALUES(fees_amount)`,
     [documentId, saleId, po ? po.id : null, sale.brand_id || null, branchId,
      (po && po.warehouse_id) || null, sale.shift_id || null,
@@ -281,7 +365,8 @@ async function projectPosSale(db, saleId, opts = {}) {
      sale.username || null, null, null, sale.username || null, null, null, null,
      (po && po.created_at) || occurredAt, (po && po.completed_at) || occurredAt, occurredAt,
      loc.occurredAtLocal, loc.businessDay, loc.tz,
-     _r2(sale.discount_amount), 0, 0, _r2(sale.kita_service_fee), provenance]);
+     _r2(sale.discount_amount), _discountReason(sale), 0, 0,
+     _r2(sale.kita_service_fee), provenance]);
 
   // ── payment facts ──
   const { legs, split } = await _resolvePaymentLegs(db, sale, po);
@@ -299,6 +384,11 @@ async function projectPosSale(db, saleId, opts = {}) {
       performedBy: sale.username, provenance,
     });
   }
+  // Both types, because a sale can cross between them on a replay.
+  await _pruneStalePaymentLegs(db, {
+    sourceTypes: ['pos_single', 'pos_split'],
+    sourceId: saleId, keepSourceType: sourceType, keepCount: legs.length,
+  });
 
   // ── modifier facts (combo choices) ──
   await _projectComboChoices(db, documentId, sale, loc, provenance);
@@ -351,6 +441,20 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
   });
   if (!agg.size) return;
 
+  // WHY A BACKFILL MUST NOT READ `menu.cost`
+  //   `menu.computed_cost` / `menu.cost` are TODAY's figures. On the live path
+  //   that is exactly right — "today" IS the sale date, so the read is a real
+  //   at-sale snapshot. On the backfill path the sale may be a year old, and
+  //   stamping today's cost into a column named `cost_snapshot` produces a
+  //   number that is confidently wrong and indistinguishable from a true one.
+  //
+  //   There is no historical component cost to recover: `ar_document_lines`
+  //   snapshots the cost of the WHOLE line (the combo), and splitting that
+  //   across its chosen components needs the very per-component costs we are
+  //   missing. So the honest value is NULL — the same call this function
+  //   already makes for `price_delta` ("the historical price split is
+  //   unknowable"). A margin report shows "unknown" instead of a fabrication.
+  const historical = provenance !== 'live';
   const compIds = [...new Set([...agg.values()].map((a) => a.componentMenuId))];
   const nameById = {}, costById = {}, qtyByGroupComp = {};
   try {
@@ -360,7 +464,10 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
          FROM menu WHERE id IN (${ph})`, compIds);
     names.forEach((r) => {
       nameById[r.id] = r.name || null;
-      costById[r.id] = Number(r.cc) > 0 ? Number(r.cc) : (Number(r.c) || 0);
+      // The name is still today's, and deliberately so: it is a LABEL, and
+      // today's label is the best one available for a row nobody can re-price.
+      // The cost is a FIGURE that feeds arithmetic — a different obligation.
+      costById[r.id] = historical ? null : (Number(r.cc) > 0 ? Number(r.cc) : (Number(r.c) || 0));
     });
   } catch (_) {}
   try {
@@ -378,6 +485,23 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
       if (q) { perPick = q; break; }
     }
     const qty = perPick * a.picks * a.lineQty;
+    // A SNAPSHOT IS WRITE-ONCE — hence the COALESCE below.
+    //
+    // The clause used to be a plain `cost_snapshot = VALUES(cost_snapshot)`,
+    // which made every re-run DESTRUCTIVE: a fact captured live at sale time,
+    // carrying a correct at-sale cost, was overwritten with TODAY's cost the
+    // next time the backfill touched it. And `provenance` is not in this UPDATE
+    // list, so the row kept reporting 'live' while its number no longer was.
+    // The row then lied twice: a wrong figure, and a provenance vouching for it.
+    //
+    // Not hypothetical: _projectO2cReturn re-projects the ORIGINAL sale with
+    // the RETURN's provenance, so backfilling one return silently rewrote the
+    // costs of a sale that had been captured correctly months earlier.
+    //
+    // COALESCE keeps the first non-NULL capture, and still lets a NULL (what a
+    // backfill now writes) be filled in later by a real at-sale value.
+    // `qty` is deliberately NOT preserved — it is a recomputation, not a
+    // snapshot, and a corrected combo definition should propagate.
     await db.query(
       `INSERT INTO analytics_modifier_facts
          (document_id, source_line_id, parent_menu_id, component_menu_id,
@@ -385,7 +509,7 @@ async function _projectComboChoices(db, documentId, sale, loc, provenance) {
        VALUES (?,?,?,?,?,?,?,?,?,?)
        ON DUPLICATE KEY UPDATE
          qty = VALUES(qty), component_name_snapshot = VALUES(component_name_snapshot),
-         cost_snapshot = VALUES(cost_snapshot)`,
+         cost_snapshot = COALESCE(analytics_modifier_facts.cost_snapshot, VALUES(cost_snapshot))`,
       [documentId, 'L' + a.lineIdx, a.parent, a.componentMenuId,
        nameById[a.componentMenuId] || null, qty,
        null /* POS combos carry no per-choice price delta */,
@@ -553,6 +677,12 @@ async function _projectLegacyCreditNote(db, creditNoteId, saleId, provenance) {
       performedBy: cn.username, provenance,
     });
   }
+  // A credit note keeps one source_type, so only the shrink case applies here —
+  // but it mirrors the original sale's legs, and those can shrink.
+  await _pruneStalePaymentLegs(db, {
+    sourceTypes: ['cn_refund'],
+    sourceId: creditNoteId, keepSourceType: 'cn_refund', keepCount: legs.length,
+  });
   if (cashOut > 0) {
     await _upsertTillFact(db, {
       shiftId: cn.shift_id, branchId, movementType: 'cash_refund', amount: cashOut,
@@ -744,4 +874,12 @@ module.exports = {
   normalizeMethod,
   _resolvePaymentLegs,
   _enqueueDirty,
+  _projectComboChoices,
+  _upsertPaymentFact,
+  _pruneStalePaymentLegs,
+  // _discountReason is deliberately NOT exported. Its only caller is the order-fact
+  // upsert, and a test that reached it directly could pass with hand-written
+  // arguments while the real call site bound something else entirely — the exact
+  // failure mode analyticsCostSnapshot and analyticsPaymentReplay were rewritten
+  // to escape. tests/analyticsDiscountReason.test.js drives projectPosSale instead.
 };

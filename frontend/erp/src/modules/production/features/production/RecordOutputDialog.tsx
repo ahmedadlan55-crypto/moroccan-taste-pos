@@ -5,7 +5,7 @@ import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
 import type { ProductionDetail } from "@/modules/inventory/lib/adapters/production.adapter";
 import { ApiError } from "@/shared/api";
-import { useT } from "@/i18n";
+import { useT, useLang } from "@/i18n";
 
 // Partial output event: good qty enters the OUTPUT warehouse at
 // u = WIP / remainingExpected; waste is expensed in full (5122) and never
@@ -21,6 +21,7 @@ export function RecordOutputDialog({
   onDone: () => void;
 }) {
   const t = useT();
+  const lang = useLang();
   const { recordOutput } = useProductionMutations();
   const [goodQty, setGoodQty] = useState("");
   const [wasteQty, setWasteQty] = useState("");
@@ -88,6 +89,10 @@ export function RecordOutputDialog({
         </>
       }
     >
+      {/* shared/ui FullPageFlow pins dir="rtl" on its own root and lives outside
+          this module — override it on our content so the overlay follows the
+          active UI language instead of always rendering RTL. */}
+      <div dir={lang === "ar" ? "rtl" : "ltr"}>
       <section className="surface p-5 sm:p-6 lg:p-8">
             <div className="grid gap-5 sm:grid-cols-2">
               <label className="block text-xs font-bold text-slate-500">
@@ -134,6 +139,7 @@ export function RecordOutputDialog({
             {errMsg && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{errMsg}</p>}
 
       </section>
+      </div>
     </FullPageFlow>
   );
 }

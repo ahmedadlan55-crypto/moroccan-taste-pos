@@ -199,7 +199,8 @@ describe("Orders page", () => {
 
 describe("Discounts page", () => {
   const KPI = "discounts_total,discount_pct,discounted_orders,orders";
-  it("renders KPIs, the by-day table with a warning tone on high discount_pct, '—' for a masked cell, and the reason-gap banner", async () => {
+  const REASON = "discounts_total,discounted_orders,orders";
+  it("renders KPIs, the by-day table with a warning tone on high discount_pct, '—' for a masked cell, and the by-reason table", async () => {
     dispatch({
       [`${KPI}@`]: result([], {
         totals: { discounts_total: 500, discount_pct: 5, discounted_orders: 20, orders: 100 },
@@ -212,12 +213,22 @@ describe("Discounts page", () => {
       [`${KPI},discount_rate_by_cashier@cashier`]: result([
         row(["u1"], ["أحمد"], { discounts_total: 250, discount_pct: 8, discounted_orders: 5, orders: 50 }),
       ]),
+      // discount_reason is projector-backed now (order fact); the rate is NOT
+      // computable at that grain, so the request carries order-fact metrics only.
+      [`${REASON}@discount_reason`]: result([
+        row(["عرض الافتتاح"], ["عرض الافتتاح"], { discounts_total: 180, discounted_orders: 6, orders: 30 }),
+        row([null], [""], { discounts_total: 320, discounted_orders: 14, orders: 70 }),
+      ]),
     });
 
     renderPage(<DiscountsPage />, "/reports/sales/discounts");
 
     await within(await screen.findByTestId("kpi-discounts_total")).findByText("500.00 ر.س");
-    expect(screen.getByTestId("discounts-reason-gap")).toBeInTheDocument();
+    // The named-discount table replaced the "no such dimension" banner.
+    expect(screen.getAllByText("عرض الافتتاح").length).toBeGreaterThan(0);
+    // …and the NULL bucket is labelled, not dropped: without it the reasons
+    // would appear to add up to the period total when they do not.
+    expect(screen.getAllByText("بلا خصم مُسمّى").length).toBeGreaterThan(0);
     expectCellTone("12%", "bg-amber-50");
     // the masked day renders an em-dash cell
     const dashCells = screen.getAllByText("—").map((el) => el.closest("td")).filter(Boolean);

@@ -3,7 +3,7 @@
 // Each: header + status stepper + document body + status-driven action bar +
 // GL journal + timeline + attachments + A4 print. Backend enforces permissions.
 import { type ReactNode } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { FileText, PackageCheck, Receipt, Wallet, Undo2 } from "lucide-react";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { Button, PrintDocument } from "@/shared/ui";
@@ -16,6 +16,7 @@ import {
 import { useT } from "@/i18n";
 import type { TFunction } from "@/i18n";
 import { BackLink, DetailHeader, Section, KV, StatusStepper, TimelinePanel, GLPanel, AttachmentsPanel, ErrorLine } from "./detail-shared";
+import { isReceivable, receivePath } from "./ReceivePages";
 import { st } from "./labels";
 
 function s(v: unknown, d = "—"): string { return v == null || v === "" ? d : String(v); }
@@ -63,6 +64,9 @@ export function OrderDetailPage() {
         actions={<div className="flex flex-wrap gap-2 print:hidden">
           {canManage && status === "draft" && <Button onClick={() => run("submit")}>{t("purchasing.action.submit")}</Button>}
           {canApprove && status === "submitted" && <Button onClick={() => run("approve")}>{t("purchasing.action.approve")}</Button>}
+          {/* استلام البضاعة — the control this screen was missing entirely: the
+              GRN backend existed but nothing in the SPA could reach it. */}
+          {canManage && isReceivable(status) && <Link to={receivePath(id)}><Button>{t("purchasing.receive.action")}</Button></Link>}
           {canApprove && status === "approved" && <Button variant="secondary" onClick={() => run("send")}>{t("purchasing.action.send")}</Button>}
           {canApprove && ["approved", "sent", "fully_received"].includes(status) && <Button variant="secondary" onClick={() => run("close")}>{t("purchasing.action.close")}</Button>}
           {canApprove && ["draft", "submitted", "approved"].includes(status) && <Button variant="danger" onClick={() => run("cancel")}>{t("purchasing.action.cancel")}</Button>}

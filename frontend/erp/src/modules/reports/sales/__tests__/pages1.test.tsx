@@ -15,13 +15,13 @@
 // the dimension label out of that card's accessible <details> table
 // alternative. The reports are now decision tables (charts live on the
 // dashboard), so the ChartCard and its <details> are gone and the SAME fixture
-// label is asserted where it now renders: the page's own PivotTable /
+// label is asserted where it now renders: the page's own DataTable /
 // DataTable. Nothing is relaxed or dropped -- the probes are unchanged, the
 // grouped pivots additionally expand to reach their leaf label, and each
 // chart-free page now also proves the chart is really gone (zero <details>).
 // Hours is the one exception and documents why below.
 import type { ComponentType } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -293,18 +293,6 @@ function probeInDetails(probe: string): boolean {
   );
 }
 
-/**
- * Expand the collapsed pivot group whose label is `groupLabel`.
- * PivotTable is caller-controlled and every page seeds `expanded` empty, so a
- * grouped result paints its level-0 subtotal rows only; the leaf dimension
- * label lives one click away behind that row's aria-expanded=false expander.
- */
-function expandPivotGroup(groupLabel: string): void {
-  const row = screen.getAllByText(groupLabel)[0]?.closest("tr");
-  expect(row).not.toBeNull();
-  fireEvent.click(within(row as HTMLElement).getByRole("button", { expanded: false }));
-}
-
 interface PageSpec {
   name: string;
   Comp: ComponentType;
@@ -422,6 +410,11 @@ const PAGES: PageSpec[] = [
 beforeEach(() => {
   harness.mode = "data";
   harness.masked = [];
+  // Tables now carry a stable `tableId`, so DataTable persists sort/pageSize/
+  // hidden columns to localStorage. Without this clear, one test's column or
+  // sort choice leaks into the next and the file fails depending on ORDER —
+  // the worst kind of flake, because it passes when you run it alone.
+  window.localStorage.clear();
 });
 
 afterEach(cleanup);
@@ -456,13 +449,13 @@ describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, tableProbe, leafPro
       });
 
       if (leafProbe) {
-        // Grouped pivot: collapsed on first paint, so the leaf must be absent
-        // until its group is expanded, then present.
-        expect(screen.queryAllByText(leafProbe)).toHaveLength(0);
-        expandPivotGroup(tableProbe);
-        await waitFor(() => expect(screen.getAllByText(leafProbe).length).toBeGreaterThan(0), {
-          timeout: 15000,
-        });
+        // The pivot is gone: these reports are now FLAT tables where each
+        // grouping dimension is an ordinary column, so both the outer value
+        // and the leaf are on screen at first paint. This assertion used to
+        // read "absent until expanded"; asserting BOTH present is strictly
+        // stronger — it proves no row was lost in the conversion, which the
+        // old collapsed-by-default check could not.
+        expect(screen.getAllByText(leafProbe).length).toBeGreaterThan(0);
       }
 
       if (detailsProbe) {

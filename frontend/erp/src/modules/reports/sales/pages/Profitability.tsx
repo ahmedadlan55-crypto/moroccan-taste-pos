@@ -17,7 +17,7 @@ import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsQueryBody,
   type AnalyticsResult,
 } from "../lib/api";
@@ -25,14 +25,8 @@ import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 import { isCostUndefined } from "../lib/cost";
 
 const SEGMENT = "profitability";
-const METRICS = ["qty_sold", "net_ex_vat", "cogs", "gross_profit", "margin_pct"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: ["menu_item"],
-  sort: [{ by: "net_ex_vat", dir: "desc" }],
-}));
+// Metrics, the item grouping and the ExportMenu's file all come from
+// lib/reportRegistry (report `profitability`).
 
 const fmtPct = (v: number) => `${formatNumber(v)}%`;
 
@@ -99,18 +93,16 @@ export default function Profitability() {
   };
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: ["net_ex_vat", "cogs", "gross_profit", "margin_pct"], dimensions: [], ...base }),
-    [base],
+    () => ({ ...reportQuerySpec(SEGMENT, "kpis", filters), ...base }),
+    [base, filters],
   );
   const itemBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: [...METRICS],
-      dimensions: ["menu_item"],
+      ...reportQuerySpec(SEGMENT, "byItem", filters),
       sort: [{ by: "net_ex_vat", dir: "desc" }],
-      limit: 200,
       ...base,
     }),
-    [base],
+    [base, filters],
   );
 
   const kpis = useAnalyticsQuery("profitability-kpis", kpiBody);
@@ -167,7 +159,7 @@ export default function Profitability() {
     meta?.completeness?.complete === false || (meta?.maskedMetrics ?? []).includes("cogs");
 
   const columns: ColumnDef<ItemRow>[] = [
-    { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, width: 180 },
+    { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 180 },
     {
       id: "qty",
       header: t("salesReports.metrics.qty_sold"),
@@ -288,8 +280,8 @@ export default function Profitability() {
         columns={columns}
         rows={items}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-profitability"
         initialPageSize={25}
-        columnMenu={false}
         searchable
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}

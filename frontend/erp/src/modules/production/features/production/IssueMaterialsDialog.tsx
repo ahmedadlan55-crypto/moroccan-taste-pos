@@ -6,7 +6,7 @@ import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
 import type { ProductionDetail } from "@/modules/inventory/lib/adapters/production.adapter";
 import { ApiError } from "@/shared/api";
-import { useT } from "@/i18n";
+import { useT, useLang } from "@/i18n";
 
 // Partial materials issue: pre-fills each plan line's REMAINING qty, lets the
 // user issue any subset (FEFO allocation happens server-side for tracked
@@ -22,6 +22,7 @@ export function IssueMaterialsDialog({
   onDone: () => void;
 }) {
   const t = useT();
+  const lang = useLang();
   const { issueMaterials } = useProductionMutations();
   const isMgr = useCan("production.approve"); // manager/admin mirror
   const [qtys, setQtys] = useState<Record<string, string>>({});
@@ -101,17 +102,21 @@ export function IssueMaterialsDialog({
         </>
       }
     >
+      {/* shared/ui FullPageFlow pins dir="rtl" on its own root and lives outside
+          this module — override it on our content so the overlay follows the
+          active UI language instead of always rendering RTL. */}
+      <div dir={lang === "ar" ? "rtl" : "ltr"}>
       <section className="surface overflow-hidden">
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.material")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.planned")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.issued")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.remaining")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.available")}</th>
-                    <th className="px-3 py-2 text-right">{t("production.issue.col.thisIssueQty")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.material")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.planned")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.issued")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.remaining")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.available")}</th>
+                    <th className="px-3 py-2 text-start">{t("production.issue.col.thisIssueQty")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -119,7 +124,7 @@ export function IssueMaterialsDialog({
                     <tr key={p.itemId}>
                       <td className="px-3 py-2 font-bold text-slate-800">
                         {p.itemName}
-                        {p.trackingMode !== "none" && <span className="mr-2 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">FEFO</span>}
+                        {p.trackingMode !== "none" && <span className="ms-2 rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">FEFO</span>}
                       </td>
                       <td className="px-3 py-2 tabular-nums text-slate-600">{formatQty(p.qtyPlanned, p.itemUnit)}</td>
                       <td className="px-3 py-2 tabular-nums text-slate-600">{formatQty(p.qtyIssued)}</td>
@@ -163,7 +168,7 @@ export function IssueMaterialsDialog({
 
             {overIssue && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">
-                <TriangleAlert className="ml-1 inline h-4 w-4" />
+                <TriangleAlert className="me-1 inline h-4 w-4" />
                 {t("production.issue.overIssueWarn")}
                 {isMgr ? (
                   <label className="mt-2 flex items-center gap-2 font-bold">
@@ -187,6 +192,7 @@ export function IssueMaterialsDialog({
 
         </div>
       </section>
+      </div>
     </FullPageFlow>
   );
 }

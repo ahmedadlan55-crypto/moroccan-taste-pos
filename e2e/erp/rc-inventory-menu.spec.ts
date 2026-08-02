@@ -156,8 +156,12 @@ test("menu: recipe vs manual cost sources render; full-page create; bilingual", 
   await waitRendered(page);
 
   const heads = (await page.locator("#main thead").innerText()).replace(/\s+/g, " ");
-  // The redesigned 14-column set (representative subset incl. the cost/margin/tax columns).
-  for (const h of ["Code", "Name (Arabic)", "Name (English)", "Brand", "Cost", "Sale price", "Margin", "Tax", "Branches", "Channels", "Status"]) {
+  // The redesigned column set (representative subset incl. the cost/margin/tax columns).
+  // `0b4d86e8` replaced the single "Sale price" column with the three-column
+  // price breakdown, because one number could not say whether it was the net
+  // price or what the customer actually pays. Asserting all three keeps the
+  // distinction covered — collapsing back to one column is the regression.
+  for (const h of ["Code", "Name (Arabic)", "Name (English)", "Brand", "Cost", "Excl. VAT", "VAT", "Incl. VAT", "Margin", "Tax", "Branches", "Channels", "Status"]) {
     expect(heads, `menu column "${h}"`).toContain(h);
   }
   const txt = await page.locator("#main").innerText();

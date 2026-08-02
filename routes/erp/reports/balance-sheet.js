@@ -908,7 +908,15 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     // them red and the parent's sum reflects the correct net amount.
     // Net Income is injected as a synthetic line under Retained Earnings
     // (code 32) per IAS 1 Statement of Changes in Equity.
-    const coaTree = _buildCoaTree(allAccountsForTree, balMap, includeZero, netIncome);
+    // NAMED `coaTreeView`, not `coaTree`. The module import at the top of this
+    // file is `const coaTree = require('../../../lib/coa/tree')`, and this
+    // declaration sits INSIDE the same try block that uses it at
+    // `coaTree.ORDER_BY('a')` further up. A `const` shadow puts that import in
+    // the temporal dead zone for the WHOLE block, so those earlier lines threw
+    // `ReferenceError: Cannot access 'coaTree' before initialization` on every
+    // single request — and the catch below turned it into a 200 full of zeros.
+    // The response key stays `coaTree`, so the API contract is unchanged.
+    const coaTreeView = _buildCoaTree(allAccountsForTree, balMap, includeZero, netIncome);
 
     res.json({
       currentAssets, totCA, nonCurrentAssets, totNCA, totalAssets,
@@ -923,12 +931,31 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
       asOfDate: asOfDate || todayYmd(),
       groups: groups,
       orderedGroups: orderedGroups,   // v5.10.79 — IFRS-ordered arrays
-      coaTree: coaTree,                // v5.10.82 — CoA-mirrored hierarchical tree
+      coaTree: coaTreeView,            // v5.10.82 — CoA-mirrored hierarchical tree
       unclassified: unclassified,
       prior: priorSnapshot,           // v5.10.79 — comparison snapshot (or null)
       change: change                   // v5.10.79 — deltas (or null)
     });
-  } catch (e) { res.json({ currentAssets:[], nonCurrentAssets:[], currentLiab:[], nonCurrentLiab:[], equityItems:[], totCA:0, totNCA:0, totCL:0, totNCL:0, totEq:0, totalAssets:0, totalLiabilities:0, netIncome:0, isBalanced:false, groups:{}, unclassified:[] }); }
+  } catch (e) {
+    // LOG, always. This catch answering 200 with an all-zero balance sheet is
+    // precisely why a `ReferenceError` on the line above lived on main
+    // undetected: the endpoint never failed, it just quietly reported that the
+    // company owns nothing. A financial statement that silently zeroes itself is
+    // worse than one that errors — nothing downstream can tell the difference
+    // between "no data" and "the report is broken".
+    //
+    // The zeroed shape is kept so existing callers do not crash, but it now
+    // carries `degraded: true` and the request id, so the UI and the logs can
+    // both say so instead of presenting zeros as fact.
+    console.error('[erp/reports/balance-sheet-ifrs]', req.requestId || '-', (e && e.stack) || e);
+    res.json({
+      currentAssets: [], nonCurrentAssets: [], currentLiab: [], nonCurrentLiab: [], equityItems: [],
+      totCA: 0, totNCA: 0, totCL: 0, totNCL: 0, totEq: 0,
+      totalAssets: 0, totalLiabilities: 0, netIncome: 0,
+      isBalanced: false, groups: {}, unclassified: [],
+      degraded: true, requestId: req.requestId || null,
+    });
+  }
 });
 
 module.exports = router;

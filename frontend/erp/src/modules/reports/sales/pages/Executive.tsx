@@ -29,6 +29,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
+  reportQuerySpec,
   setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
@@ -37,75 +38,80 @@ import {
   type AnalyticsResultRow,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
+import { REPORT_BY_ID, reportQuery } from "../lib/reportRegistry";
 
 const SEGMENT = "executive";
 
 /**
- * Every figure the report needs, dimensionless — in THREE requests, not one.
+ * Every figure the report needs — in FIVE requests, not one and not six.
  *
  * lib/analytics/planner.js caps a request at MAX_METRICS = 12 and answers
- * VALIDATION_ERROR / 422 above it. The report needs 28 figures, so asking for
- * them in a single query would make EVERY load of this page 422 — the screen
- * would be an ErrorState with no data at all. Split into three dimensionless
- * requests over the identical filters/compare and merged by `f()` below.
+ * VALIDATION_ERROR / 422 above it. The report needs 28 figures, so a single
+ * query would make EVERY load of this page 422 — an ErrorState with no data at
+ * all. The requests are:
  *
- * The split is NOT arbitrary:
- *   • A is the statement — every operand of both ladders, so the arithmetic on
- *     screen comes out of ONE response and cannot be assembled from two
- *     snapshots of the window taken a moment apart.
- *   • C carries the three cost-gated metrics (cogs / gross_profit /
- *     margin_pct) BESIDE net_collections, which is ungated. A viewer without
- *     analytics.cost.view therefore gets them masked out of a still-valid
- *     response; a request of only cost metrics would be refused whole with 403
- *     ANALYTICS_ALL_MASKED and break the page for managers.
+ *   1  `statement`      dimensionless, 12 metrics — every operand of both
+ *                       ladders, so the arithmetic on screen comes out of ONE
+ *                       response and cannot be assembled from two snapshots of
+ *                       the window taken a moment apart.
+ *   2  `voidsAndProfit` dimensionless — the void metrics MUST ride alone (see
+ *                       below), and they carry the three cost-gated metrics
+ *                       BESIDE net_collections, which is ungated: a viewer
+ *                       without analytics.cost.view then gets them masked out
+ *                       of a still-valid response, where a request of only cost
+ *                       metrics would be refused whole with 403
+ *                       ANALYTICS_ALL_MASKED and break the page for managers.
+ *   3  `daily`          grouped by day — the detail table AND, off its totals,
+ *                       the six operational counters.
+ *   4  `byTax`          grouped by vat_category.
+ *   5  `byPayment`      grouped by payment_method — the collections table AND,
+ *                       off its totals, payments_in / refunds_out.
+ *
+ * 3, 4 and 5 group by three DIFFERENT dimensions, so they cannot be one
+ * request: the planner emits one GROUP BY per request. That is the floor.
  */
-const SUMMARY_METRICS_A = [
-  "sales_before_discount",
-  "discounts_total",
-  "gross_product_sales",
-  "net_ex_vat",
-  "vat_amount",
-  "returns_net",
-  "returns_vat",
-  "returns_value",
-  "net_product_sales",
-  "net_product_sales_ex_vat",
-  "invoice_total",
-  "statement_variance",
-] as const;
-
-const SUMMARY_METRICS_B = [
-  "orders",
-  "avg_ticket",
-  "qty_sold",
-  "avg_items_per_order",
-  "guests",
-  "fees_total",
-  "rounding_total",
-  "returns_count",
-  "payments_in",
-  "refunds_out",
-] as const;
-
-const SUMMARY_METRICS_C = [
-  // VOID METRICS LIVE ALONE WITH NON-ORDER METRICS — never beside orders /
-  // avg_ticket / guests / fees. lib/analytics/planner.js:356 computes the
-  // void filter PER FACT STATEMENT: if ANY metric on the order fact mentions
-  // 'voided', the exclusion is dropped for EVERY metric on that fact. Put
-  // voids_count beside orders and the order count silently starts including
-  // voided orders — and avg_ticket becomes a ratio of a void-excluded
-  // numerator over a void-included denominator. Group C carries no other
-  // order-population metric, so the un-exclusion reaches nothing else.
-  "voids_count",
-  "voids_value",
-  "net_collections",
-  "cogs",
-  "gross_profit",
-  "margin_pct",
-] as const;
-
+// The groups live in lib/reportRegistry as `statement` / `voidsAndProfit` /
+// `daily` / `byTax` / `byPayment`; they are read back here so the statement
+// layout and the request can never name different metrics.
+//
+// WHY THE VOID GROUP IS SEPARATE — the reason is recorded here because this is
+// where the layout that depends on it lives:
+//
+//   • the planner caps a request at 12 metrics (MAX_METRICS);
+//   • VOID METRICS LIVE ALONE WITH NON-ORDER METRICS — never beside orders /
+//     avg_ticket / guests / fees. planner.js:356 computes the void filter PER
+//     FACT STATEMENT: if ANY metric on the order fact mentions 'voided', the
+//     exclusion is dropped for EVERY metric on that fact. Put voids_count
+//     beside orders and the order count silently starts including voided
+//     orders — and avg_ticket becomes a ratio of a void-excluded numerator
+//     over a void-included denominator. Group C carries no other
+//     order-population metric, so the un-exclusion reaches nothing else.
+const EXEC_REPORT = REPORT_BY_ID[SEGMENT];
+const SUMMARY_METRICS_A: readonly string[] = reportQuery(EXEC_REPORT, "statement")!.metrics;
 const IN_GROUP_A: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_A);
-const IN_GROUP_B: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_B);
+
+/**
+ * FIVE REQUESTS, NOT SIX — and where each figure now comes from.
+ *
+ * The operational counters (qty, items per order, guests, fees, rounding,
+ * returns count) used to be their OWN dimensionless request whose only output
+ * was a grand total. Every grouped request already computes its grand total
+ * server-side, so they ride on the DAILY request and are read off its `totals`;
+ * `payments_in` / `refunds_out` likewise come off the COLLECTIONS request's
+ * totals. Nothing is recomputed in the browser — both are the server's own
+ * period aggregate over the same population and the same WHERE clause, from a
+ * totals statement that carries no LIMIT.
+ *
+ * __tests__/executiveRequests.test.tsx counts the requests this page issues and
+ * pins the full figure list, so a "simplification" that adds a sixth request
+ * back — or that meets the count by dropping a line — fails.
+ */
+const FROM_DAILY_TOTALS: ReadonlySet<string> = new Set<string>(
+  reportQuery(EXEC_REPORT, "daily")!.metrics,
+);
+const FROM_PAYMENT_TOTALS: ReadonlySet<string> = new Set<string>(
+  reportQuery(EXEC_REPORT, "byPayment")!.metrics,
+);
 
 /**
  * The day-by-day detail table — the one grid on this page that exports as rows.
@@ -117,28 +123,23 @@ const IN_GROUP_B: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_B);
  * net_ex_vat + vat_amount = invoice_total — with the discount shown beside it
  * as the tax-inclusive figure it is.
  */
-const DAILY_METRICS = [
-  "orders",
-  "discounts_total",
-  "net_ex_vat",
-  "vat_amount",
-  "invoice_total",
-  "avg_ticket",
-] as const;
+// `columns`, not `metrics`: the daily REQUEST also carries the six period-only
+// counters (see FROM_DAILY_TOTALS), and the table — and the file — show the six
+// day columns. Exporting all twelve plus net_incl_vat would be thirteen
+// metrics, one past the planner's ceiling, and the export job would 422.
+const DAILY_METRICS: readonly string[] = reportQuery(EXEC_REPORT, "daily")!.columns!;
 
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-// Without it the export silently falls back to DEFAULT_EXPORT_SPEC (net +
-// orders), which is not this report. The statement/tax/collections figures are
-// dimensionless and can't be exported as rows, so the export mirrors the daily
-// detail table — including its date basis, so the file matches the screen.
+// THE ONE PAGE THAT STILL REGISTERS ITS OWN EXPORT SHAPE, and why.
 //
-// BASIS IN THE FILE: the export never passes through the api.ts tax swap, so a
-// `net_ex_vat` column in a file exported with the incl-VAT chip on would have
-// been ex-VAT while the screen showed incl-VAT, with nothing in the file to say
-// which. Both bases are therefore exported as separate columns, and each column
-// header is the metric's own label — which now names its basis
-// ("Net sales, ex. VAT (after discount)" / "Net sales (incl. VAT)"), so the
-// spreadsheet is self-describing however it is later filtered or pasted.
+// The registry's `daily` query is the SCREEN's column set. The file adds one
+// column the screen does not have: the export never passes through the api.ts
+// tax swap, so a `net_ex_vat` column in a file exported with the incl-VAT chip
+// on would be ex-VAT while the screen showed incl-VAT, with nothing in the file
+// to say which. Both bases are therefore exported as separate columns, and each
+// header is the metric's own label — which names its basis ("Net sales, ex. VAT
+// (after discount)" / "Net sales (incl. VAT)") — so the spreadsheet is
+// self-describing however it is later filtered or pasted. The grouping and the
+// sort still follow the registry, resolved against the date basis.
 setPageExportRequest(SEGMENT, (filters) => {
   const dim = filters.businessDay ? "business_day" : "calendar_day";
   return {
@@ -430,49 +431,41 @@ export default function Executive() {
 
   const summaryBodyA: AnalyticsQueryBody = {
     ...base,
-    metrics: [...SUMMARY_METRICS_A],
-    dimensions: [],
-    ...(compare ? { compare } : {}),
-  };
-  const summaryBodyB: AnalyticsQueryBody = {
-    ...base,
-    metrics: [...SUMMARY_METRICS_B],
-    dimensions: [],
+    ...reportQuerySpec(SEGMENT, "statement", filters),
     ...(compare ? { compare } : {}),
   };
   const summaryBodyC: AnalyticsQueryBody = {
     ...base,
-    metrics: [...SUMMARY_METRICS_C],
-    dimensions: [],
+    ...reportQuerySpec(SEGMENT, "voidsAndProfit", filters),
     ...(compare ? { compare } : {}),
   };
   const byDayBody: AnalyticsQueryBody = {
     ...base,
-    metrics: [...DAILY_METRICS],
-    dimensions: [dayDim],
+    // Carries the six DAILY COLUMNS plus the six period-only counters — see
+    // FROM_DAILY_TOTALS above; `compare` so the counters keep their
+    // vs-previous-period figures.
+    ...(compare ? { compare } : {}),
+    // The registry's `daily` query carries the explicit row limit — see the
+    // note there: without it the planner caps at DEFAULT_LIMIT = 50 and the
+    // detail under a 90-day total shows fifty rows.
+    ...reportQuerySpec(SEGMENT, "daily", filters),
     sort: [{ by: dayDim, dir: "asc" }],
-    // The daily detail sits directly under a statement that totals the WHOLE
-    // period, so the rows must be able to foot to it. Without an explicit limit
-    // the planner capped them at 50 (planner.js:58) while a range may legally
-    // run to 400 days — the reader saw 50 rows under a 90-day total and no
-    // explanation for the gap. 500 is the planner's own MAX_LIMIT.
-    limit: 500,
   };
   const byTaxBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["net_ex_vat", "vat_amount"],
-    dimensions: ["vat_category"],
+    ...reportQuerySpec(SEGMENT, "byTax", filters),
   };
   const byPaymentBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["payments_in", "refunds_out", "net_collections"],
-    dimensions: ["payment_method"],
+    ...reportQuerySpec(SEGMENT, "byPayment", filters),
     sort: [{ by: "payments_in", dir: "desc" }],
+    // The collections panel's own period figures come off THIS request's
+    // totals (see FROM_PAYMENT_TOTALS), so it needs the comparison window too.
+    ...(compare ? { compare } : {}),
   };
 
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const summaryA = useAnalyticsQuery(SEGMENT, summaryBodyA, { enabled: catalogReady });
-  const summaryB = useAnalyticsQuery(SEGMENT, summaryBodyB, { enabled: catalogReady });
   const summaryC = useAnalyticsQuery(SEGMENT, summaryBodyC, { enabled: catalogReady });
   const byDay = useAnalyticsQuery(SEGMENT, byDayBody, { enabled: catalogReady });
   const byTax = useAnalyticsQuery(SEGMENT, byTaxBody, { enabled: catalogReady });
@@ -480,22 +473,30 @@ export default function Executive() {
 
   const hasCompare = filters.compare !== "none";
   const rowA = summaryA.data?.rows[0];
-  const rowB = summaryB.data?.rows[0];
   const rowC = summaryC.data?.rows[0];
-  /** Which of the three summary requests carries a given figure. */
-  const sourceOf = (id: string) =>
-    IN_GROUP_A.has(id)
-      ? { result: summaryA.data, row: rowA }
-      : IN_GROUP_B.has(id)
-        ? { result: summaryB.data, row: rowB }
-        : { result: summaryC.data, row: rowC };
+
+  /**
+   * Which request carries a given figure, and whether it is a ROW value (a
+   * dimensionless request answers one row) or a period TOTAL (a grouped request
+   * answers many rows plus the server's own grand total).
+   */
+  const sourceOf = (id: string) => {
+    if (IN_GROUP_A.has(id)) return { result: summaryA.data, row: rowA, fromTotals: false };
+    if (FROM_DAILY_TOTALS.has(id)) return { result: byDay.data, row: undefined, fromTotals: true };
+    if (FROM_PAYMENT_TOTALS.has(id)) return { result: byPayment.data, row: undefined, fromTotals: true };
+    return { result: summaryC.data, row: rowC, fromTotals: false };
+  };
   const f = (id: string) => {
     const s = sourceOf(id);
-    return pick(s.result, s.row, id);
+    if (!s.fromTotals) return pick(s.result, s.row, id);
+    if (!s.result || s.result.meta.maskedMetrics.includes(id)) return null;
+    const v = s.result.totals?.[id];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
   };
   const c = (id: string): number | null => {
     if (!hasCompare) return null;
-    const v = sourceOf(id).row?.compare?.[id];
+    const s = sourceOf(id);
+    const v = s.fromTotals ? s.result?.totalsCompare?.[id] : s.row?.compare?.[id];
     return typeof v === "number" ? v : null;
   };
 
@@ -521,7 +522,7 @@ export default function Executive() {
         header: t(`salesReports.dims.${dayDim}`),
         accessor: (r) => r.day,
         cell: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 128,
         sortable: true,
       },
@@ -536,10 +537,10 @@ export default function Executive() {
   );
 
   const isLoading =
-    registry.isLoading || summaryA.isLoading || summaryB.isLoading || summaryC.isLoading ||
+    registry.isLoading || summaryA.isLoading || summaryC.isLoading ||
     byDay.isLoading || byTax.isLoading || byPayment.isLoading;
   const error =
-    registry.error ?? summaryA.error ?? summaryB.error ?? summaryC.error ??
+    registry.error ?? summaryA.error ?? summaryC.error ??
     byDay.error ?? byTax.error ?? byPayment.error;
 
   if (isLoading) return <LoadingState rows={6} />;
@@ -551,7 +552,6 @@ export default function Executive() {
         onRetry={() => {
           void registry.refetch();
           void summaryA.refetch();
-          void summaryB.refetch();
           void summaryC.refetch();
           void byDay.refetch();
           void byTax.refetch();
@@ -909,6 +909,7 @@ export default function Executive() {
           columns={dayColumns}
           rows={dayRows}
           getRowId={(r) => r.day}
+          tableId="sales-hub-executive"
           initialSort={{ columnId: "day", dir: "asc" }}
           onRowClick={(r) => patch({ from: r.day, to: r.day, preset: "custom" }, { push: true })}
           emptyTitle={t("salesReports.states.empty")}

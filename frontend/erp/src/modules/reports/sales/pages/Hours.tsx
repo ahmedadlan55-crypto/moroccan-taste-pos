@@ -23,22 +23,17 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
+import { hubHref } from "../lib/reportRegistry";
 
 const SEGMENT = "hours";
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: ["orders", "net_ex_vat"],
-  dimensions: ["hour"],
-  sort: [{ by: "hour", dir: "asc" }],
-}));
+// Both queries — and the ExportMenu's file — come from lib/reportRegistry.
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -80,12 +75,10 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
+/** The canonical URL of another hub report — lib/reportRegistry owns the
+ *  centre a report lives in, so a drill never hand-builds a retired path. */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
 interface HourRow {
@@ -107,23 +100,21 @@ export default function Hours() {
 
   const heatBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["net_ex_vat"],
-    dimensions: ["weekday", "hour"],
-    sort: [
-      { by: "weekday", dir: "asc" },
-      { by: "hour", dir: "asc" },
-    ],
     // 7 weekdays × 24 hours = 168 rows. Omitting `limit` handed the request to
     // the planner's DEFAULT_LIMIT of 50 (lib/analytics/planner.js:58) — and
     // because the sort is weekday-then-hour, the cut fell mid-week: Thursday
     // through Sunday, the busiest end of a restaurant week, were simply absent
-    // from the peak map with nothing on screen to say so.
-    limit: 200,
+    // from the peak map with nothing on screen to say so. The registry query
+    // carries the explicit limit.
+    ...reportQuerySpec(SEGMENT, "heatmap", filters),
+    sort: [
+      { by: "weekday", dir: "asc" },
+      { by: "hour", dir: "asc" },
+    ],
   };
   const byHourBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["orders", "net_ex_vat"],
-    dimensions: ["hour"],
+    ...reportQuerySpec(SEGMENT, "byHour", filters),
     sort: [{ by: "hour", dir: "asc" }],
     ...(compare ? { compare } : {}),
   };
@@ -176,7 +167,7 @@ export default function Hours() {
         header: t("salesReports.dims.hour"),
         accessor: (r) => Number(r.key),
         cell: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 112,
         sortable: true,
       },
@@ -280,6 +271,7 @@ export default function Hours() {
         columns={columns}
         rows={hourRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-hours"
         initialSort={{ columnId: "hour", dir: "asc" }}
         emptyTitle={t("salesReports.states.empty")}
       />

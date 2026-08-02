@@ -19,21 +19,17 @@ import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsQueryBody,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "shifts";
-const METRICS = ["till_expected_cash", "till_counted", "till_variance"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: ["shift"],
-  sort: [{ by: "till_variance", dir: "asc" }],
-}));
+// Metrics, the shift grouping and the ExportMenu's file all come from
+// lib/reportRegistry (report `shifts`). Every metric here is TILL-fact, which
+// is why the registry gives this report neither a brand filter nor the tax
+// basis toggle: the till fact carries no brand column, and no VAT at all.
 
 /** |variance| below this is treated as balanced (mirrors pos-admin's 0.01). */
 const BALANCED_EPS = 0.01;
@@ -66,10 +62,17 @@ export default function Shifts() {
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
-  const kpiBody = useMemo<AnalyticsQueryBody>(() => ({ metrics: [...METRICS], dimensions: [], ...base }), [base]);
+  const kpiBody = useMemo<AnalyticsQueryBody>(
+    () => ({ ...reportQuerySpec(SEGMENT, "kpis", filters), ...base }),
+    [base, filters],
+  );
   const shiftBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: [...METRICS], dimensions: ["shift"], sort: [{ by: "till_variance", dir: "asc" }], ...base }),
-    [base],
+    () => ({
+      ...reportQuerySpec(SEGMENT, "byShift", filters),
+      sort: [{ by: "till_variance", dir: "asc" }],
+      ...base,
+    }),
+    [base, filters],
   );
 
   const kpis = useAnalyticsQuery("shifts-kpis", kpiBody);
@@ -95,7 +98,7 @@ export default function Shifts() {
   };
 
   const columns: ColumnDef<ShiftRow>[] = [
-    { id: "shift", header: t("salesReports.dims.shift"), accessor: (r) => r.label, pinStart: true, width: 150 },
+    { id: "shift", header: t("salesReports.dims.shift"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 150 },
     {
       id: "expected",
       header: t("salesReports.metrics.till_expected_cash"),
@@ -162,8 +165,8 @@ export default function Shifts() {
         columns={columns}
         rows={shiftRows}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-shifts"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
         // Operational drill: the pos-admin shifts screen (no URL param contract).

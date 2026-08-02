@@ -864,7 +864,13 @@ router.get('/bom', async (req, res) => {
       effectiveFrom: b.effective_from, effectiveTo: b.effective_to,
       lineCount: Number(b.line_count) || 0, notes: b.notes || ''
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // NEVER res.json([]) — a DB fault dressed as "no data" is the defect the
+    // unified recipe domain exists to remove. Answer with a real status, a
+    // code, and the requestId the server already mints.
+    console.error('[erp/bom]', req.requestId || '-', e && e.message);
+    res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'تعذّر قراءة الوصفات', requestId: req.requestId || null });
+  }
 });
 
 // V5.6 — Unified product pool for BOM editor (combines menu + inv_items).
@@ -931,8 +937,10 @@ router.get('/bom/product-pool', async (req, res) => {
       }))
     ]);
   } catch(e) {
-    console.error('[bom/product-pool]', e.message);
-    res.json([]);
+    // NEVER res.json([]) — the BOM picker showing "no products" because a
+    // query broke is the same false-empty defect as the list above.
+    console.error('[bom/product-pool]', req.requestId || '-', e && e.message);
+    res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'تعذّر قراءة قائمة المنتجات', requestId: req.requestId || null });
   }
 });
 
@@ -980,134 +988,74 @@ router.get('/inventory/usage/:itemId', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// COMPATIBILITY LAYER. Kept mounted because a caller may still exist outside
+// this repo, but it no longer owns any rules — it delegates to
+// routes/recipes.js `saveRecipe`, the ONE write path.
+//
+// What delegating fixes here specifically:
+//   • it STOPPED trusting `req.body.recomputedCost`. The old code read the cost
+//     straight from the browser ("Frontend may send recomputedCost … we trust
+//     it") and wrote it onto menu.cost. The cost is now computed server-side
+//     from the component costs read inside the save transaction, and the field
+//     is ignored if sent.
+//   • it computed the batch cost WITHOUT dividing by yield, while
+//     routes/menu.js's twin DID divide — so the same recipe had two different
+//     unit costs depending on which screen saved it last. There is now one
+//     formula (lib/recipeEngine.computeRecipeCost).
+//   • one transaction instead of DELETE-then-N-INSERTs on the pool.
+//   • yield/waste validation, duplicate folding, cycle detection, fail-closed
+//     audit — all inherited.
 router.post('/bom', requireCapability('inventory.edit'), async (req, res) => {
+  const { saveRecipe, HTTP_FOR } = require('./recipes');
   try {
-    const { id, productId, productSource, version, yieldQuantity, yieldUnit, effectiveFrom, effectiveTo, notes, lines, consumptionWarehouseId } = req.body;
-    if (!productId) return res.json({ success: false, error: 'المنتج مطلوب' });
-    // V5.6: validate productSource is either 'menu' or 'inv'; default to 'inv' for backward compat.
-    const src = (productSource === 'menu') ? 'menu' : 'inv';
-    let bomId = id;
-    if (id) {
-      await db.query(
-        `UPDATE bom SET product_id=?, product_source=?, version=?, yield_quantity=?, yield_unit=?,
-                       effective_from=?, effective_to=?, notes=?, consumption_warehouse_id=?
-         WHERE id=?`,
-        [productId, src, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
-         effectiveFrom||null, effectiveTo||null, notes||'',
-         consumptionWarehouseId||null, id]);
-    } else {
-      bomId = genId('BOM');
-      await db.query(
-        `INSERT INTO bom (id, product_id, product_source, version, yield_quantity, yield_unit,
-                          effective_from, effective_to, notes, consumption_warehouse_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [bomId, productId, src, Number(version)||1, Number(yieldQuantity)||1, yieldUnit||'PCS',
-         effectiveFrom||null, effectiveTo||null, notes||'', consumptionWarehouseId||null]);
-    }
-    // V5.6: if BOM is for a menu item, link bom_id back to menu row
-    if (src === 'menu') {
-      try { await db.query('UPDATE menu SET bom_id = ? WHERE id = ?', [bomId, productId]); } catch(_){}
-    }
-    // V5.7.27 — validate components exist + skip qty<=0 lines + bulk INSERT.
-    //   Was: 1 DELETE + N INSERT loop (N+1 round trips). Now: 1 DELETE + 1 multi-row INSERT.
-    //   Also rejects unknown componentItemId so we get a clear error rather
-    //   than a silent FK violation later.
-    if (Array.isArray(lines)) {
-      const validLines = [];
-      const skipped = [];
-      const unknownIds = [];
-      // Deduplicate by componentItemId — last write wins (matches frontend's
-      // "skip if already added" guard but defensive against malformed payloads)
-      const seenIds = new Set();
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const l = lines[i];
-        const compId = l && (l.componentItemId || l.itemId);
-        if (!compId) { skipped.push({ reason: 'no-id', index: i }); continue; }
-        const qty = Number(l.quantity) || 0;
-        if (qty <= 0) { skipped.push({ reason: 'qty<=0', index: i, compId }); continue; }
-        if (seenIds.has(compId)) { skipped.push({ reason: 'duplicate', index: i, compId }); continue; }
-        seenIds.add(compId);
-        validLines.unshift(l);  // preserve original order
-      }
-      // Validate every componentItemId exists in inv_items
-      if (validLines.length) {
-        const ids = Array.from(new Set(validLines.map(l => l.componentItemId || l.itemId)));
-        const placeholders = ids.map(() => '?').join(',');
-        const [foundRows] = await db.query(
-          `SELECT id FROM inv_items WHERE id IN (${placeholders})`, ids);
-        const foundIds = new Set(foundRows.map(r => r.id));
-        ids.forEach(id => { if (!foundIds.has(id)) unknownIds.push(id); });
-        if (unknownIds.length) {
-          return res.json({
-            success: false,
-            error: 'مكوّنات غير موجودة في المخزون: ' + unknownIds.join(', '),
-            unknownComponents: unknownIds
-          });
-        }
-      }
-      await db.query('DELETE FROM bom_lines WHERE bom_id = ?', [bomId]);
-      if (validLines.length) {
-        // Bulk multi-row INSERT (one round trip instead of N)
-        const valuesSql = validLines.map(() => '(?,?,?,?,?,?)').join(',');
-        const params = [];
-        validLines.forEach(l => {
-          params.push(
-            genId('BL'), bomId,
-            l.componentItemId || l.itemId,
-            Number(l.quantity) || 0,
-            l.unit || 'PCS',
-            Number(l.wastePct) || 0
-          );
-        });
-        await db.query(
-          `INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct)
-           VALUES ${valuesSql}`, params);
-      }
-    }
+    const b = req.body || {};
+    if (!b.productId) return res.status(422).json({ success: false, code: 'VALIDATION_ERROR', error: 'المنتج مطلوب' });
+    const src = (b.productSource === 'menu') ? 'menu' : 'inv';
+    const actor = (req.user && (req.user.username || req.user.name)) || '';
 
-    // V5.7.22 — Auto-update menu.cost from the new BOM lines whenever the
-    //   target is a menu item. Frontend may send `recomputedCost` (exact
-    //   value it just displayed); we trust it. As a fallback we recompute
-    //   server-side from sum(quantity × inv_items.cost) so the cost is
-    //   always in sync with the recipe (no manual recompute step needed).
-    if (src === 'menu') {
-      let newCost = Number(req.body.recomputedCost);
-      if (!newCost && Array.isArray(lines) && lines.length) {
-        try {
-          const [costRows] = await db.query(
-            `SELECT bl.quantity, bl.waste_pct, COALESCE(i.cost,0) AS unit_cost
-             FROM bom_lines bl LEFT JOIN inv_items i ON i.id = bl.component_item_id
-             WHERE bl.bom_id = ?`, [bomId]);
-          newCost = costRows.reduce((s, r) => {
-            const q = Number(r.quantity) || 0;
-            const c = Number(r.unit_cost) || 0;
-            const w = Number(r.waste_pct) || 0;
-            return s + q * c * (1 + w / 100);
-          }, 0);
-          newCost = Math.round(newCost * 10000) / 10000;
-        } catch (_) { newCost = null; }
-      }
-      if (newCost != null && !isNaN(newCost)) {
-        try {
-          await db.query('UPDATE menu SET cost = ?, computed_cost = ? WHERE id = ?', [newCost, newCost, productId]);
-          // v5.10.14 — Semi-finished products are inventory items: their
-          // cost = sum of component costs from the recipe. Mirror the
-          // recomputed cost into inv_items so warehouse views, valuation
-          // reports, and downstream production orders see the same number.
-          try {
-            const [mr] = await db.query('SELECT is_semi_finished FROM menu WHERE id = ?', [productId]);
-            if (mr.length && Number(mr[0].is_semi_finished)) {
-              await db.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, productId]);
-            }
-          } catch(_) { /* inv_items row may not exist for this menu item — non-fatal */ }
-        } catch (_) {}
-      }
-    }
-    res.json({ success: true, id: bomId, productSource: src });
-  } catch(e) {
-    // v7.5 — was a 200 with {success:false}: a DB fault dressed as a business reply.
-    console.error('[erp/bom] failed:', e && (e.code || e.message));
-    res.status(500).json({ success: false, error: e.message });
+    // No optimistic lock in the legacy contract — read the current row_version
+    // so a concurrent edit is still caught rather than refused outright.
+    const [cur] = await db.query(
+      "SELECT row_version FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')=? AND status IN ('active','draft') ORDER BY FIELD(status,'active','draft'), version DESC LIMIT 1",
+      [b.productId, src]);
+
+    const out = await saveRecipe({
+      source: src,
+      productId: b.productId,
+      actor,
+      ip: req.ip,
+      body: {
+        bomId: b.id || undefined,
+        yieldQuantity: b.yieldQuantity != null ? b.yieldQuantity : 1,
+        yieldUnit: b.yieldUnit || 'PCS',
+        effectiveFrom: b.effectiveFrom || null,
+        effectiveTo: b.effectiveTo || null,
+        notes: b.notes,
+        consumptionWarehouseId: b.consumptionWarehouseId || null,
+        activate: true,
+        expectedVersion: cur.length ? Number(cur[0].row_version) : undefined,
+        // `recomputedCost` is DELIBERATELY not forwarded.
+        lines: (Array.isArray(b.lines) ? b.lines : []).map((l) => ({
+          componentItemId: l.componentItemId || l.itemId,
+          quantity: l.quantity,
+          enteredUnitId: l.enteredUnitId || null,
+          enteredUnitCode: l.enteredUnitCode || null,
+          wastePct: l.wastePct,
+          notes: l.notes,
+        })),
+      },
+    });
+
+    res.json({ success: true, id: out.bomId, productSource: src, version: out.version, rowVersion: out.rowVersion, computedCost: out.cost.unitCost });
+  } catch (e) {
+    const code = (e && e.code) || 'SERVER_ERROR';
+    const status = (HTTP_FOR && HTTP_FOR[code]) || 500;
+    console.error('[erp/bom] failed:', code, e && e.message);
+    res.status(status).json({
+      success: false, code,
+      error: status >= 500 ? 'خطأ داخلي في الخادم' : e.message,
+      detail: e && e.detail, requestId: req.requestId || null,
+    });
   }
 });
 
@@ -1124,7 +1072,13 @@ router.get('/bom/:id/lines', async (req, res) => {
       wastePct: Number(l.waste_pct) || 0, avgCost: Number(l.avg_cost) || 0,
       lineCost: (Number(l.quantity) || 0) * (Number(l.avg_cost) || 0) * (1 + (Number(l.waste_pct) || 0) / 100)
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    // NEVER res.json([]) — a DB fault dressed as "no data" is the defect the
+    // unified recipe domain exists to remove. Answer with a real status, a
+    // code, and the requestId the server already mints.
+    console.error('[erp/bom/:id/lines]', req.requestId || '-', e && e.message);
+    res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'تعذّر قراءة الوصفات', requestId: req.requestId || null });
+  }
 });
 
 // V5.7 — Hard-delete BOM with full cascade.

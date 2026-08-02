@@ -3,13 +3,13 @@
 // Free exploration over a CURATED primary dimension (`by` URL param, page-local
 // codec — the shared filters.ts codec is untouched), an optional second
 // dimension, a metric multi-pick (any registry metric), and a top/bottom-N
-// control. Renders the API rows + subtotals in PivotTable — reports are
+// control. Renders the API rows in a flat DataTable — reports are
 // decision tables, so the visual summary lives on the dashboard, not here.
 // Leaf row clicks drill: the clicked key becomes a shared-codec
 // filter (wave 4 covers payment_method / hour / menu_item / cashier too) and
 // `by` advances along the chain branch → business_day → hour → cashier → the
 // orders segment (the cashier hand-off pins `cashierId` on the composed URL).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { ArrowDownWideNarrow, ArrowUpWideNarrow, Coins, ShoppingBag, type LucideIcon } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -31,6 +31,7 @@ import {
   analyticsFilterCodec,
   csvParam,
   makeCodec,
+  nonDefaultFilterKeys,
   stringParam,
   type AnalyticsFilters,
 } from "../lib/filters";
@@ -44,11 +45,13 @@ import {
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 import { METRIC_CODES } from "../lib/registry-fixture";
-import { PivotTable, type PivotMeasure } from "../components/PivotTable";
+import { DataTable } from "@/shared/tables";
+import { ReportTotals } from "../components/ReportTotals";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 import { GroupByControl, MAX_GROUP_DIMS } from "../components/GroupByControl";
 import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { hubHref, unsupportedFilterKeysForMetrics } from "../lib/reportRegistry";
 import { useListSeparator } from "../lib/listSeparator";
-import type { FlatPivotRow } from "../lib/pivot";
 
 const SEGMENT = "explorer";
 
@@ -131,13 +134,7 @@ function CompletenessNotice({ meta }: { meta?: AnalyticsResult["meta"] }) {
  * is one a user cannot read.
  */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) {
-    if (v === "") sp.delete(k);
-    else sp.set(k, v);
-  }
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
 const fmtPercent = (v: number) => `${formatNumber(v)}%`;
@@ -167,7 +164,6 @@ export default function Explorer() {
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const page = useUrlFilters(explorerCodec);
   const registry = useAnalyticsRegistry();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const metricIds = page.filters.m.length > 0 ? page.filters.m : ["net_ex_vat"];
   const topBottom = page.filters.dir === "bottom" ? "bottom" : "top";
@@ -271,17 +267,26 @@ export default function Explorer() {
     });
   }, [registry.data, conflicts, metricIds.join("|"), listSeparator, t]);
 
-  const measures = useMemo<PivotMeasure[]>(
+  // The flat table: one column per grouping dimension (from row.labels[i]),
+  // then one per metric. Grouping stays a QUERY control that decides which
+  // leading columns exist — the render is flat, as every other report here.
+  const columns = useMemo(
     () =>
-      metricIds.map((id) => ({
-        id,
-        label: t(`salesReports.metrics.${id}`),
-        format: formatterFor(registry.data, id),
-      })),
-    [metricIds, registry.data, t],
+      buildResultColumns({
+        dimensions: dims,
+        metricIds,
+        t,
+        registry: registry.data,
+        maskedMetrics: query.data?.meta.maskedMetrics,
+        periodValue: `${filters.from} — ${filters.to}`,
+      }),
+    [dims.join("|"), metricIds.join("|"), registry.data, query.data?.meta.maskedMetrics, filters.from, filters.to, t],
   );
 
-  const drillLeaf = (row: FlatPivotRow) => {
+  const rows = query.data?.rows ?? [];
+  const tableRows = useMemo(() => toResultRows(rows), [rows]);
+
+  const drillLeaf = (row: ResultTableRow) => {
     const key = String(row.keys[0] ?? "");
     if (key === "") return;
     // Chain end (cashier): hand off to the orders segment with the cashier
@@ -322,18 +327,9 @@ export default function Explorer() {
     navigate(segmentHref(location.search, "explorer", extra));
   };
 
-  const onRowClick = (row: FlatPivotRow) => {
-    if (row.isSubtotal) {
-      setExpanded((prev) => {
-        const next = new Set(prev);
-        if (next.has(row.key)) next.delete(row.key);
-        else next.add(row.key);
-        return next;
-      });
-      return;
-    }
-    drillLeaf(row);
-  };
+  // Every row is a leaf now: the flat table has no groups to expand, so a
+  // click always drills. The old isSubtotal branch died with the pivot.
+  const onRowClick = (row: ResultTableRow) => drillLeaf(row);
 
   if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
   const loadError = registry.error ?? query.error;
@@ -350,7 +346,6 @@ export default function Explorer() {
     );
   }
 
-  const rows = query.data?.rows ?? [];
 
   // A level was dropped because the CURRENT metrics cannot express it. Naming
   // both sides matters: "grouping removed" alone reads as a bug, while "removed
@@ -388,6 +383,30 @@ export default function Explorer() {
       <span>
         {t("salesReports.groupBy.truncatedNotice", {
           metrics: truncatedMetrics.map((m) => t(`salesReports.metrics.${m}`)).join(listSeparator),
+        })}
+      </span>
+    </div>
+  );
+
+  // THE SAME HONESTY, FOR FILTERS. The hub clears filters a FIXED report cannot
+  // honour, but this report's metric set is chosen at runtime — so the drop
+  // happens per request, inside api.ts, where nothing on screen would say it
+  // had. A branch filter that silently stops applying the moment you add a
+  // till-fact metric is the invisible wrong number all over again.
+  const droppedFilters = unsupportedFilterKeysForMetrics(
+    metricIds,
+    nonDefaultFilterKeys(filters) as string[],
+  );
+  const droppedFiltersNotice = droppedFilters.length > 0 && (
+    <div
+      data-testid="explorer-dropped-filters-notice"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+    >
+      <span>
+        {t("salesReports.hub.filtersDropped", {
+          filters: droppedFilters
+            .map((k) => t(`salesReports.topbar.filterNames.${k}`))
+            .join(listSeparator),
         })}
       </span>
     </div>
@@ -468,6 +487,7 @@ export default function Explorer() {
         {truncatedNotice}
       {contaminatedNotice}
       {droppedNotice}
+      {droppedFiltersNotice}
         {controls}
         <EmptyState title={t("salesReports.states.empty")} />
       </section>
@@ -482,6 +502,7 @@ export default function Explorer() {
       {truncatedNotice}
       {contaminatedNotice}
       {droppedNotice}
+      {droppedFiltersNotice}
       {controls}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="kpi-row">
@@ -500,27 +521,40 @@ export default function Explorer() {
         })}
       </div>
 
-      <PivotTable
-        rows={rows}
-        subtotals={query.data?.subtotals}
-        rowDims={dims}
-        rowDimLabels={dims.map((d) => t(`salesReports.dims.${d}`))}
-        measures={measures}
-        // The server's ROLLUP grand row, not a sum of what is on screen: a
-        // top/bottom-N is almost always active here, so the two differ and only
-        // one of them reconciles to the period.
-        grandTotals={query.data?.totals}
-        grandTotalLabel={t("salesReports.groupBy.grandTotal")}
-        expanded={expanded}
-        onToggle={(key) =>
-          setExpanded((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          })
-        }
+      {/* The server ROLLUP over the WHOLE period — ABOVE the table. A top or
+          bottom N is almost always active here, so the on-screen rows do NOT
+          sum to the period; only this figure reconciles. Above rather than a
+          footer because a total after N rows is a total nobody reads. */}
+      <ReportTotals
+        totals={query.data?.totals}
+        metricIds={metricIds}
+        registry={registry.data}
+        maskedMetrics={query.data?.meta.maskedMetrics}
+      />
+
+      {/* The server returned the top/bottom N by ITS sort metric. A header
+          click re-sorts only those N in memory — it does NOT fetch the true
+          top N by the clicked column, and without saying so the table reads
+          as "the top 10 by orders" when it is the top 10 by net, reordered. */}
+      {rows.length >= limit && (
+        <p data-testid="sliced-notice" className="text-xs font-bold text-amber-700">
+          {t("salesReports.report.slicedNotice", {
+            count: limit,
+            metric: t(`salesReports.metrics.${sortMetric}`),
+          })}
+        </p>
+      )}
+
+      <DataTable<ResultTableRow>
+        columns={columns}
+        rows={tableRows}
+        getRowId={(r) => r.id}
+        tableId="sales-hub-explorer"
+        initialSort={{ columnId: sortMetric, dir: topBottom === "top" ? "desc" : "asc" }}
+        initialPageSize={25}
         onRowClick={onRowClick}
+        emptyTitle={t("salesReports.states.empty")}
+        mobileTitle={(r) => r.labels[0] ?? ""}
       />
     </section>
   );

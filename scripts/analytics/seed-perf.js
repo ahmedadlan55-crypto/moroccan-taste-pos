@@ -14,7 +14,11 @@
  *   1–5 ar_document_lines per order ≈ 1.6M lines
  *   split payments on ~25% of orders, modifier facts on ~30%
  *   1 shift + open_float/close_count till facts per branch/day,
- *   cash_sale till fact per cash order, ~2% refunds (payment 'out' facts)
+ *   cash_sale till fact per cash order, ~1.5% voided orders,
+ *   ~2% returns — REAL sales_returns + sales_return_lines (+ the refund
+ *   payment/till facts), ~8% of them left 'cancelled'
+ *   1 warehouse per branch + a NON-GLOBAL `perf_manager` user granted all of
+ *   them, so a capability-masked, branch-scoped request can be measured
  *
  * DETERMINISM: a seeded LCG drives every random choice — same --seed, same
  * database, byte for byte. No Math.random anywhere.
@@ -30,10 +34,18 @@
  * SIMPLIFICATIONS (documented, deliberate):
  *   - no `sales` rows: the analytics read path never touches the sales table
  *     (facts + ar_documents only), so seeding it would only slow the run;
- *   - refunds are payment facts (direction 'out') + cash_refund till facts
- *     without full sales_returns/credit-note chains — the perf suite does not
- *     measure return-fact metrics; returns tables exist (empty) so rollup
- *     rebuilds behave exactly as in production;
+ *   - a return writes sales_returns + sales_return_lines (the two tables the
+ *     `return` fact actually reads — registry/facts.js) and its refund payment
+ *     /till facts, but NO credit-note ar_document: the planner EXCLUDES
+ *     source in ('sales_return','credit_note') from every order/line statement
+ *     by default, so a CN document would be filtered straight back out of every
+ *     measurement it could appear in;
+ *   - a voided order keeps its lines and payment facts (that is what the
+ *     projection actually leaves behind); only f.status flips, which is exactly
+ *     what voids_count / voids_value and the excluded_voided default read;
+ *   - the perf user is granted warehouse access but no `sales`/POS fixtures —
+ *     it exists solely so lib/analytics/scope.js resolves a real non-global
+ *     branch scope (its password hash is a non-loginable marker);
  *   - header discount is informational (net amounts are already post-discount),
  *     mirroring tests/fixtures/salesHubSeed.js F1.
  *
@@ -66,6 +78,12 @@ const PORT = Number(process.env.DB_PORT) || 3306;
 const USER = process.env.DB_USER || 'root';
 const PASS = process.env.DB_PASSWORD || '';
 const ENV_DB = process.env.DB_NAME || 'moroccan_taste_pos';
+
+// The non-global analytics user the masked-metric scenario runs as.
+// scripts/analytics/perf-check.js looks this username up by name — keep the two
+// in step if you rename it.
+const PERF_USER = 'perf_manager';
+const PERF_ROLE = 'manager';
 
 function fail(msg) { console.error('[seed-perf] REFUSING: ' + msg); process.exit(2); }
 
@@ -223,6 +241,35 @@ function makeBuffer(db, table, cols, chunk = 1000) {
     }
   }
 
+  // One warehouse per branch + a NON-GLOBAL analytics user granted all of them.
+  //
+  // WHY: lib/analytics/scope.js resolves branch scope through
+  // user_warehouse_access → warehouses.branch_id, and gives GLOBAL users
+  // (admin/developer — lib/warehouseScope.isGlobalScope) every capability. So an
+  // admin token can never produce a capability-masked request, and there was no
+  // way to measure one at volume. Role `manager` carries analytics.view but NOT
+  // analytics.cost.view (role_permissions seed), so cogs / gross_profit /
+  // margin_pct mask out while the branch grants still cover 100% of the seeded
+  // rows — the masked request measures the same data as every other scenario,
+  // plus the scope IN (…) clause the planner appends for non-global callers.
+  console.log('[seed-perf] inserting warehouses + the non-global perf user…');
+  for (const br of BRANCHES) {
+    await db.query(
+      'INSERT INTO warehouses (id, code, name, type, branch_id, brand_id) VALUES (?,?,?,?,?,?)',
+      [`${br.id}-WH`, `${br.id}-WH`, `Perf WH ${br.id}`, 'branch', br.id, br.brand]);
+  }
+  // Password is a deliberate non-bcrypt marker: bcrypt.compare can never match
+  // it, so this account authenticates by nothing but a harness-signed JWT.
+  const [ures] = await db.query(
+    'INSERT INTO users (username, password, role, active, token_version) VALUES (?,?,?,1,1)',
+    [PERF_USER, '!perf-no-login', PERF_ROLE]);
+  const perfUserId = ures.insertId;
+  for (const br of BRANCHES) {
+    await db.query('INSERT INTO user_warehouse_access (user_id, warehouse_id) VALUES (?,?)',
+      [perfUserId, `${br.id}-WH`]);
+  }
+  console.log(`[seed-perf]   user "${PERF_USER}" (id=${perfUserId}, role=${PERF_ROLE}) → ${BRANCHES.length} warehouses`);
+
   // ── fact buffers ───────────────────────────────────────────────────────────
   const bufDocs = makeBuffer(db, 'ar_documents',
     ['id', 'document_number', 'document_type', 'source_type', 'source_id', 'brand_id', 'branch_id',
@@ -248,7 +295,20 @@ function makeBuffer(db, table, cols, chunk = 1000) {
       'business_day', 'performed_by', 'source_type', 'source_id', 'provenance']);
   const bufShifts = makeBuffer(db, 'shifts',
     ['id', 'username', 'status', 'start_time', 'end_time', 'branch_id', 'opening_float', 'actual_cash']);
-  const ALL_BUFS = [bufDocs, bufLines, bufOfacts, bufPfacts, bufMfacts, bufTfacts, bufShifts];
+  // The `return` fact is sales_return_lines JOIN sales_returns … AND
+  // r.status='posted' — both tables are needed for a returns metric to be
+  // anything but a structural zero.
+  const bufRets = makeBuffer(db, 'sales_returns',
+    ['id', 'return_number', 'original_ar_document_id', 'brand_id', 'branch_id', 'warehouse_id',
+      'return_date', 'reason_code', 'refund_method', 'subtotal', 'vat_amount', 'total_amount',
+      'cost_total', 'status', 'created_by']);
+  const bufRetLines = makeBuffer(db, 'sales_return_lines',
+    ['id', 'return_id', 'original_line_id', 'menu_id', 'description', 'sold_qty',
+      'previously_returned_qty', 'return_qty', 'base_qty', 'unit_price_snapshot',
+      'discount_snapshot', 'vat_category', 'vat_rate', 'net_amount', 'vat_amount',
+      'gross_amount', 'cost_snapshot']);
+  const ALL_BUFS = [bufDocs, bufLines, bufOfacts, bufPfacts, bufMfacts, bufTfacts, bufShifts,
+    bufRets, bufRetLines];
 
   // ── the generator loop ─────────────────────────────────────────────────────
   console.log('[seed-perf] generating orders…');
@@ -278,9 +338,15 @@ function makeBuffer(db, table, cols, chunk = 1000) {
         const channel = pick(CHANNELS);
         const orderType = pick(ORDER_TYPES);
         const guests = orderType === 'dine_in' ? randInt(1, 4) : null;
+        // ~1.5% voided. The lines and payment facts stay — that is what the
+        // projection actually leaves behind — so voids_value can read
+        // doc.total_amount and the planner's excluded_voided default has
+        // something real to exclude.
+        const voided = rand() < 0.015;
 
         // lines
         const nLines = randInt(1, 5);
+        const lineRows = [];   // the SAME row arrays pushed to bufLines (no copy)
         let subtotal = 0, vatSum = 0, costSum = 0;
         const discounted = rand() < 0.12;
         let discountTotal = 0;
@@ -298,9 +364,11 @@ function makeBuffer(db, table, cols, chunk = 1000) {
           const gross = r2(net + vat);
           const cost = r2(m.cost * qty);
           subtotal = r2(subtotal + net); vatSum = r2(vatSum + vat); costSum = r2(costSum + cost);
-          bufLines.push([`${docId}-L${L}`, docId, `L${L}`, m.id, m.name, qty, qty,
+          const lineRow = [`${docId}-L${L}`, docId, `L${L}`, m.id, m.name, qty, qty,
             m.price, lineDiscount, m.vatCat, m.vatRate, net, vat, gross, cost,
-            m.cat, 'at_sale']);
+            m.cat, 'at_sale'];
+          bufLines.push(lineRow);
+          lineRows.push(lineRow);
           lineCount++;
         }
         const total = r2(subtotal + vatSum);
@@ -308,7 +376,7 @@ function makeBuffer(db, table, cols, chunk = 1000) {
         bufDocs.push([docId, docId, 'invoice', 'pos', docId, br.brand, br.id,
           cal, subtotal, discountTotal, vatSum, total, 'paid', cashier]);
         bufOfacts.push([docId, null, br.brand, br.id, shiftId, channel, orderType, 'pos',
-          guests, 'completed', cashier, local, local, local, local, bd, br.tz,
+          guests, voided ? 'voided' : 'completed', cashier, local, local, local, local, bd, br.tz,
           discountTotal, 0, 0, 0, 'live']);
 
         // payments: 25% split (cash+card), else single cash/card/online
@@ -347,16 +415,36 @@ function makeBuffer(db, table, cols, chunk = 1000) {
           }
         }
 
-        // ~2% refunds: a next-day 'out' payment fact (+ till cash_refund)
-        if (rand() < 0.02) {
+        // ~2% returns: a REAL sales_return (+ lines) the day after the sale,
+        // with the 'out' payment fact and cash_refund till fact that go with it.
+        // A PARTIAL return (1–2 of the order's lines) is the realistic case and
+        // the one that makes returns_net ≠ net_ex_vat at every grain.
+        // ~8% stay 'cancelled' so the fact's `AND r.status='posted'` predicate is
+        // exercised rather than trivially true.
+        if (!voided && rand() < 0.02) {
           const refundDay = addDays(bd, 1);
           const rLocal = `${refundDay} ${pad2(randInt(10, 20))}:00:00`;
           const cashBack = rand() < 0.5;
+          const posted = rand() >= 0.08;
+          const retId = `${docId}-R`;
+          const nRet = Math.min(lineRows.length, randInt(1, 2));
+          let rNet = 0, rVat = 0, rCost = 0;
+          for (let k = 0; k < nRet; k++) {
+            const LR = lineRows[k]; // [0]id [3]menu [4]desc [6]base_qty [7]price
+            rNet = r2(rNet + LR[11]); rVat = r2(rVat + LR[12]); rCost = r2(rCost + LR[14]);
+            bufRetLines.push([`${retId}-L${k}`, retId, LR[0], LR[3], LR[4], LR[6], 0,
+              LR[6], LR[6], LR[7], 0, LR[9], LR[10], LR[11], LR[12], LR[13], LR[14]]);
+          }
+          const rTotal = r2(rNet + rVat);
+          bufRets.push([retId, retId, docId, br.brand, br.id, `${br.id}-WH`, refundDay,
+            pick(['damaged', 'wrong_item', 'customer_change', 'quality']),
+            cashBack ? 'cash' : 'ar_reduction', rNet, rVat, rTotal, rCost,
+            posted ? 'posted' : 'cancelled', cashier]);
           bufPfacts.push(['refund', docId, 0, docId, br.id, br.brand, null,
             cashBack ? 'cash' : 'ar_reduction', cashBack ? 'cash' : 'other', 'out',
-            total, 'settled', rLocal, rLocal, refundDay, cashier, 'live']);
+            rTotal, 'settled', rLocal, rLocal, refundDay, cashier, 'live']);
           if (cashBack) {
-            bufTfacts.push([null, br.id, 'cash_refund', total, rLocal, rLocal,
+            bufTfacts.push([null, br.id, 'cash_refund', rTotal, rLocal, rLocal,
               refundDay, cashier, 'sales_return', docId, 'live']);
           }
         }
@@ -386,7 +474,24 @@ function makeBuffer(db, table, cols, chunk = 1000) {
 
   console.log(`[seed-perf] facts done: ${bufDocs.total} docs, ${bufLines.total} lines, ` +
     `${bufOfacts.total} order facts, ${bufPfacts.total} payment facts, ` +
-    `${bufMfacts.total} modifier facts, ${bufTfacts.total} till facts, ${bufShifts.total} shifts`);
+    `${bufMfacts.total} modifier facts, ${bufTfacts.total} till facts, ${bufShifts.total} shifts, ` +
+    `${bufRets.total} returns, ${bufRetLines.total} return lines`);
+
+  // ── refresh optimizer statistics ───────────────────────────────────────────
+  // InnoDB samples index cardinality in the background and does NOT refresh it
+  // synchronously after a bulk load. A sandbox that goes straight from
+  // 0 → 530k rows therefore carries whatever cardinality it happened to sample
+  // mid-load, and the optimizer picks plans from that: measured here, the SAME
+  // 30-day order-fact query chose `range(ix_aof_day_branch)` before ANALYZE and
+  // a full scan after it. A perf baseline taken on unrefreshed statistics is
+  // not a baseline of anything — it is a measurement of when the load happened
+  // to be interrupted, and it will not reproduce.
+  console.log('[seed-perf] ANALYZE TABLE (refresh optimizer statistics)…');
+  for (const t of ['analytics_order_facts', 'ar_documents', 'ar_document_lines',
+    'analytics_payment_facts', 'analytics_modifier_facts', 'analytics_till_facts',
+    'sales_returns', 'sales_return_lines']) {
+    await db.query('ANALYZE TABLE `' + t + '`');
+  }
 
   // ── rollups: enqueue every (branch, day) pair, then drain in batches ───────
   // rebuildRange caps at 400 days — chunk the window.
@@ -418,8 +523,15 @@ function makeBuffer(db, table, cols, chunk = 1000) {
   const [[c2]] = await db.query('SELECT COUNT(*) n FROM ar_document_lines');
   const [[c3]] = await db.query('SELECT COUNT(*) n FROM analytics_daily_branch');
   const [[c4]] = await db.query('SELECT COUNT(*) n FROM analytics_hourly_branch');
+  const [[c5]] = await db.query("SELECT COUNT(*) n FROM sales_returns WHERE status='posted'");
+  const [[c6]] = await db.query("SELECT COUNT(*) n FROM analytics_order_facts WHERE status='voided'");
+  const [[c7]] = await db.query('SELECT COUNT(DISTINCT business_day) d, COUNT(DISTINCT branch_id) b FROM analytics_order_facts');
   console.log(`[seed-perf] verified: ${c1.n} order facts, ${c2.n} lines, ` +
     `${c3.n} daily_branch rollup rows, ${c4.n} hourly rollup rows`);
+  console.log(`[seed-perf] verified: ${c5.n} POSTED returns, ${c6.n} voided orders, ` +
+    `${c7.d} distinct business days, ${c7.b} branches`);
+  // A perf run that measured a structurally-empty fact is not a measurement.
+  if (!c5.n || !c6.n) fail('the returns and/or voids facts came out EMPTY — every returns/voids number would be a structural zero.');
   console.log(`[seed-perf] DONE in ${((Date.now() - started) / 60000).toFixed(1)} min — database \`${TARGET_DB}\` ready for perf-check.`);
   await db.end();
   process.exit(0);

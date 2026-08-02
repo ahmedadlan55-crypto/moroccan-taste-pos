@@ -32,17 +32,12 @@ import { formatCurrency } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { analyticsFilterCodec } from "../lib/filters";
-import { buildFiltersBody, displayMetric, setPageExportRequest, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
+import { buildFiltersBody, displayMetric, reportQuerySpec, type AnalyticsQueryBody, type AnalyticsResult } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+import { REPORT_BY_ID, reportQuery } from "../lib/reportRegistry";
 
 const SEGMENT = "taxes";
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: ["vat_amount", "net_ex_vat"],
-  dimensions: ["vat_rate"],
-  sort: [{ by: "vat_amount", dir: "desc" }],
-}));
+// All three queries — and the ExportMenu's file — come from lib/reportRegistry.
 
 function kpiValue(result: AnalyticsResult | undefined, id: string): number | null {
   if (!result) return null;
@@ -71,22 +66,12 @@ interface FilingRow {
   key: string;
   category: string;
   rate: string;
-  net_ex_vat: number | null;
-  vat_amount: number | null;
-  returns_net: number | null;
-  returns_vat: number | null;
-  net_product_sales_ex_vat: number | null;
-  net_vat: number | null;
+  /** One entry per FILING_METRICS id — read by column below. */
+  values: Record<string, number | null>;
 }
 
-const FILING_METRICS = [
-  "net_ex_vat",
-  "vat_amount",
-  "returns_net",
-  "returns_vat",
-  "net_product_sales_ex_vat",
-  "net_vat",
-] as const;
+/** The filing table's columns, read off the registry query it renders. */
+const FILING_METRICS: readonly string[] = reportQuery(REPORT_BY_ID[SEGMENT], "filing")!.metrics;
 
 export default function Taxes() {
   const t = useT();
@@ -94,17 +79,16 @@ export default function Taxes() {
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: ["vat_amount", "fees_total", "rounding_total", "tips_total"], dimensions: [], ...base }),
-    [base],
+    () => ({ ...reportQuerySpec(SEGMENT, "kpis", filters), ...base }),
+    [base, filters],
   );
   const rateBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: ["vat_amount", "net_ex_vat"],
-      dimensions: ["vat_rate"],
+      ...reportQuerySpec(SEGMENT, "byRate", filters),
       sort: [{ by: "vat_amount", dir: "desc" }],
       ...base,
     }),
-    [base],
+    [base, filters],
   );
 
   // The filing table: sales (line fact) and returns (return fact) in ONE
@@ -114,15 +98,14 @@ export default function Taxes() {
   // is exactly the case a hand-joined table drops.
   const filingBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: [...FILING_METRICS],
-      dimensions: ["vat_category", "vat_rate"],
-      sort: [{ by: "vat_amount", dir: "desc" }],
       // A category × rate grid is tiny, but DEFAULT_LIMIT is 50 and a truncated
-      // TAX table is not a thing that may happen silently.
-      limit: 200,
+      // TAX table is not a thing that may happen silently — the registry query
+      // carries the explicit limit.
+      ...reportQuerySpec(SEGMENT, "filing", filters),
+      sort: [{ by: "vat_amount", dir: "desc" }],
       ...base,
     }),
-    [base],
+    [base, filters],
   );
 
   const kpis = useAnalyticsQuery("taxes-kpis", kpiBody);
@@ -148,12 +131,9 @@ export default function Taxes() {
     key: `${String(r.keys[0] ?? "")}|${String(r.keys[1] ?? "")}|${i}`,
     category: r.labels[0] ?? String(r.keys[0] ?? "—"),
     rate: r.labels[1] ?? String(r.keys[1] ?? "—"),
-    net_ex_vat: displayMetric(r, "net_ex_vat"),
-    vat_amount: displayMetric(r, "vat_amount"),
-    returns_net: displayMetric(r, "returns_net"),
-    returns_vat: displayMetric(r, "returns_vat"),
-    net_product_sales_ex_vat: displayMetric(r, "net_product_sales_ex_vat"),
-    net_vat: displayMetric(r, "net_vat"),
+    // Keyed by the REGISTRY's column list, so adding a filing column there adds
+    // it to the header, the body and the total row at once.
+    values: Object.fromEntries(FILING_METRICS.map((m) => [m, displayMetric(r, m)])),
   }));
 
   // The period totals come from the server's ROLLUP, never from adding up the
@@ -162,7 +142,7 @@ export default function Taxes() {
   const filingTotals = filing.data?.totals;
 
   const rateColumns: ColumnDef<RateRow>[] = [
-    { id: "rate", header: t("salesReports.dims.vat_rate"), accessor: (r) => r.label, pinStart: true, width: 140 },
+    { id: "rate", header: t("salesReports.dims.vat_rate"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 140 },
     {
       id: "vat_amount",
       header: t("salesReports.metrics.vat_amount"),
@@ -227,8 +207,8 @@ export default function Taxes() {
         columns={rateColumns}
         rows={rateRows}
         getRowId={(r) => r.key || r.label}
+        tableId="sales-hub-taxes-by-rate"
         paginate={false}
-        columnMenu={false}
         emptyTitle={t("salesReports.states.empty")}
         mobileTitle={(r) => r.label}
       />
@@ -270,7 +250,7 @@ export default function Taxes() {
                     <td className="px-3 py-2 text-sm font-bold text-slate-700">{r.rate}</td>
                     {FILING_METRICS.map((m) => (
                       <td key={m} dir="ltr" className="px-3 py-2 text-end text-sm font-bold tabular-nums text-slate-600">
-                        {r[m] == null ? "—" : formatCurrency(r[m]!)}
+                        {r.values[m] == null ? "—" : formatCurrency(r.values[m]!)}
                       </td>
                     ))}
                   </tr>

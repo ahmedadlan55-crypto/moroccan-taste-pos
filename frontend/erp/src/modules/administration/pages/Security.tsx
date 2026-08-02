@@ -17,6 +17,7 @@ import { useSecurityPolicies } from "../security/api";
 import { PasswordPolicyCard } from "../security/PasswordPolicyCard";
 import { SessionCard } from "../security/SessionCard";
 import { IpAllowlistCard } from "../security/IpAllowlistCard";
+import { ProcurementApprovalCard } from "../security/ProcurementApprovalCard";
 
 interface TwoFaStatus {
   enabled: boolean;
@@ -137,6 +138,13 @@ export default function SecurityPage() {
           <ErrorState error={policies.error} onRetry={() => policies.refetch()} />
         ) : policies.data ? (
           <>
+            {/* A block the server did not send is simply not rendered. Inventing
+                a default here would show a policy the server is not enforcing,
+                and reading through the missing object takes the WHOLE screen
+                (password, session, IP) down with it via the error boundary. */}
+            {policies.data.procurementApproval ? (
+              <ProcurementApprovalCard initial={policies.data.procurementApproval} canManage={canManageSecurity} />
+            ) : null}
             <PasswordPolicyCard initial={policies.data.passwordPolicy} canManage={canManageSecurity} />
             <SessionCard initial={policies.data.session} canManage={canManageSecurity} />
             <IpAllowlistCard initial={policies.data.ipAllowlist} canManage={canManageSecurity} />

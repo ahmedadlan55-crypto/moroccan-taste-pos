@@ -359,7 +359,24 @@ test("menu product: create → read → deep-link → edit → cost-lock → dea
       })
       .toBe(nameEn);
     const row = await fetchMenuByName(request, nameEn);
-    expect(Number(row.price), "the price persisted").toBe(25);
+    // NOT `toBe(25)`. Since commit f83f39f9 every menu price WRITE is snapped so
+    // the VAT-inclusive amount the cashier shows lands on a whole riyal:
+    // 25 x 1.15 = 28.75 -> target 29 -> stored net 29 / 1.15 = 25.2174. The
+    // stored value is correct; the old expectation encodes pre-snap behaviour,
+    // and 25 is in fact unreachable under EITHER price semantics, so no reading
+    // of the form rescues it.
+    //
+    // Assert the invariant the guard actually promises instead of a literal:
+    // whatever net is stored, the customer-facing price is a whole riyal. That
+    // survives a VAT-rate change and a future switch to gross-entry semantics,
+    // both of which would silently rot a hardcoded number.
+    const storedNet = Number(row.price);
+    expect(storedNet, "a price was persisted").toBeGreaterThan(0);
+    const customerPays = Math.round(storedNet * 1.15 * 100) / 100;
+    expect(
+      Number.isInteger(customerPays),
+      `the stored net (${storedNet}) must make the customer price a whole riyal, got ${customerPays}`,
+    ).toBe(true);
     expect(Number(row.active), "created active").toBe(1);
     createdId = String(row.id);
     expect(createdId, "id is a real MENU- id").toMatch(/^MENU-/);

@@ -24,17 +24,30 @@ export interface IpAllowlist {
   enabled: boolean;
   cidrs: string[];
 }
+/**
+ * Segregation of duties on purchase-order approval. Enforced server-side inside
+ * the approval transaction (routes/procurement/orders.js) — this screen only
+ * decides the policy, it never gates the button.
+ */
+export interface ProcurementApprovalPolicy {
+  /** When true, whoever created or submitted a PO may not approve it. */
+  enabled: boolean;
+  /** PO total (VAT included) at which the rule starts applying. 0 = every PO. */
+  thresholdAmount: number;
+}
 export interface SecurityPolicies {
   passwordPolicy: PasswordPolicy;
   session: SessionPolicy;
   ipAllowlist: IpAllowlist;
+  procurementApproval: ProcurementApprovalPolicy;
 }
 
-/** A PUT may carry any subset of the three blocks. */
+/** A PUT may carry any subset of the blocks. */
 export interface SecurityPoliciesUpdate {
   passwordPolicy?: PasswordPolicy;
   session?: SessionPolicy;
   ipAllowlist?: IpAllowlist;
+  procurementApproval?: ProcurementApprovalPolicy;
 }
 type SecurityPoliciesAck = SecurityPolicies & { success?: boolean; error?: string };
 
@@ -54,12 +67,13 @@ export function useSaveSecurityPolicies() {
       apiClient.put<SecurityPoliciesAck>("/security-policies", input),
     onSuccess: (data) => {
       // The server echoes the full merged state — prime the cache with it so the
-      // three cards stay consistent without a second round-trip, then refetch.
-      if (data && data.passwordPolicy && data.session && data.ipAllowlist) {
+      // cards stay consistent without a second round-trip, then refetch.
+      if (data && data.passwordPolicy && data.session && data.ipAllowlist && data.procurementApproval) {
         qc.setQueryData<SecurityPolicies>([...KEY], {
           passwordPolicy: data.passwordPolicy,
           session: data.session,
           ipAllowlist: data.ipAllowlist,
+          procurementApproval: data.procurementApproval,
         });
       }
       qc.invalidateQueries({ queryKey: [...KEY] });

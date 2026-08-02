@@ -8,7 +8,7 @@
 //
 // No chart lives here: a report is a decision table, so the branch bar was
 // removed — charts belong on the dashboard.
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Coins, ShoppingBag } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
@@ -19,30 +19,28 @@ import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
-import { PivotTable, type PivotMeasure } from "../components/PivotTable";
-import type { FlatPivotRow } from "../lib/pivot";
+import { hubHref } from "../lib/reportRegistry";
+import { DataTable } from "@/shared/tables";
+import { ReportTotals } from "../components/ReportTotals";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 
 const SEGMENT = "branches";
-// E2E-wave fix: `growth` is a PARAMETERIZED registry metric — requesting it
-// plainly is a planner VALIDATION_ERROR (422), so with a compare mode on this
-// page errored on load. The growth column now derives client-side from the
-// compare envelope's per-row delta (see the `rows` mapping below).
-const METRICS = ["net_ex_vat", "orders"] as const;
-const DIMS = ["brand", "branch"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: [...DIMS],
-  sort: [{ by: "net_ex_vat", dir: "desc" }],
-}));
+// Metrics and dimensions come from lib/reportRegistry — the same declaration
+// the ExportMenu reads for this report's file and the cross-product test plans
+// against the real server planner. A page-local copy could drift from either.
+//
+// E2E-wave fix, still true: `growth` is a PARAMETERIZED registry metric —
+// requesting it plainly is a planner VALIDATION_ERROR (422), so with a compare
+// mode on this page errored on load. The growth column derives client-side from
+// the compare envelope's per-row delta (see the `rows` mapping below), which is
+// why it is added to the COLUMN list and never to the request.
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -84,15 +82,12 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
+/** The canonical URL of another hub report — lib/reportRegistry owns the
+ *  centre a report lives in, so a drill never hand-builds a retired path. */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
-const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
 export default function Branches() {
   const t = useT();
@@ -100,35 +95,44 @@ export default function Branches() {
   const location = useLocation();
   const { filters } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const hasCompare = filters.compare !== "none";
 
   const base = buildFiltersBody(filters);
+  const spec = reportQuerySpec(SEGMENT, "byBranch", filters);
   const compare = compareSpec(filters);
   const body: AnalyticsQueryBody = {
     ...base,
-    metrics: [...METRICS],
-    dimensions: [...DIMS],
+    // The registry carries the row limit too: DEFAULT_LIMIT is 50, and a chain
+    // with more than fifty pairs was silently showing fifty rows with nothing
+    // to say so (page.rowCountCapped stayed false because the FACT never hit
+    // its own cap).
+    ...spec,
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
   };
+  const METRICS = spec.metrics;
+  const DIMS = spec.dimensions;
 
   // Data queries wait for a VALID metric catalog: without one there is nothing
   // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
 
-  const measures = useMemo<PivotMeasure[]>(() => {
-    const list: PivotMeasure[] = [
-      { id: "net_ex_vat", label: t("salesReports.metrics.net_ex_vat"), format: formatCurrency },
-      { id: "orders", label: t("salesReports.metrics.orders"), format: formatNumber },
-    ];
-    if (hasCompare) {
-      list.push({ id: "growth", label: t("salesReports.metrics.growth"), format: fmtPercent });
-    }
-    return list;
-  }, [t, hasCompare]);
+  // One column per grouping dimension (read from row.labels[i]) then one per
+  // metric — the same flat shape the other thirteen report pages build by
+  // hand. Grouping stays a QUERY control: it decides which columns exist.
+  const columns = useMemo(
+    () =>
+      buildResultColumns({
+        dimensions: DIMS,
+        metricIds: hasCompare ? [...METRICS, "growth"] : METRICS,
+        t,
+        registry: registry.data,
+        maskedMetrics: query.data?.meta.maskedMetrics,
+      }),
+    [hasCompare, registry.data, query.data?.meta.maskedMetrics, t],
+  );
 
   if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
   const loadError = registry.error ?? query.error;
@@ -159,19 +163,11 @@ export default function Branches() {
       }))
     : srcRows;
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const tableRows = toResultRows(rows);
 
-  const onRowClick = (row: FlatPivotRow) => {
-    if (row.isSubtotal) {
-      toggle(row.key);
-      return;
-    }
+  // Every row is a leaf: a flat table has no groups to expand, so a click
+  // always drills.
+  const onRowClick = (row: ResultTableRow) => {
     // Leaf = branch: drill to the explorer segment scoped to this branch, by
     // business day, keeping every current filter param.
     const branchKey = String(row.keys[1] ?? "");
@@ -204,15 +200,23 @@ export default function Branches() {
         })}
       </div>
 
-      <PivotTable
-        rows={rows}
-        subtotals={query.data?.subtotals}
-        rowDims={[...DIMS]}
-        rowDimLabels={DIMS.map((d) => t(`salesReports.dims.${d}`))}
-        measures={measures}
-        expanded={expanded}
-        onToggle={toggle}
+      {/* Period totals from the server ROLLUP — above the table, never a sum
+          of the rows on screen. */}
+      <ReportTotals
+        totals={query.data?.totals}
+        metricIds={hasCompare ? [...METRICS, "growth"] : METRICS}
+        registry={registry.data}
+        maskedMetrics={query.data?.meta.maskedMetrics}
+      />
+
+      <DataTable<ResultTableRow>
+        columns={columns}
+        rows={tableRows}
+        getRowId={(r) => r.id}
+        tableId="sales-hub-branches"
         onRowClick={onRowClick}
+        emptyTitle={t("salesReports.states.empty")}
+        mobileTitle={(r) => r.labels[0] ?? ""}
       />
     </section>
   );

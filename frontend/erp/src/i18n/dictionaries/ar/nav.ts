@@ -40,7 +40,7 @@ export const nav = {
     // menu
     "mn-hub": "لوحة القوائم",
     "mn-brand": "قائمة العلامة التجارية",
-    "mn-recipes": "الوصفات ومكوّنات التصنيع",
+    "mn-recipes": "كتالوج الوصفات",
     "mn-price-lists": "قوائم الأسعار",
     "mn-combos": "الوجبات المركّبة",
     "mn-semi": "المنتجات نصف المصنّعة",
@@ -66,6 +66,7 @@ export const nav = {
     "inv-waste": "الهدر",
     "inv-lots-expiry": "التشغيلات والصلاحية",
     "inv-replenishment": "إعادة الطلب",
+    "inv-operations": "مركز عمليات المخزون",
     "inv-production": "الإنتاج",
     "inv-method": "طريقة تقييم المخزون",
     // purchasing

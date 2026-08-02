@@ -69,6 +69,13 @@ const ALLOWED_FILES = [
   // The negative-assertion suite MUST name every retired endpoint to prove it
   // answers 404 — the one backend file allowed to hold the dead path strings.
   'tests/integration/retiredSurfaces.api.test.js',
+  // The browser-level twin of redirects.test.tsx above: it mirrors router.tsx's
+  // REDIRECTS table and drives each retired deep link to prove it still lands on
+  // the hub with its query intact. It cannot prove a redirect works without
+  // naming the path being redirected — the same reason the two entries above
+  // are here. It was added after this list was last extended, which is the only
+  // reason it was missing.
+  'e2e/erp/sales-hub-redirects.spec.ts',
 ];
 
 const EXCLUDE_DIR_NAMES = new Set(['node_modules', 'dist', '.git']);

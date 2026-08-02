@@ -24,7 +24,6 @@ import { formatCurrency, formatNumber, formatQty, formatDate } from "@/shared/li
 import { useT } from "@/i18n";
 import { transferStatusToLabel } from "@/modules/inventory/lib/status-labels";
 import type { TransferListRow } from "@/modules/inventory/lib/adapters/transfer.adapter";
-import { TransferDetailDrawer } from "./TransferDetailDrawer";
 
 const PAGE_SIZES = [10, 25, 50];
 
@@ -67,7 +66,11 @@ export function TransfersPage() {
   const pageSize = PAGE_SIZES.includes(Number(params.get("pageSize"))) ? Number(params.get("pageSize")) : 25;
   const sort = params.get("sort") ?? "created_at";
   const dir = params.get("dir") === "asc" ? "asc" : "desc";
-  const view = params.get("view");
+
+  // The transfer detail is a REAL ROUTE now (the operations centre), not a
+  // `?view=` drawer. modules/inventory/index.tsx redirects any surviving
+  // `?view=<id>` link to the same destination, so old bookmarks still resolve.
+  const openDocument = (id: string) => navigate(`/inventory/operations/transfer/${encodeURIComponent(id)}`);
 
   function patch(next: Record<string, string | number | null>, resetPage = true) {
     const p = new URLSearchParams(params);
@@ -227,7 +230,7 @@ export function TransfersPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {data.rows.map((r) => (
-                      <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => patch({ view: r.id }, false)}>
+                      <tr key={r.id} className="cursor-pointer transition hover:bg-slate-50" onClick={() => openDocument(r.id)}>
                         <td className="px-4 py-3 font-extrabold text-slate-900">{r.number}</td>
                         <td className="px-4 py-3 text-slate-600">
                           <span className="inline-flex items-center gap-1.5">
@@ -251,7 +254,7 @@ export function TransfersPage() {
             {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
               {data.rows.map((r) => (
-                <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-right">
+                <button key={r.id} type="button" onClick={() => openDocument(r.id)} className="surface block w-full p-4 text-right">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-extrabold text-slate-900">{r.number}</span>
                     <StatusBadge>{transferStatusToLabel(r.status)}</StatusBadge>
@@ -289,8 +292,6 @@ export function TransfersPage() {
           </>
         )}
       </section>
-
-      <TransferDetailDrawer id={view} onClose={() => patch({ view: null }, false)} />
     </div>
   );
 }

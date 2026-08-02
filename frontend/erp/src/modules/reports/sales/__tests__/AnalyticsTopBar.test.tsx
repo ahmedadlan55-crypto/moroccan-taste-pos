@@ -54,20 +54,38 @@ function renderBar(overrides: Partial<AnalyticsFilters> = {}) {
 
 afterEach(cleanup);
 
+/** The basis toggles now live in the inline "more filters" area, and every
+ *  control edits a DRAFT — «تطبيق» is what reaches patch(). The assertions
+ *  below are unchanged: the commit still carries exactly the one key the
+ *  analyst touched (see filterDiff). */
+function openMoreFilters() {
+  fireEvent.click(screen.getByRole("button", { name: "المزيد من الفلاتر" }));
+}
+
+function applyFilters() {
+  fireEvent.click(screen.getByRole("button", { name: "تطبيق" }));
+}
+
 describe("AnalyticsTopBar — segmented toggles", () => {
   it("patches businessDay=false when the calendar-day segment is picked", () => {
     const { patch } = renderBar();
+    openMoreFilters();
     fireEvent.click(screen.getByRole("radio", { name: "اليوم التقويمي" }));
+    applyFilters();
     expect(patch).toHaveBeenCalledWith({ businessDay: false });
   });
 
   it("patches taxIncl=true when the tax-inclusive segment is picked", () => {
     const { patch } = renderBar();
+    openMoreFilters();
     fireEvent.click(screen.getByRole("radio", { name: "شامل الضريبة" }));
+    applyFilters();
     expect(patch).toHaveBeenCalledWith({ taxIncl: true });
   });
 
   it("marks the current basis as checked", () => {
+    // A non-default basis opens the extra-filters area by itself — a scope the
+    // URL carries must never hide behind a collapsed toggle.
     renderBar({ taxIncl: true });
     expect(screen.getByRole("radio", { name: "شامل الضريبة" })).toHaveAttribute(
       "aria-checked",

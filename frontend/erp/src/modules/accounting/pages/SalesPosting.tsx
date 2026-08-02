@@ -18,6 +18,7 @@ import { useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, RotateCcw, CheckCircle2 } from "lucide-react";
 import { Button, PageHeader, Card, Badge, Spinner } from "@/shared/ui";
 import { useCan } from "@/app/providers";
+import { useT } from "@/i18n";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import {
   usePendingBatches, usePostedBatches, useHealth, usePostBatch, useReverseBatch,
@@ -33,6 +34,7 @@ const GRAN_LABEL: Record<Granularity, string> = {
 type Tab = "pending" | "posted" | "problems";
 
 export function SalesPostingPage() {
+  const t = useT();
   const canPost = useCan("finance.gl.post");
   const [tab, setTab] = useState<Tab>("pending");
   const [granularity, setGranularity] = useState<Granularity>("daily");
@@ -50,9 +52,13 @@ export function SalesPostingPage() {
 
   return (
     <div className="space-y-4">
+      {/* The heading is the part of this screen the bilingual sweep inspects as
+          "chrome", and it was a hardcoded Arabic literal — so an English user
+          saw Arabic here. The rest of this file is still hardcoded Arabic;
+          translating it fully is its own task, not this one. */}
       <PageHeader
-        title="ترحيل المبيعات"
-        subtitle="المبيعات لا تدخل دفتر الأستاذ حتى تُرحَّل من هنا"
+        title={t("accounting.salesPosting.title")}
+        subtitle={t("accounting.salesPosting.subtitle")}
       />
 
       {/* The compensating control for deferred posting: this banner is the only

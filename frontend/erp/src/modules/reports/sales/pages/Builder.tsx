@@ -4,7 +4,7 @@
 // and optional secondary dimension, top/bottom-N + sort, then RUN — the query
 // fires only for the exact configuration that was run (editing anything
 // re-arms the Run button instead of auto-refetching). Results render in the
-// shared PivotTable — reports are decision tables; charts live on the dashboard.
+// a flat DataTable — reports are decision tables; charts live on the dashboard.
 //
 // The builder config persists in PAGE-LOCAL URL params (b_m CSV, b_d1, b_d2,
 // b_n) read/written directly via useSearchParams — the shared analytics codec
@@ -28,10 +28,9 @@ import {
   Tooltip,
   type MultiSelectOption,
 } from "@/shared/ui";
-import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
-import { analyticsFilterCodec } from "../lib/filters";
+import { analyticsFilterCodec, nonDefaultFilterKeys } from "../lib/filters";
 import {
   buildFiltersBody,
   setPageExportRequest,
@@ -39,9 +38,12 @@ import {
   type AnalyticsQueryBody,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
-import { PivotTable, type PivotMeasure } from "../components/PivotTable";
+import { DataTable } from "@/shared/tables";
+import { ReportTotals } from "../components/ReportTotals";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 import { GroupByControl } from "../components/GroupByControl";
 import { metricConflicts, reconcile, voidPopulationConflicts, wouldContaminate } from "../lib/grouping";
+import { unsupportedFilterKeysForMetrics } from "../lib/reportRegistry";
 import { useListSeparator } from "../lib/listSeparator";
 import { useReportRailControls } from "../lib/reportRail";
 
@@ -68,13 +70,6 @@ export const MAX_METRICS = 12;
 const DEFAULT_DIM = "business_day";
 const DEFAULT_N = 10;
 const NONE = "";
-
-/** registry format → display formatter (percent values arrive as 0–100 points). */
-function formatterFor(format: string): (v: number) => string {
-  if (format === "money") return formatCurrency;
-  if (format === "percent") return (v) => `${formatNumber(v)}%`;
-  return formatNumber;
-}
 
 export default function Builder() {
   const t = useT();
@@ -194,6 +189,12 @@ export default function Builder() {
     };
   });
 
+  /** Shared filters this metric selection cannot express — named, not hidden. */
+  const droppedFilters = unsupportedFilterKeysForMetrics(
+    metricIds,
+    nonDefaultFilterKeys(filters) as string[],
+  );
+
   const body = useMemo<AnalyticsQueryBody>(
     () => ({
       metrics: metricIds,
@@ -226,14 +227,24 @@ export default function Builder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metricIds.join("|"), dimensions.join("|"), effectiveSort, direction, topN]);
 
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const measures: PivotMeasure[] = metricIds.map((id) => {
-    const reg = knownMetrics.find((m) => m.id === id);
-    return { id, label: t(`salesReports.metrics.${id}`), format: formatterFor(reg?.format ?? "count") };
-  });
+  // One column per grouping dimension then one per metric. Grouping remains a
+  // QUERY control deciding which leading columns exist; the render is flat.
+  const columns = useMemo(
+    () =>
+      buildResultColumns({
+        dimensions,
+        metricIds,
+        t,
+        registry: registry.data,
+        maskedMetrics: result.data?.meta.maskedMetrics,
+        periodValue: `${filters.from} — ${filters.to}`,
+      }),
+    [dimensions.join("|"), metricIds.join("|"), registry.data, result.data?.meta.maskedMetrics, filters.from, filters.to, t],
+  );
 
   const rows = result.data?.rows ?? [];
+  const tableRows = toResultRows(rows);
 
   const field = (label: string, control: ReactNode) => (
     <div className="flex min-w-44 flex-col gap-1.5">
@@ -375,11 +386,27 @@ export default function Builder() {
       {/* Config arriving from a saved report or a shared link can be illegal
           against the CURRENT metric set. Say what was adjusted rather than
           running a request that 422s the whole screen. */}
-      {(dropped.length > 0 || Object.keys(contaminated).length > 0 || requestedMetricCount > MAX_METRICS) && (
+      {(dropped.length > 0 ||
+        droppedFilters.length > 0 ||
+        Object.keys(contaminated).length > 0 ||
+        requestedMetricCount > MAX_METRICS) && (
         <div
           data-testid="builder-adjusted-notice"
           className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
         >
+          {/* THE FILTER HALF of the same honesty. The hub clears filters a
+              FIXED report cannot honour; this report's metric set is chosen at
+              runtime, so the drop happens per request inside api.ts and nothing
+              on screen would otherwise say it had. */}
+          {droppedFilters.length > 0 && (
+            <span>
+              {t("salesReports.hub.filtersDropped", {
+                filters: droppedFilters
+                  .map((k) => t(`salesReports.topbar.filterNames.${k}`))
+                  .join(listSeparator),
+              })}
+            </span>
+          )}
           {requestedMetricCount > MAX_METRICS && (
             <span>{t("salesReports.builder.truncated", { count: requestedMetricCount, max: MAX_METRICS })}</span>
           )}
@@ -405,7 +432,7 @@ export default function Builder() {
 
       {!configInRail && configPanel}
 
-      {/* ── result — its own titled zone, plain (no .surface: PivotTable is
+      {/* ── result — its own titled zone, plain (no .surface: DataTable is
           already one, and a card nested in a card is the one thing this
           design system forbids). Present in every state, so the page always
           reads as two zones: configure above, report below. ── */}
@@ -441,21 +468,22 @@ export default function Builder() {
                 <Badge tone="warning">{t("salesReports.states.notAvailableHistorically")}</Badge>
               </div>
             )}
-            <PivotTable
-              rows={rows}
-              subtotals={result.data?.subtotals}
-              rowDims={dimensions}
-              rowDimLabels={dimensions.map((d) => t(`salesReports.dims.${d}`))}
-              measures={measures}
-              expanded={expanded}
-              onToggle={(key) =>
-                setExpanded((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                })
-              }
+            {/* Period totals from the server ROLLUP — a top-N is active here, so the
+                on-screen rows do NOT sum to the period. */}
+            <ReportTotals
+              totals={result.data?.totals}
+              metricIds={metricIds}
+              registry={registry.data}
+              maskedMetrics={result.data?.meta.maskedMetrics}
+            />
+
+            <DataTable<ResultTableRow>
+              columns={columns}
+              rows={tableRows}
+              getRowId={(r) => r.id}
+              tableId="sales-hub-builder"
+              emptyTitle={t("salesReports.states.empty")}
+              mobileTitle={(r) => r.labels[0] ?? ""}
             />
           </>
         )}

@@ -17,7 +17,7 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
@@ -27,14 +27,7 @@ import {
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 
 const SEGMENT = "payments";
-const KPI_METRICS = ["payments_in", "refunds_out", "net_collections", "tips_total"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: ["payments_in", "refunds_out", "net_collections"],
-  dimensions: ["payment_method"],
-  sort: [{ by: "payments_in", dir: "desc" }],
-}));
+// Both queries — and the ExportMenu's file — come from lib/reportRegistry.
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -103,16 +96,15 @@ export default function Payments() {
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
 
+  const kpiSpec = reportQuerySpec(SEGMENT, "kpis", filters);
   const kpiBody: AnalyticsQueryBody = {
     ...base,
-    metrics: [...KPI_METRICS],
-    dimensions: [],
+    ...kpiSpec,
     ...(compare ? { compare } : {}),
   };
   const byMethodBody: AnalyticsQueryBody = {
     ...base,
-    metrics: ["payments_in", "refunds_out", "net_collections"],
-    dimensions: ["payment_method"],
+    ...reportQuerySpec(SEGMENT, "byMethod", filters),
     sort: [{ by: "payments_in", dir: "desc" }],
   };
 
@@ -142,7 +134,7 @@ export default function Payments() {
         id: "method",
         header: t("salesReports.dims.payment_method"),
         accessor: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 160,
         sortable: true,
       },
@@ -225,6 +217,7 @@ export default function Payments() {
         columns={columns}
         rows={methodRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-payments"
         initialSort={{ columnId: "paymentsIn", dir: "desc" }}
         onRowClick={(r) => drillMethod(r.key)}
         emptyTitle={t("salesReports.states.empty")}

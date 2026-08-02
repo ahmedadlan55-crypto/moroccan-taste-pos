@@ -1,42 +1,94 @@
-// Sales Analytics Hub — "items" page.
+// Sales Analytics Hub — "items", the MERGED item report.
 //
-// Category → item pivot (expandable, API subtotals win) over qty / gross / net
-// / contribution, plus a KPI row from the query totals. Wave 4: a leaf
-// (menu_item) row drills to the orders segment with the clicked item pinned
-// via the shared `menuItemId` codec param; group rows still toggle on click.
+// WHAT WAS MERGED, AND WHY
+//   Two reports read the same line fact. "items" did category → item with a
+//   contribution share; "item-sales" did day × item × branch with the per-line
+//   discount, returns and — for a holder of analytics.cost.view — cost, profit
+//   and margin. Nobody could answer "which items, and when" without opening
+//   both and reconciling two tables by eye, and the two disagreed by
+//   construction: one carried returns, the other did not.
+//
+//   This is ONE report with three breakdowns and the UNION of both column sets.
+//   The cost columns are present on every breakdown, not hidden on one of them
+//   — a merge that dropped half the columns would be a deletion wearing a
+//   merge's name.
+//
+// THE ONE HONEST ASYMMETRY
+//   `returns_net` lives on the RETURN fact, and the return fact cannot express
+//   `category` (menu.category is a free-text snapshot written on the LINE). So
+//   the category breakdown carries no returns column. That is declared in
+//   lib/reportRegistry — where reportRegistry.test.ts plans it against the real
+//   planner — rather than discovered as a red 422 screen.
+//
 // No chart lives here: reports are decision tables, charts belong on the
 // dashboard.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Coins, Package, Receipt } from "lucide-react";
 import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
+import { useCan } from "@/shared/permissions";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
 import { formatCurrency, formatNumber } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
-import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
+import {
+  analyticsFilterCodec,
+  makeCodec,
+  stringParam,
+  type AnalyticsFilters,
+} from "../lib/filters";
 import {
   buildFiltersBody,
+  reportQuerySpec,
   setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
 } from "../lib/api";
+import { REPORT_BY_ID, queryMetrics, reportQuery, resolveDimensions } from "../lib/reportRegistry";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
-import { PivotTable, type PivotMeasure } from "../components/PivotTable";
-import type { FlatPivotRow } from "../lib/pivot";
+import { DataTable } from "@/shared/tables";
+import { ReportTotals } from "../components/ReportTotals";
+import { ViewSwitcher } from "../components/ViewSwitcher";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
+import { isCostUndefined } from "../lib/cost";
 
 const SEGMENT = "items";
-const METRICS = ["qty_sold", "gross_product_sales", "net_ex_vat", "item_contribution_pct"] as const;
-const DIMS = ["category", "menu_item"] as const;
+const CAP_COST = "analytics.cost.view";
+const REPORT = REPORT_BY_ID[SEGMENT];
 
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: [...DIMS],
-  sort: [{ by: "net_ex_vat", dir: "desc" }],
-}));
+/** The three breakdowns, in switcher order. `byCategory` is the default. */
+const BREAKDOWNS = ["byCategory", "byItem", "byDay"] as const;
+type Breakdown = (typeof BREAKDOWNS)[number];
+const DEFAULT_BREAKDOWN: Breakdown = "byCategory";
+
+/** Page-local URL param — composes with the shared codec on the same URL. */
+const breakdownCodec = makeCodec({ ib: stringParam(DEFAULT_BREAKDOWN) });
+
+function readBreakdown(raw: string): Breakdown {
+  return (BREAKDOWNS as readonly string[]).includes(raw) ? (raw as Breakdown) : DEFAULT_BREAKDOWN;
+}
+
+/**
+ * The export mirrors the OPEN breakdown and this viewer's capability — a capless
+ * viewer must not pull the cost columns out through the export menu either.
+ * Registered at module scope so the menu never falls back to the generic
+ * default before this component has rendered once.
+ */
+function registerExport(breakdown: Breakdown, withCost: boolean) {
+  setPageExportRequest(SEGMENT, (filters) => {
+    const q = reportQuery(REPORT, breakdown)!;
+    const basis = filters.businessDay ? "business_day" : "calendar_day";
+    return {
+      metrics: queryMetrics(q, withCost),
+      dimensions: resolveDimensions(q.dimensions, basis),
+      sort: [{ by: "net_ex_vat", dir: "desc" }],
+      ...(q.limit != null ? { limit: q.limit } : {}),
+    };
+  });
+}
+registerExport(DEFAULT_BREAKDOWN, false);
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -78,30 +130,26 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-const fmtPercent = (v: number) => `${formatNumber(v)}%`;
-
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
-function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
-}
-
 export default function Items() {
   const t = useT();
   const navigate = useNavigate();
   const location = useLocation();
+  const canCost = useCan(CAP_COST);
   const { filters } = useUrlFilters(analyticsFilterCodec);
+  const { filters: local, patch: patchLocal } = useUrlFilters(breakdownCodec);
+  const breakdown = readBreakdown(local.ib);
   const registry = useAnalyticsRegistry();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
+  useEffect(() => {
+    registerExport(breakdown, canCost);
+  }, [breakdown, canCost]);
+
+  const spec = reportQuerySpec(SEGMENT, breakdown, filters, { hasOptionalCap: canCost });
   const base = buildFiltersBody(filters);
   const compare = compareSpec(filters);
   const body: AnalyticsQueryBody = {
     ...base,
-    metrics: [...METRICS],
-    dimensions: [...DIMS],
+    ...spec,
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
   };
@@ -111,14 +159,29 @@ export default function Items() {
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
 
-  const measures = useMemo<PivotMeasure[]>(
-    () => [
-      { id: "qty_sold", label: t("salesReports.metrics.qty_sold"), format: formatNumber },
-      { id: "gross_product_sales", label: t("salesReports.metrics.gross_product_sales"), format: formatCurrency },
-      { id: "net_ex_vat", label: t("salesReports.metrics.net_ex_vat"), format: formatCurrency },
-      { id: "item_contribution_pct", label: t("salesReports.metrics.item_contribution_pct"), format: fmtPercent },
-    ],
-    [t],
+  // One column per grouping dimension (read from row.labels[i]) then one per
+  // metric. Grouping stays a QUERY control: it decides which columns exist.
+  const columns = useMemo(
+    () =>
+      buildResultColumns({
+        dimensions: spec.dimensions,
+        metricIds: spec.metrics,
+        t,
+        registry: registry.data,
+        maskedMetrics: query.data?.meta.maskedMetrics,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [spec.dimensions.join(","), spec.metrics.join(","), registry.data, query.data?.meta.maskedMetrics, t],
+  );
+
+  const switcher = (
+    <ViewSwitcher
+      className="mb-1"
+      ariaLabel={t("salesReports.items.breakdownAria")}
+      value={breakdown}
+      onChange={(id) => patchLocal({ ib: id })}
+      options={BREAKDOWNS.map((id) => ({ id, label: t(`salesReports.items.breakdowns.${id}`) }))}
+    />
   );
 
   if (registry.isLoading || query.isLoading) return <LoadingState rows={6} />;
@@ -137,27 +200,31 @@ export default function Items() {
   }
 
   const rows = query.data?.rows ?? [];
-  if (rows.length === 0) return <EmptyState title={t("salesReports.states.empty")} />;
+  const tableRows = toResultRows(rows);
+  if (rows.length === 0) {
+    return (
+      <section className="space-y-4" data-testid="page-items">
+        {switcher}
+        <EmptyState title={t("salesReports.states.empty")} />
+      </section>
+    );
+  }
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  /** Which result column holds the menu item, per breakdown. */
+  const itemIndex = spec.dimensions.indexOf("menu_item");
 
-  const onRowClick = (row: FlatPivotRow) => {
-    // Groups toggle; a leaf (menu_item) row drills to the orders segment with
-    // the item pinned via the shared `menuItemId` codec param (wave 4) — the
-    // param rides the composed URL, so it is ONE history push.
-    if (row.isSubtotal) {
-      toggle(row.key);
-      return;
-    }
-    const itemId = String(row.keys[1] ?? "");
+  const onRowClick = (row: ResultTableRow) => {
+    // Drilling an item stays INSIDE this report: it pins the item and opens the
+    // day × item × branch breakdown, which is the "and when" half of the merge.
+    // It used to navigate to the orders report, whose order-fact metrics cannot
+    // express `menu_item` at all — that drill 422'd every time.
+    if (itemIndex < 0) return;
+    const itemId = String(row.keys[itemIndex] ?? "");
     if (itemId === "") return;
-    navigate(segmentHref(location.search, "orders", { menuItemId: itemId }));
+    const sp = new URLSearchParams(location.search);
+    sp.set("menuItemId", itemId);
+    sp.set("ib", "byDay");
+    navigate({ pathname: location.pathname, search: `?${sp.toString()}` });
   };
 
   const kpis = [
@@ -166,8 +233,18 @@ export default function Items() {
     { id: "net_ex_vat", icon: Coins, tone: "teal" as const, format: formatCurrency },
   ];
 
+  // The row sold something and carries NO defined cost — a warning, never a
+  // zero: a zero cost reads as "free to make", which no data supports.
+  const uncostedRows = canCost
+    ? rows.filter((r) => isCostUndefined(r.values.qty_sold ?? null, r.values.cogs ?? null)).length
+    : 0;
+
+  const page = query.data?.page;
+  const truncated = page?.rowCountCapped ?? false;
+
   return (
     <section className="space-y-4" data-testid="page-items">
+      {switcher}
       <CompletenessNotice meta={query.data?.meta} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-testid="kpi-row">
@@ -186,15 +263,43 @@ export default function Items() {
         })}
       </div>
 
-      <PivotTable
-        rows={rows}
-        subtotals={query.data?.subtotals}
-        rowDims={[...DIMS]}
-        rowDimLabels={DIMS.map((d) => t(`salesReports.dims.${d}`))}
-        measures={measures}
-        expanded={expanded}
-        onToggle={toggle}
-        onRowClick={onRowClick}
+      {uncostedRows > 0 && (
+        <div
+          data-testid="uncosted-notice"
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          <span>{t("salesReports.itemSales.costUndefinedCount", { count: formatNumber(uncostedRows) })}</span>
+          <span className="font-medium">{t("salesReports.itemSales.costUndefinedHint")}</span>
+        </div>
+      )}
+
+      {truncated && (
+        <div
+          data-testid="row-limit-notice"
+          className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-bold text-slate-600"
+        >
+          {t("salesReports.itemSales.rowLimit", { count: formatNumber(spec.limit ?? 0) })}
+        </div>
+      )}
+
+      {/* Period totals from the server ROLLUP — above the table, never a sum
+          of the rows on screen. */}
+      <ReportTotals
+        totals={query.data?.totals}
+        metricIds={spec.metrics}
+        registry={registry.data}
+        maskedMetrics={query.data?.meta.maskedMetrics}
+      />
+
+      <DataTable<ResultTableRow>
+        columns={columns}
+        rows={tableRows}
+        getRowId={(r) => r.id}
+        tableId={`sales-hub-items-${breakdown}`}
+        onRowClick={itemIndex >= 0 ? onRowClick : undefined}
+        searchable
+        emptyTitle={t("salesReports.states.empty")}
+        mobileTitle={(r) => r.labels[0] ?? ""}
       />
     </section>
   );

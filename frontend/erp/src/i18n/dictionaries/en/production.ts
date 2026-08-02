@@ -20,6 +20,200 @@ export const production = {
     urgent: "Urgent",
   },
 
+  // ── Multi-product production documents (features/batches/*) ──
+  // ONE document covering several INDEPENDENT products; each product is its own
+  // production order with its own cost and WIP (a batch groups documents, it is
+  // not a cost object).
+  batch: {
+    eyebrow: "Operations · Production documents",
+    backToOrders: "Production orders",
+    backToBatch: "Back to document",
+
+    list: {
+      tabOrders: "Single orders",
+      tabBatches: "Multi-product documents",
+      title: "Production documents",
+      subtitle: "One document grouping several products — approve and cancel apply to every order together, or not at all.",
+      searchPlaceholder: "Search by document number…",
+      col: {
+        number: "Document no.",
+        date: "Date",
+        products: "Products",
+        materialsCost: "Materials cost",
+        wip: "WIP balance",
+        warehouses: "Warehouses",
+      },
+      emptyTitle: "No production documents",
+      emptyBody: "Create a new document to group several products into one record.",
+    },
+
+    create: {
+      title: "New production document (multi-product)",
+      subtitle:
+        "Add every product you need in a single document and review the consolidated material demand before approval. The document is created as a draft — no inventory moves now.",
+      sectionDocument: "Document details",
+      sectionOutputs: "Outputs table (products)",
+      sectionMaterials: "Consolidated material demand",
+      sectionCosts: "Expected cost before approval",
+
+      batchDateLabel: "Document date",
+      sourceWarehouseLabel: "Materials warehouse (source)",
+      sourceWarehouseHint: "Every component of every product is deducted from it.",
+      chooseWarehouse: "Choose a warehouse…",
+      outputWarehouseLabel: "Default output warehouse",
+      sameAsSource: "Same as materials warehouse",
+      notesLabel: "Document notes",
+
+      addProduct: "Add product",
+      changeProduct: "Change product",
+      pickerHeading: "Pick a recipe (BOM)",
+      pickerSearchPlaceholder: "Search for a product or recipe…",
+      pickerSearchAria: "Search recipes",
+      pickerEmptyTitle: "No matching recipes",
+      pickerEmptyBody: "Try another search term, or create a recipe (BOM) from the recipes screen.",
+      pickerPageLabel: "Page {page} of {pages}",
+      pickerClose: "Close list",
+      pickerCap: "Showing the first {count} matching recipes — narrow the search to reach the rest.",
+
+      col: {
+        product: "Product / recipe",
+        version: "BOM version",
+        qty: "Quantity",
+        unit: "Unit",
+        outputWarehouse: "Output warehouse",
+        lot: "Lot number",
+        expiry: "Expiry",
+        scrap: "Allowed scrap %",
+        remove: "Remove",
+      },
+      removeRow: "Remove row {line}",
+      rowAria: "Product row {line}",
+      unitFallback: "unit",
+      notTracked: "Not tracked",
+      expiryHint: "Planning value — the real expiry is recorded when output is recorded.",
+      scrapEmptyHint: "Leave empty to use the default policy; 0 means no waste is allowed and any waste needs a manager override with a recorded reason.",
+      scrapDefaultBadge: "Default policy",
+      scrapZeroBadge: "Zero scrap",
+
+      noRowsTitle: "No products added yet",
+      noRowsBody: "Press “Add product” to pick a recipe and add the document's first row.",
+
+      previewIdle: "Complete the rows (recipe + quantity + materials warehouse) to compute the consolidated material demand.",
+      previewAllAvailable: "All materials available — total material cost {value}",
+      previewShortage: "{count} material(s) short — you can create the document now and issue materials later",
+      previewCounts: "{products} product(s) · {materials} material(s)",
+
+      materialsCol: {
+        material: "Material",
+        required: "Required",
+        available: "Available",
+        delta: "Shortage/surplus",
+        unitCost: "Unit cost",
+        lineCost: "Cost",
+        attribution: "Demand per product",
+      },
+      attributionLine: "{product}: {qty}",
+      trackedBadge: "Tracked",
+      suggestedLotsHeading: "Suggested lots (FEFO)",
+      suggestedLotsEmpty: "No lots available for this material in the warehouse.",
+      suggestedLotLine: "{lot} · {qty} · expires {expiry}",
+
+      costs: {
+        materials: "Materials (from preview)",
+        labour: "Planned labour",
+        labourAria: "Planned labour cost",
+        overhead: "Planned overhead",
+        overheadAria: "Planned overhead cost",
+        wip: "Expected WIP balance",
+        total: "Total expected cost",
+        plannedNote:
+          "Labour and overhead are planning estimates only — they are recorded for real when materials are issued per order, and are not stored with the document.",
+        splitHeading: "Cost split per product",
+        splitNote: "A document never pools product costs — each product carries its own cost and WIP balance.",
+        splitCol: {
+          product: "Product",
+          qty: "Quantity",
+          materials: "Materials",
+          labour: "Labour",
+          overhead: "Overhead",
+          total: "Total",
+          unitCost: "Unit cost",
+        },
+      },
+
+      submit: "Create document",
+      submitting: "Creating…",
+      draftNote: "The document and every order in it are created as drafts — no inventory moves before approval and then issuing materials.",
+      atomicNote: "Any invalid row refuses the whole request — no order is ever created partially.",
+
+      validation: {
+        rowsRequired: "Add at least one product.",
+        warehouseRequired: "Choose the materials warehouse.",
+        bomRequired: "Pick a recipe for this row.",
+        qtyRequired: "Quantity must be positive.",
+        fixRows: "Fix the flagged rows and try again.",
+      },
+      serverRejected: "The server refused the request — no order was created. Review the flagged rows below.",
+      lineBadge: "Row {line}",
+    },
+
+    detail: {
+      subtitle: "{products} product(s) · {warehouses} · {date}",
+      backToList: "Production documents",
+      kpi: {
+        products: "Products",
+        materialsCost: "Materials cost",
+        wip: "WIP balance",
+        approvedBy: "Approved by",
+      },
+      actions: {
+        approve: "Approve document",
+        cancel: "Cancel document",
+      },
+      dialogs: {
+        approve: {
+          title: "Approve production document",
+          desc: "Approval applies to every order together or not at all — and does not move inventory.",
+          confirm: "Approve",
+        },
+        cancel: {
+          title: "Cancel production document",
+          desc: "Cancellation is available only before any materials are issued for any order in the document.",
+          confirm: "Cancel document",
+        },
+      },
+      childrenHeading: "Production orders in this document",
+      childrenCol: {
+        line: "Row",
+        orderNumber: "Order no.",
+        product: "Product",
+        qty: "Quantity",
+        warehouses: "Warehouses",
+        wip: "WIP",
+        cost: "Cost",
+      },
+      childrenEmpty: "No orders in this document.",
+      materialsHeading: "Consolidated material demand",
+      materialsCol: {
+        material: "Material",
+        required: "Required",
+        issued: "Issued",
+        remaining: "Remaining",
+        available: "Available",
+        shortage: "Shortage",
+        unitCost: "Unit cost",
+        attribution: "Demand split",
+      },
+      materialsEmpty: "No planned materials for this document.",
+      timelineHeading: "Timeline",
+      timelineEmpty: "No events yet.",
+      lifecycleHeading: "Document lifecycle",
+      lifecycleNote: "Draft → approved → in progress → completed → closed/reversed. Issuing and recording happen per order.",
+      notFoundTitle: "Document not found",
+      notFoundBody: "It may have been deleted, or the link is wrong.",
+    },
+  },
+
   // ── Orders list (ProductionPage) ──
   list: {
     eyebrow: "Operations",
@@ -166,6 +360,7 @@ export const production = {
       noLotMovements: "No lot movements (no tracked materials in this order).",
       genealogyHeading: "Genealogy (components → product)",
       noGenealogy: "No genealogy links (untracked product or no outputs yet).",
+      approximateGenealogy: "Produced before per-output tracking. The lot links are accurate; the quantity shown against each output lot is approximate (marked ≈).",
       col: {
         lot: "Lot",
         expiry: "Expiry",

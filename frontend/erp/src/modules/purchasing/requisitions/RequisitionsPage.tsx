@@ -22,6 +22,7 @@ import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can } from "@/shared/permissions";
 import { useCan } from "@/app/providers";
 import { formatCurrency, formatDate } from "@/shared/lib";
+import { useAccessScope } from "@/modules/inventory/lib/hooks/useAccessScope";
 import { useT } from "@/i18n";
 import { st } from "../features/procurement/labels";
 import type { ApiError } from "@/shared/api";
@@ -178,6 +179,16 @@ function RequisitionFormDrawer({
   const update = useUpdateRequisition();
   const busy = create.isPending || update.isPending;
 
+  // The warehouse used to be a free-text "type the warehouse ID" box, so in
+  // practice every requisition was filed with warehouse_id = NULL — and a NULL
+  // matches no `warehouse_id IN (…)` scope list, which is how a request could
+  // vanish from the requester's own list. It is now a picker over the
+  // warehouses this caller may actually touch, pre-selected when there is only
+  // one (the same rule the backend applies when the field is left empty).
+  const access = useAccessScope();
+  const whOptions = access.data?.accessibleWarehouses ?? [];
+  const onlyWarehouse = !access.data?.allWarehousesAccess && whOptions.length === 1 ? whOptions[0].id : "";
+
   const [neededDate, setNeededDate] = useState(editing?.needed_date || "");
   const [warehouseId, setWarehouseId] = useState(editing?.warehouse_id || "");
   const [branchId, setBranchId] = useState(editing?.branch_id || "");
@@ -188,6 +199,20 @@ function RequisitionFormDrawer({
     () => lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.estimatedPrice) || 0), 0),
     [lines],
   );
+
+  // Derived, not an effect: an empty choice falls back to the caller's only
+  // warehouse. Users with several warehouses (or global access) keep "" and can
+  // deliberately file a company-wide request.
+  const effectiveWarehouseId = warehouseId || onlyWarehouse;
+  const warehouseChoices = useMemo(() => {
+    const list = whOptions.map((w) => ({ id: w.id, name: w.name || w.id }));
+    // keep an already-stored warehouse selectable even if it is outside the
+    // picker's list (e.g. an admin editing another site's requisition)
+    if (effectiveWarehouseId && !list.some((w) => w.id === effectiveWarehouseId)) {
+      list.unshift({ id: effectiveWarehouseId, name: effectiveWarehouseId });
+    }
+    return list;
+  }, [whOptions, effectiveWarehouseId]);
 
   const validLines = lines.filter((l) => l.item && (Number(l.quantity) || 0) > 0);
   const canSave = validLines.length > 0 && !busy;
@@ -200,7 +225,7 @@ function RequisitionFormDrawer({
   function submit() {
     const input: RequisitionInput = {
       neededDate: neededDate || null,
-      warehouseId: warehouseId || null,
+      warehouseId: effectiveWarehouseId || null,
       branchId: branchId || null,
       notes: notes || null,
       lines: validLines.map((l) => ({
@@ -244,7 +269,17 @@ function RequisitionFormDrawer({
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.requisitions.warehouseOptional")}</span>
-            <input className="field w-full" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} placeholder={t("purchasing.requisitions.warehousePlaceholder")} />
+            <select
+              className="field w-full"
+              value={effectiveWarehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              aria-label={t("purchasing.requisitions.warehouseAria")}
+            >
+              <option value="">{t("purchasing.requisitions.warehouseNone")}</option>
+              {warehouseChoices.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.requisitions.branchOptional")}</span>

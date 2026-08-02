@@ -241,11 +241,19 @@ test("manager (no analytics.cost.view): profitability tab hidden + deep-link tab
   const picker = page.locator('#main button[aria-haspopup="listbox"]').first();
   await expect(picker).toBeVisible({ timeout: 30_000 });
 
-  // Picker: 15 of 16 sections — profitability (cost-gated) hidden; the
-  // cashiers section STAYS (manager holds analytics.employees.view).
+  // Picker: 16 of 17 reports — profitability (cost-gated) hidden; the cashiers
+  // section STAYS (manager holds analytics.employees.view).
+  //
+  // Source of truth is SALES_HUB_SEGMENTS in
+  // frontend/erp/src/modules/reports/sales/SalesAnalyticsHub.tsx — 17 entries,
+  // of which exactly TWO carry a `cap`. This said 15-of-16 because `item-sales`
+  // landed later (commit 50afda6c) and this hardcoded count was never updated;
+  // that section is deliberately ungated, so it counts for the manager too.
+  // The unit test hub.test.tsx derives the same numbers from the registry and
+  // has been passing throughout.
   await picker.click();
   const options = page.locator('#main [role="listbox"] [role="option"]');
-  await expect(options, "manager sees 15 sections (profitability hidden)").toHaveCount(15);
+  await expect(options, "manager sees 16 reports (profitability hidden)").toHaveCount(16);
   await expect(
     options.filter({ hasText: "الربحية" }),
     "the profitability section must be hidden without analytics.cost.view",

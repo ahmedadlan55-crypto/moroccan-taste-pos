@@ -11,6 +11,7 @@ const db = require('../../db/connection');
 const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/order-to-cash/http');
 const events = require('../../lib/order-to-cash/events');
+const SalesScope = require('../../lib/salesScope');
 const ReturnService = require('../../services/order-to-cash/SalesReturnService');
 
 function _ctx(req, extra) {
@@ -23,14 +24,27 @@ function _ctx(req, extra) {
 
 router.get('/', requireCapability('returns.view'), async (req, res) => {
   try {
-    const out = await ReturnService.list(req.query);
-    return H.sendData(res, out.data, { pagination: out.pagination });
+    // Returns are the most sensitive read of the three: a refund list names the
+    // branch's shrink, its reason codes and who authorised each credit. Unscoped
+    // it published every branch's.
+    const scope = await SalesScope.effectiveScope(db, req);
+    const out = await ReturnService.list(Object.assign({}, req.query, { scope }));
+    const page = await SalesScope.filterPage(db, scope, 'sales_returns', out.data);
+    return H.sendData(res, page.rows, {
+      pagination: Object.assign({}, out.pagination, page.dropped ? { scopeFiltered: true } : {}),
+    });
   } catch (e) { return H.sendErr(res, e); }
 });
 
 router.get('/:id', requireCapability('returns.view'), async (req, res) => {
-  try { return H.sendData(res, await db.withTransaction((c) => ReturnService.getWithLines(c, req.params.id))); }
-  catch (e) { return H.sendErr(res, e); }
+  try {
+    const scope = await SalesScope.forRequest(db, req);
+    const out = await db.withTransaction((c) => ReturnService.getWithLines(c, req.params.id));
+    // 404, not 403 — the detail also carries the credit note and the restocked
+    // lines, so confirming existence already leaks the other branch's activity.
+    SalesScope.assertRowInScope(scope, out, 'المرتجع غير موجود');
+    return H.sendData(res, out);
+  } catch (e) { return H.sendErr(res, e); }
 });
 
 router.post('/', requireCapability('returns.create'), async (req, res) => {

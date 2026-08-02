@@ -1237,88 +1237,90 @@ router.get('/availability/bulk', async (req, res) => {
 // Body: { lines: [{ componentItemId, quantity, unit, wastePct }],
 //         yieldQuantity?, yieldUnit?, productionMethod?, deductStrategy?,
 //         allowNegativeStock?, minStockAlert? }
+// COMPATIBILITY LAYER. This endpoint is still called by
+// frontend/erp/src/modules/menu/api.ts:801, so it stays mounted — but it no
+// longer owns any rules. It translates its legacy body into the unified
+// contract and delegates to routes/recipes.js `saveRecipe`, then answers in the
+// legacy response shape its callers expect.
+//
+// What DELEGATING fixes for every existing caller, for free:
+//   • it is now ONE transaction (this used to be a bare DELETE followed by N
+//     INSERTs on the pool, so a failure halfway left a partial recipe)
+//   • yield 0 is rejected instead of being coerced to 1 by `|| 1`
+//   • waste % is range-checked, duplicate components are folded, and
+//     self-reference / multi-level cycles are refused
+//   • the cost recompute is no longer wrapped in a swallowing try/catch
+//   • the audit row is fail-closed
+//   • an ACTIVE recipe is revised rather than edited under running production
+//
+// The ONE deliberate behaviour change: this used to activate whatever it wrote.
+// It still does (activate: true) so the legacy caller's expectation — save and
+// the menu cost updates — holds exactly.
 router.post('/:id/recipe-bom', verifyToken, MGR, async (req, res) => {
+  const { saveRecipe, HTTP_FOR } = require('./recipes');
   try {
-    const menuId = req.params.id;
     const b = req.body || {};
-    const [menuRows] = await db.query('SELECT id, name, bom_id FROM menu WHERE id = ?', [menuId]);
-    if (!menuRows.length) return res.status(404).json({ success: false, error: 'منتج غير موجود' });
-    const menu = menuRows[0];
+    const actor = (req.user && (req.user.username || req.user.name)) || '';
 
-    // v7.1 — validate lines before writing anything: qty > 0 and existing inv_item.
-    if (Array.isArray(b.lines) && b.lines.length) {
-      const badQ = b.lines.filter(ln => !(Number(ln.quantity) > 0));
-      if (badQ.length) return res.status(400).json({ success: false, error: 'كمية كل سطر يجب أن تكون أكبر من صفر' });
-      const cids = [...new Set(b.lines.map(ln => ln.componentItemId || ln.itemId).filter(Boolean))];
-      if (cids.length) {
-        const ph = cids.map(() => '?').join(',');
-        const [ex] = await db.query('SELECT id FROM inv_items WHERE id IN (' + ph + ')', cids);
-        const have = new Set(ex.map(r => r.id));
-        const missing = cids.filter(id => !have.has(id));
-        if (missing.length) return res.status(400).json({ success: false, error: 'مكوّنات غير موجودة في المخزون', items: missing });
-      }
-    }
+    // Legacy callers send `unit` as free text and no expectedVersion. Map the
+    // free-text unit onto `enteredUnitCode`, which the unified path resolves
+    // against the component's REGISTERED units (falling back to the base unit
+    // when the string matches nothing) rather than storing it verbatim.
+    const lines = (Array.isArray(b.lines) ? b.lines : []).map((ln) => ({
+      componentItemId: ln.componentItemId || ln.itemId,
+      quantity: ln.quantity,
+      enteredUnitId: ln.enteredUnitId || null,
+      enteredUnitCode: ln.enteredUnitCode || null,
+      wastePct: ln.wastePct,
+      notes: ln.notes,
+    }));
 
-    // Build/upsert BOM
-    let bomId = menu.bom_id;
-    if (!bomId) {
-      bomId = 'BOM-' + Date.now() + '-' + Math.random().toString(36).slice(2,5);
-      await db.query(`
-        INSERT INTO bom (id, product_id, product_source, version, yield_quantity, yield_unit, notes, is_active)
-        VALUES (?, ?, 'menu', 1, ?, ?, ?, 1)`,
-        [bomId, menuId, Number(b.yieldQuantity)||1, b.yieldUnit||'PCS', b.notes||'وصفة لـ '+menu.name]);
-      await db.query('UPDATE menu SET bom_id = ? WHERE id = ?', [bomId, menuId]);
-    } else {
-      await db.query(`
-        UPDATE bom SET product_source='menu', yield_quantity=?, yield_unit=?, notes=COALESCE(?, notes), is_active=1
-        WHERE id = ?`,
-        [Number(b.yieldQuantity)||1, b.yieldUnit||'PCS', b.notes||null, bomId]);
-    }
+    // The legacy contract has no optimistic lock. Read the current row_version
+    // so a concurrent edit is still caught, instead of sending null and having
+    // the unified path refuse the write outright.
+    const [cur] = await db.query(
+      "SELECT row_version FROM bom WHERE product_id=? AND COALESCE(product_source,'inv')='menu' AND status IN ('active','draft') ORDER BY FIELD(status,'active','draft'), version DESC LIMIT 1",
+      [req.params.id]);
 
-    // Replace lines
-    if (Array.isArray(b.lines)) {
-      await db.query('DELETE FROM bom_lines WHERE bom_id = ?', [bomId]);
-      for (const ln of b.lines) {
-        const compId = ln.componentItemId || ln.itemId;
-        if (!compId) continue;
-        await db.query(`
-          INSERT INTO bom_lines (id, bom_id, component_item_id, quantity, unit, waste_pct)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-          ['BL-'+Date.now()+'-'+Math.random().toString(36).slice(2,5),
-           bomId, compId, Number(ln.quantity)||0, ln.unit||'PCS', Number(ln.wastePct)||0]);
-      }
-    }
+    const out = await saveRecipe({
+      source: 'menu',
+      productId: req.params.id,
+      actor,
+      ip: req.ip,
+      body: {
+        yieldQuantity: b.yieldQuantity != null ? b.yieldQuantity : 1,
+        yieldUnit: b.yieldUnit || 'PCS',
+        notes: b.notes,
+        needsReview: b.needsReview,
+        effectiveFrom: b.effectiveFrom || null,
+        effectiveTo: b.effectiveTo || null,
+        activate: true,
+        expectedVersion: cur.length ? Number(cur[0].row_version) : undefined,
+        lines,
+      },
+    });
 
-    // Update menu meta (production method, deduct strategy, etc.)
+    // menu-only metadata the recipe domain does not own.
     const mfields = []; const mparams = [];
     if (b.productionMethod !== undefined) { mfields.push('production_method=?'); mparams.push(b.productionMethod); }
     if (b.deductStrategy !== undefined)   { mfields.push('deduct_strategy=?');   mparams.push(b.deductStrategy); }
-    if (b.allowNegativeStock !== undefined){ mfields.push('allow_negative_stock=?'); mparams.push(b.allowNegativeStock?1:0); }
-    if (b.minStockAlert !== undefined)    { mfields.push('min_stock_alert=?'); mparams.push(Number(b.minStockAlert)||0); }
+    if (b.allowNegativeStock !== undefined){ mfields.push('allow_negative_stock=?'); mparams.push(b.allowNegativeStock ? 1 : 0); }
+    if (b.minStockAlert !== undefined)    { mfields.push('min_stock_alert=?'); mparams.push(Number(b.minStockAlert) || 0); }
     if (mfields.length) {
-      mparams.push(menuId);
-      await db.query('UPDATE menu SET '+mfields.join(',')+' WHERE id=?', mparams);
+      mparams.push(req.params.id);
+      await db.query('UPDATE menu SET ' + mfields.join(',') + ' WHERE id=?', mparams);
     }
 
-    // Recompute cost from new recipe
-    let computedCost = null;
-    try {
-      const [agg] = await db.query(`
-        SELECT SUM(bl.quantity * COALESCE(i.cost,0) * (1 + COALESCE(bl.waste_pct,0)/100)) AS total_cost
-        FROM bom_lines bl LEFT JOIN inv_items i ON i.id = bl.component_item_id
-        WHERE bl.bom_id = ?`, [bomId]);
-      if (agg.length && agg[0].total_cost != null) {
-        const yieldQ = Number(b.yieldQuantity)||1;
-        computedCost = Number(agg[0].total_cost) / Math.max(1, yieldQ);
-        // Sprint 3 D3 — the BOM recipe save is the authoritative writer of a
-        // recipe-derived cost: stamp cost_source='recipe' so the item PUT locks
-        // this value against silent manual edits (COST_LOCKED_BY_RECIPE).
-        await db.query("UPDATE menu SET cost = ?, cost_source = 'recipe' WHERE id = ?", [computedCost, menuId]);
-      }
-    } catch(_){}
-
-    res.json({ success: true, bomId, computedCost });
-  } catch(e) { res.status(500).json({ success: false, error: e.message }); }
+    res.json({ success: true, bomId: out.bomId, computedCost: out.cost.unitCost, version: out.version, rowVersion: out.rowVersion });
+  } catch (e) {
+    const code = (e && e.code) || 'SERVER_ERROR';
+    const status = (HTTP_FOR && HTTP_FOR[code]) || 500;
+    res.status(status).json({
+      success: false, code,
+      error: status >= 500 ? 'خطأ داخلي في الخادم' : e.message,
+      detail: e && e.detail, requestId: req.requestId || null,
+    });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -24,20 +24,16 @@ import { analyticsFilterCodec } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsQueryBody,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery } from "../lib/useAnalyticsQuery";
+import { REPORT_BY_ID, reportQuery } from "../lib/reportRegistry";
 
-const KPI_METRICS = ["voids_count", "voids_value", "returns_count", "returns_value", "qty_returned"] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest("voids", () => ({
-  metrics: ["voids_count", "voids_value", "void_rate_by_cashier"],
-  dimensions: ["cashier"],
-  sort: [{ by: "voids_value", dir: "desc" }],
-}));
+const SEGMENT = "voids";
+// All three queries — and the ExportMenu's file — come from lib/reportRegistry.
+const KPI_METRICS: readonly string[] = reportQuery(REPORT_BY_ID[SEGMENT], "kpis")!.metrics;
 
 /** A per-cashier void/return rate at/above this (percent points) reads warning. */
 const HIGH_RATE_PCT = 5;
@@ -74,29 +70,27 @@ export default function Voids() {
   const base = useMemo(() => buildFiltersBody(filters), [filters]);
 
   const kpiBody = useMemo<AnalyticsQueryBody>(
-    () => ({ metrics: [...KPI_METRICS], dimensions: [], ...base }),
-    [base],
+    () => ({ ...reportQuerySpec(SEGMENT, "kpis", filters), ...base }),
+    [base, filters],
   );
   const reasonBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: ["returns_count", "returns_value", "qty_returned"],
-      dimensions: ["return_reason"],
+      ...reportQuerySpec(SEGMENT, "byReason", filters),
       sort: [{ by: "returns_value", dir: "desc" }],
       ...base,
     }),
-    [base],
+    [base, filters],
   );
   // per-cashier voids (ORDER fact — the only fact carrying both the cashier
   // dimension and the void measures; see the header note).
   const cashierBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      metrics: ["voids_count", "voids_value", "void_rate_by_cashier"],
-      dimensions: ["cashier"],
+      ...reportQuerySpec(SEGMENT, "byCashier", filters),
       sort: [{ by: "voids_value", dir: "desc" }],
       limit: 100,
       ...base,
     }),
-    [base],
+    [base, filters],
   );
 
   const kpis = useAnalyticsQuery("voids-kpis", kpiBody);
@@ -121,7 +115,7 @@ export default function Voids() {
   }));
 
   const detailColumns: ColumnDef<CashierVoidsRow>[] = [
-    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier, pinStart: true, width: 170 },
+    { id: "cashier", header: t("salesReports.dims.cashier"), accessor: (r) => r.cashier, pinStart: true, hideable: false, width: 170 },
     {
       id: "voids_count",
       header: t("salesReports.metrics.voids_count"),
@@ -192,8 +186,8 @@ export default function Voids() {
             columns={detailColumns}
             rows={detailRows}
             getRowId={(r) => r.key}
+            tableId="sales-hub-voids-by-cashier"
             paginate={false}
-            columnMenu={false}
             emptyTitle={t("salesReports.states.empty")}
             mobileTitle={(r) => r.cashier}
           />

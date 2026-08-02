@@ -18,34 +18,24 @@ import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
-  setPageExportRequest,
+  reportQuerySpec,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
+import { hubHref } from "../lib/reportRegistry";
 
 const SEGMENT = "cashiers";
-// E2E-wave fix: return_rate_by_cashier is dropped — its returns_count input
-// lives on the RETURN fact, which does not carry the cashier dimension, so
-// the planner refuses the grouping (ANALYTICS_UNSUPPORTED_COMBINATION 422)
-// and this page errored on every load. Discount/void rates are order-fact
-// inputs and group by cashier fine.
-const METRICS = [
-  "orders",
-  "net_ex_vat",
-  "avg_ticket",
-  "discount_rate_by_cashier",
-  "void_rate_by_cashier",
-] as const;
-
-// The TopBar ExportMenu asks this page's registry entry for its export shape.
-setPageExportRequest(SEGMENT, () => ({
-  metrics: [...METRICS],
-  dimensions: ["cashier"],
-  sort: [{ by: "net_ex_vat", dir: "desc" }],
-}));
+// Metrics and the cashier grouping come from lib/reportRegistry — the same
+// declaration the ExportMenu reads for this report's file.
+//
+// E2E-wave fix, recorded there: return_rate_by_cashier is dropped — its
+// returns_count input lives on the RETURN fact, which does not carry the
+// cashier dimension, so the planner refuses the grouping
+// (ANALYTICS_UNSUPPORTED_COMBINATION 422) and this page errored on every load.
+// Discount/void rates are order-fact inputs and group by cashier fine.
 
 /* ── tiny local helpers (page-local copies by design) ── */
 
@@ -89,12 +79,10 @@ function totalValue(result: AnalyticsResult | undefined, id: string): number | n
 
 const fmtPercent = (v: number) => `${formatNumber(v)}%`;
 
-/** Merge extra params over the CURRENT search and render a hub segment URL. */
+/** The canonical URL of another hub report — lib/reportRegistry owns the
+ *  centre a report lives in, so a drill never hand-builds a retired path. */
 function segmentHref(search: string, segment: string, extra: Record<string, string>): string {
-  const sp = new URLSearchParams(search);
-  for (const [k, v] of Object.entries(extra)) sp.set(k, v);
-  const qs = sp.toString();
-  return `/reports/sales/${segment}${qs ? `?${qs}` : ""}`;
+  return hubHref(segment, search, extra);
 }
 
 /** Client-side P75 (linear index method) over the non-null values. */
@@ -125,30 +113,51 @@ export default function Cashiers() {
   const compare = compareSpec(filters);
   const body: AnalyticsQueryBody = {
     ...base,
-    metrics: [...METRICS],
-    dimensions: ["cashier"],
+    ...reportQuerySpec(SEGMENT, "byCashier", filters),
     sort: [{ by: "net_ex_vat", dir: "desc" }],
     ...(compare ? { compare } : {}),
+  };
+  // TWO REQUESTS, NOT ONE — see the registry note on `byCashierVoids`. A
+  // void_rate_by_cashier asked for beside `orders` makes the planner drop the
+  // void exclusion for the whole order-fact statement, so the order count, the
+  // average ticket and the discount rate on this very row would each silently
+  // switch population. The rate comes back on its own and is merged by cashier
+  // key below.
+  const voidsBody: AnalyticsQueryBody = {
+    ...base,
+    ...reportQuerySpec(SEGMENT, "byCashierVoids", filters),
+    sort: [{ by: "voids_count", dir: "desc" }],
   };
 
   // Data queries wait for a VALID metric catalog: without one there is nothing
   // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const query = useAnalyticsQuery(SEGMENT, body, { enabled: catalogReady });
+  const voidsQuery = useAnalyticsQuery(`${SEGMENT}-voids`, voidsBody, { enabled: catalogReady });
 
-  const cashierRows = useMemo<CashierRow[]>(
-    () =>
-      (query.data?.rows ?? []).map((row) => ({
-        key: String(row.keys[0] ?? ""),
-        label: row.labels[0] ?? String(row.keys[0] ?? ""),
+  const cashierRows = useMemo<CashierRow[]>(() => {
+    // Merge on the cashier key. A cashier present in only one result keeps a
+    // null in the other column — never a 0, which would read as "no voids"
+    // when the truth is "not measured on this side".
+    const voidRateByKey = new Map<string, number | null>(
+      (voidsQuery.data?.rows ?? []).map((row) => [
+        String(row.keys[0] ?? ""),
+        displayMetric(row, "void_rate_by_cashier"),
+      ]),
+    );
+    return (query.data?.rows ?? []).map((row) => {
+      const key = String(row.keys[0] ?? "");
+      return {
+        key,
+        label: row.labels[0] ?? key,
         orders: displayMetric(row, "orders"),
         net: displayMetric(row, "net_ex_vat"),
         avgTicket: displayMetric(row, "avg_ticket"),
         discountRate: displayMetric(row, "discount_rate_by_cashier"),
-        voidRate: displayMetric(row, "void_rate_by_cashier"),
-      })),
-    [query.data],
-  );
+        voidRate: voidRateByKey.get(key) ?? null,
+      };
+    });
+  }, [query.data, voidsQuery.data]);
 
   const thresholds = useMemo(
     () => ({
@@ -170,7 +179,7 @@ export default function Cashiers() {
         id: "cashier",
         header: t("salesReports.dims.cashier"),
         accessor: (r) => r.label,
-        pinStart: true,
+        pinStart: true, hideable: false,
         width: 160,
         sortable: true,
       },
@@ -268,6 +277,7 @@ export default function Cashiers() {
         columns={columns}
         rows={cashierRows}
         getRowId={(r) => r.key}
+        tableId="sales-hub-cashiers"
         initialSort={{ columnId: "net", dir: "desc" }}
         // Wave-4 drill: orders segment with the cashier pinned (`cashierId`
         // codec param merged into the current search — one history push).

@@ -166,6 +166,10 @@ const CODEC = createAnalyticsFilterCodec("2026-07-24");
 const DEFAULTS: AnalyticsFilters = CODEC.parse(new URLSearchParams());
 
 beforeEach(() => {
+  // Tables now carry a stable `tableId`, so DataTable persists sort/pageSize/
+  // hidden columns to localStorage. Without this clear, one test's column or
+  // sort choice leaks into the next and the file fails depending on ORDER.
+  window.localStorage.clear();
   for (const k of Object.keys(caps)) delete caps[k];
   exportState.polls = 0;
   exportState.doneAfter = 1;
@@ -300,14 +304,17 @@ describe("wave-4 drills", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/payments");
   });
 
-  it("Hours: a heat cell click lands on orders with the hour param merged", async () => {
-    renderAt(<Hours />, "/reports/sales/hours?channel=pos");
+  it("Hours: a heat cell click lands on the orders report with the hour param merged", async () => {
+    renderAt(<Hours />, "/reports/sales/operations?view=hours&channel=pos");
     const cell = await screen.findByRole("button", { name: /Mon × 10:00/ });
     fireEvent.click(cell);
+    // The orders report lives in the OPERATIONS centre now, and the drill goes
+    // straight to its canonical URL rather than through the retired path.
     await waitFor(() =>
-      expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/orders"),
+      expect(screen.getByTestId("location")).toHaveTextContent("/reports/sales/operations"),
     );
     const probe = screen.getByTestId("location").textContent ?? "";
+    expect(probe).toContain("view=orders");
     expect(probe).toContain("hour=10");
     expect(probe).toContain("channel=pos"); // the current search survived the drill
   });

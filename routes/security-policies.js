@@ -6,9 +6,10 @@
  * routes/settings.js) as JSON under the keys below, and exposes them for the
  * unified Administration › Security screen:
  *
- *   SecurityPasswordPolicy  → { minLength, requireUpper, requireNumber, requireSymbol, expiryDays }
- *   SecuritySession         → { idleTimeoutMinutes, absoluteTimeoutHours }
- *   SecurityIpAllowlist     → { enabled, cidrs:[] }
+ *   SecurityPasswordPolicy         → { minLength, requireUpper, requireNumber, requireSymbol, expiryDays }
+ *   SecuritySession                → { idleTimeoutMinutes, absoluteTimeoutHours }
+ *   SecurityIpAllowlist            → { enabled, cidrs:[] }
+ *   ProcurementSelfApprovalPolicy  → { enabled, thresholdAmount }
  *
  * RBAC (the global /api gate already set req.user):
  *   GET  → requireCapability('administration.security')
@@ -26,6 +27,13 @@
  *     server.js). Wiring it is a 1-line central follow-up — see the report.
  *   • Session timeout — persisted + exposed for the client to honor; no
  *     server-side session store exists to safely enforce it here.
+ *   • Purchase-order self-approval (فصل المهام) — WIRED. The block is stored
+ *     here but READ and ENFORCED by routes/procurement/orders.js inside the
+ *     approval transaction (lib/procurement/config.selfApprovalPolicy). The key
+ *     name and the merge/normalisation live in that module so the writer here
+ *     and the enforcer there can never drift apart. There is no cache to bust:
+ *     the enforcer reads the row per approval, so a save takes effect at once
+ *     across every server process.
  */
 'use strict';
 
@@ -34,11 +42,14 @@ const router = express.Router();
 const db = require('../db/connection');
 const requireCapability = require('../middleware/requireCapability');
 const passwordPolicy = require('../lib/passwordPolicy');
+const procurementCfg = require('../lib/procurement/config');
 
 // ── settings keys ────────────────────────────────────────────────────────────
 const KEY_PW = 'SecurityPasswordPolicy';
 const KEY_SESSION = 'SecuritySession';
 const KEY_IP = 'SecurityIpAllowlist';
+// Owned by lib/procurement/config.js — the module that enforces it.
+const KEY_PROC_APPROVAL = procurementCfg.SELF_APPROVAL_KEY;
 
 // ── sensible defaults returned when a block is unset ─────────────────────────
 const DEFAULT_PW = { minLength: 12, requireUpper: false, requireNumber: true, requireSymbol: true, expiryDays: 0 };
@@ -68,6 +79,14 @@ function _mergeIp(v) {
     enabled: !!(v && v.enabled),
     cidrs: v && Array.isArray(v.cidrs) ? v.cidrs.map(String) : [],
   };
+}
+/**
+ * Unset → whatever is ACTUALLY in force (the PROCUREMENT_MAKER_CHECKER env
+ * default), never a hardcoded guess — a settings screen that showed "off" while
+ * the server enforced "on" would be worse than no screen at all.
+ */
+function _mergeProcApproval(v) {
+  return procurementCfg.normalizeSelfApprovalPolicy(v, procurementCfg.defaultSelfApprovalPolicy());
 }
 
 // ── validation ───────────────────────────────────────────────────────────────
@@ -147,16 +166,31 @@ function validateIpAllowlist(raw) {
   return { value: { enabled, cidrs } };
 }
 
+// Segregation of duties on purchase-order approval. `enabled` is REQUIRED to be
+// an explicit boolean: a payload that omitted it would otherwise silently keep
+// the previous value while the admin believes they just flipped the switch.
+const MAX_THRESHOLD = 1e9;
+function validateProcApproval(raw) {
+  if (!isObj(raw)) return { error: 'سياسة اعتماد أوامر الشراء غير صالحة' };
+  if (typeof raw.enabled !== 'boolean') return { error: 'حالة فصل المهام في اعتماد أوامر الشراء مطلوبة (تفعيل/تعطيل)' };
+  const amount = raw.thresholdAmount == null || raw.thresholdAmount === '' ? 0 : Number(raw.thresholdAmount);
+  if (!Number.isFinite(amount) || amount < 0 || amount > MAX_THRESHOLD) {
+    return { error: 'حد فصل المهام يجب أن يكون مبلغًا موجبًا لا يتجاوز 1000000000' };
+  }
+  return { value: { enabled: raw.enabled, thresholdAmount: Math.round(amount * 100) / 100 } };
+}
+
 // ── routes ───────────────────────────────────────────────────────────────────
 router.get('/', requireCapability('administration.security'), async (req, res) => {
   try {
-    const [pw, session, ip] = await Promise.all([
-      readSetting(KEY_PW), readSetting(KEY_SESSION), readSetting(KEY_IP),
+    const [pw, session, ip, procApproval] = await Promise.all([
+      readSetting(KEY_PW), readSetting(KEY_SESSION), readSetting(KEY_IP), readSetting(KEY_PROC_APPROVAL),
     ]);
     res.json({
       passwordPolicy: _mergePw(pw),
       session: _mergeSession(session),
       ipAllowlist: _mergeIp(ip),
+      procurementApproval: _mergeProcApproval(procApproval),
     });
   } catch (e) {
     res.status(500).json({ success: false, error: 'تعذّر قراءة سياسات الأمان' });
@@ -168,7 +202,7 @@ router.put('/', requireCapability('administration.security.manage'), async (req,
     const body = req.body;
     if (!isObj(body)) return res.status(400).json({ success: false, error: 'حمولة غير صالحة' });
     const has = (k) => Object.prototype.hasOwnProperty.call(body, k) && body[k] != null;
-    if (!has('passwordPolicy') && !has('session') && !has('ipAllowlist')) {
+    if (!has('passwordPolicy') && !has('session') && !has('ipAllowlist') && !has('procurementApproval')) {
       return res.status(400).json({ success: false, error: 'لا توجد بيانات لحفظها' });
     }
 
@@ -190,19 +224,26 @@ router.put('/', requireCapability('administration.security.manage'), async (req,
       await writeSetting(KEY_IP, r.value);
       _ipCache.at = 0; // bust the enforcement cache so a change takes effect at once
     }
+    if (has('procurementApproval')) {
+      const r = validateProcApproval(body.procurementApproval);
+      if (r.error) return res.status(400).json({ success: false, error: r.error });
+      // No cache to bust — routes/procurement/orders.js reads this row per approval.
+      await writeSetting(KEY_PROC_APPROVAL, r.value);
+    }
 
     // Honor a new password policy immediately in this process (enforced by the
     // change-password route's synchronous validate()).
     if (savedPw) passwordPolicy.setPolicy(savedPw);
 
-    const [pw, session, ip] = await Promise.all([
-      readSetting(KEY_PW), readSetting(KEY_SESSION), readSetting(KEY_IP),
+    const [pw, session, ip, procApproval] = await Promise.all([
+      readSetting(KEY_PW), readSetting(KEY_SESSION), readSetting(KEY_IP), readSetting(KEY_PROC_APPROVAL),
     ]);
     res.json({
       success: true,
       passwordPolicy: _mergePw(pw),
       session: _mergeSession(session),
       ipAllowlist: _mergeIp(ip),
+      procurementApproval: _mergeProcApproval(procApproval),
     });
   } catch (e) {
     res.status(500).json({ success: false, error: 'تعذّر حفظ سياسات الأمان' });

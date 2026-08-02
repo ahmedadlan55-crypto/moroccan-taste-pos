@@ -17,6 +17,7 @@ const calc = require('../../lib/order-to-cash/calculations');
 const { nextNumber } = require('../../lib/order-to-cash/numbering');
 const posting = require('../../lib/order-to-cash/posting');
 const events = require('../../lib/order-to-cash/events');
+const SalesScope = require('../../lib/salesScope');
 const { runTransition } = require('./TransitionExecutor');
 const Alloc = require('./PaymentAllocationService');
 const cfg = require('../../lib/order-to-cash/config');
@@ -224,6 +225,13 @@ async function list(params = {}) {
   if (params.customerId) { where.push('customer_id = ?'); args.push(String(params.customerId)); }
   if (params.unallocated === 'true') where.push('unapplied_amount > 0.01 AND status = "posted"');
   if (params.q) { where.push('payment_number LIKE ?'); args.push('%' + params.q + '%'); }
+  // The branch predicate belongs in BOTH statements below, not just the page
+  // query: the router's post-filter (lib/salesScope.filterPage) already removes
+  // out-of-scope receipts from the page, but pagination.total was still counted
+  // company-wide, so a scoped caller saw an inflated total and a short page.
+  // Zero grants → `1=0`; a global caller adds no clause at all.
+  const b = SalesScope.branchClause(params.scope, 'branch_id');
+  if (b.sql) { where.push(b.sql); b.params.forEach((v) => args.push(v)); }
   const whereSql = 'WHERE ' + where.join(' AND ');
   const [rows] = await db.query(
     `SELECT id, payment_number, customer_id, customer_name, payment_date, payment_method, destination_type,

@@ -37,6 +37,95 @@ const CAP_MANAGE = 'purchasing.requisitions.manage';
 const CAP_APPROVE = 'purchasing.requisitions.approve';
 const CAP_VIEW = 'procurement.view';
 
+// ── who may READ a requisition ───────────────────────────────────────────────
+// `procurement.view` gates the WHOLE procurement module (orders, receipts,
+// supplier invoices, payments, GL, dashboard). The RBAC seed below deliberately
+// hands CAP_MANAGE — the right to FILE a requisition — to back-office roles
+// (employee / custody) that must never read supplier invoices or payments, so
+// they never receive `procurement.view`. The result was a role that could POST a
+// requisition (201) and then get 403 from the very list it belongs in: «عند طلب
+// نواقص لا تظهر ضمن الطلبات».
+//
+// Widening `procurement.view` to those roles would open AP; instead the two
+// requisition READS accept EITHER capability. That is not an escalation —
+// CAP_MANAGE already permits creating and editing these same rows — and the
+// warehouse-scope predicate below still decides WHICH rows come back.
+function requireAnyCapability(...caps) {
+  return async function (req, res, next) {
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'مطلوب تسجيل الدخول' });
+    }
+    for (const cap of caps) {
+      let allowed = false;
+      try { allowed = await requireCapability.hasCapability(req.user, cap); } catch (_) { allowed = false; }
+      if (allowed) return next();
+    }
+    return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لهذه العملية' });
+  };
+}
+const CAN_READ = () => requireAnyCapability(CAP_VIEW, CAP_MANAGE);
+
+// ── warehouse attribution + read visibility ──────────────────────────────────
+// The caller's resolved warehouse scope ({ all, warehouseIds }) as attached by
+// middleware/warehouseScope. Tolerates its absence (older mounts / unit tests).
+function _scopeOf(req) {
+  const s = req && req.warehouseScope;
+  return {
+    all: !!(s && s.all),
+    warehouseIds: s && Array.isArray(s.warehouseIds) ? s.warehouseIds.map(String) : [],
+  };
+}
+
+/**
+ * Resolve the warehouse a new requisition belongs to.
+ *
+ * An explicit warehouseId wins. Otherwise, when the caller can reach EXACTLY
+ * ONE warehouse the attribution is unambiguous, so the requisition is stamped
+ * with it rather than stored as NULL — a NULL warehouse_id matches no `IN (…)`
+ * list, which is what made a scoped user's own request vanish from their list.
+ *
+ * A global caller (all warehouses) and a caller with several warehouses stay
+ * NULL on purpose: a company-wide request ("office supplies") legitimately has
+ * no warehouse, and guessing one would file it against the wrong stock. Those
+ * rows are covered by the creator clause in _visibilityClause instead.
+ */
+function _resolveWarehouseId(req, supplied) {
+  const wid = supplied == null || String(supplied).trim() === '' ? null : String(supplied).trim();
+  if (wid) return wid;
+  const s = _scopeOf(req);
+  return (!s.all && s.warehouseIds.length === 1) ? s.warehouseIds[0] : null;
+}
+
+/**
+ * The predicate that decides which requisitions a caller may READ.
+ *
+ *   warehouse_id IN (…granted…)  OR  (warehouse_id IS NULL AND created_by = me)
+ *
+ * The second branch is what makes «the person who filed it can always see it»
+ * true even for a request that legitimately carries no warehouse. It is
+ * deliberately NOT a bare `OR warehouse_id IS NULL`: that would hand every
+ * scoped user every other department's unassigned requisitions. Gaining sight
+ * of a row you yourself created is not a widening of anyone's access.
+ *
+ * `created_by` — not `requested_by` — is the identity, because created_by is
+ * stamped from the JWT (H.actorOf) while requested_by is settable from the
+ * request body and would therefore be forgeable.
+ *
+ * Returns an empty clause when scope enforcement is off, so the unscoped
+ * behaviour is byte-for-byte what it was.
+ */
+function _visibilityClause(req, alias) {
+  const sc = H.scopeClause(req, `${alias}.warehouse_id`);
+  if (!sc.sql) return { sql: '', params: [] };
+  const scoped = sc.sql.replace(/^\s*AND\s*/i, '');
+  const actor = H.actorOf(req);
+  if (!actor) return { sql: scoped, params: sc.params.slice() };
+  return {
+    sql: `(${scoped} OR (${alias}.warehouse_id IS NULL AND ${alias}.created_by = ?))`,
+    params: sc.params.concat([actor]),
+  };
+}
+
 const SORTABLE = {
   reqNumber: 'r.req_number', createdAt: 'r.created_at',
   neededDate: 'r.needed_date', status: 'r.status',
@@ -169,6 +258,11 @@ router.post('/', requireCapability(CAP_MANAGE), async (req, res) => {
     const b = req.body || {};
     const lines = _normLines(b.lines || b.items);
     const actor = H.actorOf(req);
+    // An explicitly-named warehouse must be one the caller may touch (the same
+    // rule receipts.js applies), otherwise a scoped user could file a request
+    // against foreign stock — and then not be able to read it back.
+    if (b.warehouseId && typeof req.guardWh === 'function' && !req.guardWh(res, b.warehouseId)) return;
+    const warehouseId = _resolveWarehouseId(req, b.warehouseId);
 
     const out = await db.withTransaction(async (conn) => {
       const id = genId();
@@ -177,7 +271,7 @@ router.post('/', requireCapability(CAP_MANAGE), async (req, res) => {
         `INSERT INTO purchase_requisitions
           (id, req_number, branch_id, warehouse_id, requested_by, status, version, needed_date, notes, created_by)
          VALUES (?,?,?,?,?,'draft',1,?,?,?)`,
-        [id, number, b.branchId || null, b.warehouseId || null, b.requestedBy || actor || null,
+        [id, number, b.branchId || null, warehouseId, b.requestedBy || actor || null,
          b.neededDate || null, b.notes || null, actor || null]);
       await _insertLines(conn, id, lines);
       return { id, number };
@@ -188,7 +282,7 @@ router.post('/', requireCapability(CAP_MANAGE), async (req, res) => {
 });
 
 // ── GET / — paginated list (filters: status, branchId, q) ────────────────────
-router.get('/', requireCapability(CAP_VIEW), async (req, res) => {
+router.get('/', CAN_READ(), async (req, res) => {
   try {
     await ensureReady();
     const p = H.listParams(req, Object.keys(SORTABLE), LIST_STATUSES);
@@ -198,8 +292,8 @@ router.get('/', requireCapability(CAP_VIEW), async (req, res) => {
     if (p.q) { where.push('(r.req_number LIKE ? OR r.notes LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
     if (req.query.dateFrom) { where.push('r.needed_date >= ?'); params.push(String(req.query.dateFrom)); }
     if (req.query.dateTo) { where.push('r.needed_date <= ?'); params.push(String(req.query.dateTo)); }
-    const sc = H.scopeClause(req, 'r.warehouse_id');
-    if (sc.sql) { where.push(sc.sql.replace(/^\s*AND\s*/i, '')); params.push(...sc.params); }
+    const vis = _visibilityClause(req, 'r');
+    if (vis.sql) { where.push(vis.sql); params.push(...vis.params); }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const order = H.orderBy(p.sort, p.dir, SORTABLE, 'r.created_at');
 
@@ -218,10 +312,16 @@ router.get('/', requireCapability(CAP_VIEW), async (req, res) => {
 });
 
 // ── GET /:id — header + lines ────────────────────────────────────────────────
-router.get('/:id', requireCapability(CAP_VIEW), async (req, res) => {
+// Same visibility predicate as the list, so opening a row from the list always
+// works and an out-of-scope id answers the SAME 404 a never-issued id gets
+// (a 403 would confirm the requisition exists).
+router.get('/:id', CAN_READ(), async (req, res) => {
   try {
     await ensureReady();
-    const [rows] = await db.query('SELECT * FROM purchase_requisitions WHERE id = ?', [req.params.id]);
+    const vis = _visibilityClause(req, 'r');
+    const [rows] = await db.query(
+      `SELECT r.* FROM purchase_requisitions r WHERE r.id = ?${vis.sql ? ' AND ' + vis.sql : ''}`,
+      [req.params.id].concat(vis.params));
     if (!rows.length) throw err('NOT_FOUND', 'طلب الشراء غير موجود');
     const [lines] = await db.query('SELECT * FROM purchase_requisition_lines WHERE requisition_id = ? ORDER BY id', [req.params.id]);
     return H.sendData(res, _hydrate(rows[0], lines));

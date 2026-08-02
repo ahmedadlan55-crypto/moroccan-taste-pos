@@ -83,6 +83,39 @@ async function assertPoReceivable(poId) {
   }
 }
 
+/**
+ * يملأ اسم الصنف على سطور الاستلام، بالأولوية: سطر أمر الشراء (لقطة وقت
+ * الشراء) ← سجلّ الأصناف ← الكود.
+ *
+ * سطر أمر الشراء يسبق سجلّ الأصناف عمدًا: إن أُعيدت تسمية صنف بين الشراء
+ * والاستلام، فالمستند يجب أن يحمل الاسم الذي اشتُري به، لا اسم اليوم.
+ */
+async function _fillReceiptItemNames(conn, lines) {
+  const poLineIds = [...new Set(lines.map((l) => l.po_line_id).filter(Boolean))];
+  const fromPo = {};
+  if (poLineIds.length) {
+    try {
+      const [rows] = await conn.query(
+        `SELECT id, item_name FROM po_lines WHERE id IN (${poLineIds.map(() => '?').join(',')})`, poLineIds);
+      for (const r of rows) if (r.item_name) fromPo[r.id] = String(r.item_name);
+    } catch (_) {}
+  }
+  const need = lines.filter((l) => !fromPo[l.po_line_id]).map((l) => l.item_id).filter(Boolean);
+  const fromMaster = {};
+  if (need.length) {
+    const ids = [...new Set(need)];
+    try {
+      const [rows] = await conn.query(
+        `SELECT id, name FROM inv_items WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+      for (const r of rows) if (r.name) fromMaster[r.id] = String(r.name);
+    } catch (_) {}
+  }
+  for (const l of lines) {
+    l.item_name = fromPo[l.po_line_id] || fromMaster[l.item_id] || l.item_name || String(l.item_id || '');
+  }
+  return lines;
+}
+
 router.post('/', requireCapability('receipts.create'), async (req, res) => {
   try {
     const b = req.body || {};
@@ -131,6 +164,10 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
           warehouse_id: l.warehouseId || warehouseId, lot_no: l.lotNo || l.lot_no || null, expiry_date: l.expiryDate || l.expiry_date || null,
         });
       }
+      // اسم الصنف يُقرأ من الخادم لا يُستقبل من العميل — سطر أمر الشراء أولًا
+      // (فهو لقطة وقت الشراء)، ثم سجلّ الأصناف، والكود آخر ملاذ. بدون هذا كانت
+      // شاشة الاستلام لا تملك إلا الكود.
+      await _fillReceiptItemNames(conn, linesToInsert);
       subtotal = calc.money(subtotal);
       await conn.query(
         `INSERT INTO purchase_receipts
@@ -143,10 +180,10 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
       for (const l of linesToInsert) {
         await conn.query(
           `INSERT INTO purchase_receipt_lines
-            (id, receipt_id, po_line_id, item_id, quantity, unit, unit_cost, line_total,
+            (id, receipt_id, po_line_id, item_id, item_name, quantity, unit, unit_cost, line_total,
              entered_qty, entered_unit_code, conversion_factor_snapshot, base_qty, base_unit_cost, warehouse_id, lot_no, expiry_date)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [l.id, id, l.po_line_id, l.item_id, l.quantity, l.unit, l.unit_cost, l.line_total,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [l.id, id, l.po_line_id, l.item_id, l.item_name || null, l.quantity, l.unit, l.unit_cost, l.line_total,
            l.entered_qty, l.entered_unit_code, l.conversion_factor_snapshot, l.base_qty, l.base_unit_cost, l.warehouse_id, l.lot_no, l.expiry_date]);
       }
       await events.recordEvent(conn, { documentType: 'grn', documentId: id, action: 'create', toStatus: 'draft', actor });

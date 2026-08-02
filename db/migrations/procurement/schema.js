@@ -102,6 +102,10 @@ async function apply(db, log = () => {}) {
   // 4. purchase_receipt_lines — UoM snapshot, base cost, lot/expiry, wh
   // ─────────────────────────────────────────────────────────────────────────
   log('purchase_receipt_lines');
+  // اسم الصنف وقت الاستلام. لم يكن للجدول عمود اسم إطلاقًا، فشاشة الاستلام لم
+  // تملك ما تعرضه غير الكود — وهو ما اشتكى منه المالك. لقطة لا مرجع حيّ: إعادة
+  // تسمية صنف لاحقًا يجب ألّا تُعيد كتابة مستند استلام تاريخي.
+  await H.addColumn(db, 'purchase_receipt_lines', 'item_name', 'VARCHAR(200) NULL', log);
   await H.addColumn(db, 'purchase_receipt_lines', 'entered_qty', `${QTY} NULL`, log);
   await H.addColumn(db, 'purchase_receipt_lines', 'entered_unit_code', 'VARCHAR(50) NULL', log);
   await H.addColumn(db, 'purchase_receipt_lines', 'conversion_factor_snapshot', `${FACTOR} NOT NULL DEFAULT 1`, log);

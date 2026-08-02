@@ -3,31 +3,51 @@
 //
 // Aggregates posted gl_entries inside [startDate, endDate] and splits
 // revenue / expense leaf accounts into IFRS sections:
-//   • Revenue                (codes that DON'T start with 42)
-//   • Other Income           (codes starting with 42)
-//   • COGS                   (codes starting with 51)
-//   • Operating Expenses     (codes starting with 52)
-//   • G&A                    (codes starting with 53)   ← NEW since v5.10.61
-//   • Other Expenses         (codes starting with 6)
-//   • everything else        → falls back into OpEx
+//   • Revenue            (sales_revenue + sales_returns — returns are
+//                         contra-revenue and net INSIDE revenue)
+//   • Other Income       (other_income)
+//   • COGS               (cogs / waste / stock_variance)
+//   • Operating Expenses (payroll / rent_utilities / marketing /
+//                         depreciation / bank_gov_fees / franchise_fees)
+//   • G&A                (legacy 53x — no section exists for it yet)
+//   • Other Expenses     (legacy 6x)
 //
 // Returns totals + the derived figures: gross profit, operating
-// income, and net income. Amounts use a type-aware normal-balance
-// rule so abnormal balances appear with the correct sign instead of
-// being silently absolute-valued.
+// income, and net income. Amounts use a normal-balance rule so abnormal
+// balances appear with the correct sign instead of being absolute-valued.
+//
+// PACKAGE G — sections come from lib/coa/classify.js, i.e. from the stored
+// gl_accounts.report_section validated against `statement_sections`. This
+// file used to classify purely by code prefix (51x COGS / 52x OpEx / 53x G&A
+// / 6x other), which meant renumbering an account silently moved it between
+// gross profit and operating income. The prefix logic still exists for rows
+// that carry no section, but it is quarantined inside classify.js's
+// legacy* functions and every account that reaches it comes back in the
+// response's `unmapped` array.
+//
+// NOTE: this is NOT the live P&L — routes/erp-core.js registers
+// /reports/pnl, which mounts first and shadows nothing here. It is fixed
+// anyway because it is the better implementation and is what /reports/pnl
+// should converge on.
 // ═══════════════════════════════════════════════════════════════════
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
+const classify = require('../../../lib/coa/classify');
 
 router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     // v5.11.18 — leaf accounts only.
+    // PACKAGE G — REPORTABLE_ACCOUNT_SQL instead of is_active=1: a revenue
+    // account archived in June must still show the sales it made in May.
+    // Zero-movement archived rows are dropped in the JS pass below.
     const [accounts] = await db.query(
-      "SELECT * FROM gl_accounts a " +
-      "WHERE a.is_active = 1 " +
+      "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.level, a.is_active, a.status, " +
+      "       a.report_section, a.normal_balance, a.is_contra " +
+      "FROM gl_accounts a " +
+      "WHERE " + classify.REPORTABLE_ACCOUNT_SQL('a') + " " +
       "  AND COALESCE(a.is_folder, 0) = 0 " +
       "  AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL) " +
       "ORDER BY " + coaTree.ORDER_BY('a')
@@ -46,46 +66,50 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
     const balMap = {};
     entries.forEach(e => { balMap[e.account_id] = (Number(e.c)||0) - (Number(e.d)||0); }); // credit-positive for revenue
 
-    // v5.10.61 — Income Statement classification bugs fixed:
-    //
-    //   BEFORE: `if (a.code.startsWith('5'))` matched EVERY expense (since
-    //           all expense codes start with '5' — 51 COGS / 52 OpEx /
-    //           53 G&A) and dumped everything into COGS. OpEx and G&A
-    //           sections were always empty.
-    //
-    //   AFTER:  Use 2-digit prefix (51/52/53) to keep COGS, OpEx, and G&A
-    //           properly separated. Codes starting with '6' fall under
-    //           "Other Expenses" (extraordinary / non-recurring).
-    //
-    // ALSO: `Math.abs(net)` was destroying signs, so an account with an
-    // abnormal balance (e.g. refunds > sales) appeared positive. Replaced
-    // with a type-aware normal-balance calculation that PRESERVES sign so
-    // the user can spot anomalies in the report.
-    const revenue = [], cogs = [], opex = [], gAndA = [], otherIncome = [], otherExpense = [];
-    let totalRevenue = 0, totalCOGS = 0, totalOpex = 0, totalGAndA = 0, totalOtherInc = 0, totalOtherExp = 0;
+    // v5.10.61 — `Math.abs(net)` used to destroy signs, so an account with an
+    // abnormal balance (e.g. refunds > sales) appeared positive. The
+    // normal-balance calculation below PRESERVES sign so the user can spot
+    // anomalies in the report.
+    const buckets = {
+      revenue:      { items: [], total: 0 },
+      otherIncome:  { items: [], total: 0 },
+      cogs:         { items: [], total: 0 },
+      opex:         { items: [], total: 0 },
+      gAndA:        { items: [], total: 0 },
+      otherExpense: { items: [], total: 0 },
+    };
+    const unmapped = [];
 
     accounts.forEach(a => {
+      if (a.type !== 'revenue' && a.type !== 'expense') return;
       const net = balMap[a.id] || 0;   // balMap is credit-positive (c - d)
-      // Filter zero-balance rows by TYPE (was a fragile prefix-regex `^[456]`).
-      if (Math.abs(net) < 0.001 && a.type !== 'revenue' && a.type !== 'expense') return;
-      // Normal-balance display amount — preserves sign for anomaly detection.
-      //   Revenue: credit-normal → net (positive when c > d) is already correct.
-      //   Expense: debit-normal  → -net (positive when d > c) makes the amount appear positive.
-      const bal = (a.type === 'revenue') ? net : -net;
-      const item = { code: a.code, name: a.name_ar, balance: bal, level: a.level };
+      const hasMovement = Math.abs(net) >= 0.001;
+      // Archived accounts appear only for the periods they actually moved in.
+      if (!classify.isReportable(a, hasMovement)) return;
 
-      if (a.type === 'revenue') {
-        if (a.code.startsWith('42')) { otherIncome.push(item); totalOtherInc += bal; }
-        else                          { revenue.push(item);     totalRevenue   += bal; }
-      } else if (a.type === 'expense') {
-        // 51x = COGS · 52x = OpEx · 53x = G&A · 6x = Extraordinary
-        if      (a.code.startsWith('51')) { cogs.push(item);  totalCOGS  += bal; }
-        else if (a.code.startsWith('52')) { opex.push(item);  totalOpex  += bal; }
-        else if (a.code.startsWith('53')) { gAndA.push(item); totalGAndA += bal; }
-        else if (a.code.startsWith('6'))  { otherExpense.push(item); totalOtherExp += bal; }
-        else                              { opex.push(item);  totalOpex  += bal; }   // unknown → safest bucket
+      // PACKAGE G — normal-balance display amount from the STORED column
+      // (type only as a flagged fallback):
+      //   credit-normal (revenue): net (positive when c > d) is correct as-is.
+      //   debit-normal  (expense): -net makes the amount appear positive.
+      const nb = classify.normalBalanceOf(a);
+      const bal = (nb.normalBalance === 'credit') ? net : -net;
+      const item = { id: a.id, code: a.code, name: a.name_ar, balance: bal, level: a.level };
+
+      const cls = classify.incomeBucketOf(a);
+      if (cls.unmapped || !cls.bucket) {
+        unmapped.push(classify.unmappedRow(a, cls, { bucket: cls.bucket || null, balance: bal }));
       }
+      const target = buckets[cls.bucket] || buckets.opex;   // unknown → safest bucket
+      target.items.push(item);
+      target.total += bal;
     });
+
+    const totalRevenue  = buckets.revenue.total;
+    const totalOtherInc = buckets.otherIncome.total;
+    const totalCOGS     = buckets.cogs.total;
+    const totalOpex     = buckets.opex.total;
+    const totalGAndA    = buckets.gAndA.total;
+    const totalOtherExp = buckets.otherExpense.total;
 
     const grossProfit = totalRevenue - totalCOGS;
     const operatingIncome = grossProfit - totalOpex - totalGAndA;
@@ -93,18 +117,26 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
 
     res.json({
       // IFRS sections
-      revenue, totalRevenue,
-      cogs, totalCOGS,
+      revenue: buckets.revenue.items, totalRevenue,
+      cogs: buckets.cogs.items, totalCOGS,
       grossProfit,
-      opex, totalOpex,
-      gAndA, totalGAndA,             // v5.10.61 NEW: G&A separated from OpEx
+      opex: buckets.opex.items, totalOpex,
+      gAndA: buckets.gAndA.items, totalGAndA,   // v5.10.61 — G&A separated from OpEx
       operatingIncome,
-      otherIncome, totalOtherInc,
-      otherExpense, totalOtherExp,
+      otherIncome: buckets.otherIncome.items, totalOtherInc,
+      otherExpense: buckets.otherExpense.items, totalOtherExp,
       netIncome,
+      // PACKAGE G — accounts bucketed from a code-prefix guess, not stored data.
+      unmapped,
+      sectionCatalogGaps: classify.catalogGaps(),
       period: { startDate: startDate || null, endDate: endDate || null }
     });
-  } catch (e) { res.json({ revenue:[], cogs:[], opex:[], gAndA:[], otherIncome:[], otherExpense:[], totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, totalGAndA:0, operatingIncome:0, totalOtherInc:0, totalOtherExp:0, netIncome:0 }); }
+  } catch (e) {
+    console.error('[erp/reports/income]', req.requestId || '-', (e && e.stack) || e);
+    res.json({ revenue:[], cogs:[], opex:[], gAndA:[], otherIncome:[], otherExpense:[], unmapped:[],
+      totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, totalGAndA:0, operatingIncome:0,
+      totalOtherInc:0, totalOtherExp:0, netIncome:0, degraded: true });
+  }
 });
 
 module.exports = router;

@@ -27,7 +27,17 @@ const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
+const classify = require('../../../lib/coa/classify');
 const { todayYmd } = require('../../../lib/expiryPolicy');
+
+// PACKAGE G — this report no longer decides where an account belongs. It ASKS
+// lib/coa/classify.js, which reads the stored gl_accounts metadata added by
+// db/migrations/0028_coa_metadata.sql. The Arabic-name regex that used to run
+// FIRST — it had to match 'مجمَّع الإهلاك' and 'مجمع الإهلاك' as two separate
+// alternatives — is DELETED: renaming an account must never move it on the
+// balance sheet. Code-prefix inference still exists for un-migrated
+// rows but only inside classify.js's quarantined legacy* functions, and every
+// account that reaches it comes back in the response's `unmapped` array.
 
 // v5.10.79 — Canonical IFRS-conventional ordering inside each Balance
 // Sheet section. The most-liquid item appears first (cash before
@@ -81,31 +91,42 @@ async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBra
   if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
   if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
   const [rows] = await db.query(
-    `SELECT a.id, a.code, a.type, a.report_section,
+    `SELECT a.id, a.code, a.type, a.report_section, a.normal_balance, a.is_contra, a.status,
             COALESCE(SUM(CASE WHEN ${where} THEN e.debit  ELSE 0 END), 0) AS d,
             COALESCE(SUM(CASE WHEN ${where} THEN e.credit ELSE 0 END), 0) AS c
        FROM gl_accounts a
        LEFT JOIN gl_entries e   ON e.account_id = a.id
        LEFT JOIN gl_journals j  ON j.id = e.journal_id
-      WHERE COALESCE(a.is_folder, 0) = 0 AND a.is_active = 1
+      WHERE COALESCE(a.is_folder, 0) = 0 AND ${classify.REPORTABLE_ACCOUNT_SQL('a')}
       GROUP BY a.id`,
     [...params, ...params]
   );
-  // Bucket totals using the same `report_section` map the main pass uses.
+  // Bucket totals using the same classifier the main pass uses. The contra
+  // flip is read from gl_accounts.is_contra (or the section's own is_contra),
+  // NOT from a regex over report_section — the old
+  // `.match(/(acc_dep|allowance_doubtful)/)` also matched any future section
+  // whose name merely CONTAINED those substrings.
   const sectionTotals = {};
   let totalAssets = 0, totalLiab = 0, totalEq = 0;
   let netIncomeRevenue = 0, netIncomeExpense = 0;
   rows.forEach(r => {
     const net = (Number(r.d) || 0) - (Number(r.c) || 0);
-    if (Math.abs(net) < 0.001) return;
+    if (Math.abs(net) < 0.001) return;   // archived-with-no-movement drops out here
+    const contra = _isContraAccount(r);
     if (r.type === 'asset') {
+      // NOTE: the arithmetic here is UNCHANGED (`-mag`, mirroring
+      // pushToGroup's `-magnitude` in the main pass). Only the contra TEST
+      // changed. The equity branch below uses `-Math.abs(mag)` and therefore
+      // disagrees in sign with the main pass for drawings — a pre-existing
+      // defect in the compare-column snapshot, deliberately NOT touched here:
+      // it is a money change and belongs to its own reviewed fix.
       const mag = net;
-      totalAssets += (String(r.report_section || '').match(/(acc_dep|allowance_doubtful)/) ? -mag : mag);
+      totalAssets += (contra ? -mag : mag);
     } else if (r.type === 'liability') {
       totalLiab += -net;
     } else if (r.type === 'equity') {
       const mag = -net;
-      totalEq += (String(r.report_section || '') === 'drawings' ? -Math.abs(mag) : mag);
+      totalEq += (contra ? -Math.abs(mag) : mag);
     } else if (r.type === 'revenue') {
       netIncomeRevenue += (Number(r.c) || 0) - (Number(r.d) || 0);
     } else if (r.type === 'expense') {
@@ -140,19 +161,15 @@ function _bsDelta(current, prior) {
 // the frontend can render them in red and the parent's signed sum
 // correctly reflects the IFRS net presentation.
 // ════════════════════════════════════════════════════════════════════
-const CONTRA_REPORT_SECTIONS = new Set(['allowance_doubtful', 'acc_dep', 'drawings']);
+// PACKAGE G — contra is DECLARED, never detected. The bilingual name regex
+// that used to live here (it needed 'مجمَّع الإهلاك' and 'مجمع الإهلاك' as two
+// separate alternatives, plus an English pass, plus a '1006' code prefix) is
+// gone. The rule is now: the account's own is_contra column OR the is_contra
+// flag of the section it declares (is_contra is NOT NULL DEFAULT 0, so a
+// drawings account created after 0028 carries 0 while its section says
+// otherwise). Both inputs are stored data. Nothing here reads a name.
 function _isContraAccount(a) {
-  if (CONTRA_REPORT_SECTIONS.has(a.report_section)) return true;
-  // v5.10.84 — In the new GGMMPP standard, Accumulated Depreciation
-  // lives under MM=06 (e.g., 100600, 100601). Detect by code prefix as
-  // a defensive fallback when report_section is NULL on a fresh row.
-  const c = String(a.code || '');
-  if (/^\d{6}$/.test(c) && c.startsWith('1006')) return true;
-  const ar = String(a.name_ar || '');
-  const en = String(a.name_en || '');
-  if (/مخصص الديون|مجمَّع الإهلاك|مجمع الإهلاك|المسحوبات|مسحوبات/i.test(ar)) return true;
-  if (/allowance|accumulated depreciation|drawings/i.test(en)) return true;
-  return false;
+  return classify.effectiveContraOf(a).isContra;
 }
 
 // Sort by code, numerically-aware (so 1130 < 11201, etc.)
@@ -168,11 +185,18 @@ function _codeCompare(a, b) {
 // extractions from the route handler below — no logic change.
 // ════════════════════════════════════════════════════════════════════
 
-// The LEAF account predicate: active, not a folder, and not the parent
+// The LEAF account predicate: reportable, not a folder, and not the parent
 // of any other account. This is the exact filter the balance sheet uses
 // to decide which gl_accounts rows carry balances.
+//
+// PACKAGE G — `a.is_active = 1` became REPORTABLE_ACCOUNT_SQL. An account
+// closed this year still posted entries last year; filtering it out erased
+// those entries from every historical statement AND the statement still
+// balanced, so nothing ever complained. status='archived' rows are now
+// selected, and the zero-movement filter in the JS pass below is what keeps
+// them out of a report they did not move in.
 const LEAF_ACCOUNT_WHERE =
-  "a.is_active = 1 " +
+  classify.REPORTABLE_ACCOUNT_SQL('a') + " " +
   "AND COALESCE(a.is_folder, 0) = 0 " +
   "AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL)";
 
@@ -182,72 +206,29 @@ const LEAF_ACCOUNT_WHERE =
 // equity-changes mirrors this flip to reconcile with totEq.
 const CONTRA_GROUP_KEYS = new Set(['allowanceDoubtful', 'accDep', 'drawings']);
 
-// v5.10.78 — Single source of truth: report_section → [topGroup, subGroup].
-// The wipe-and-seed function (routes/erp.js) writes this column for every
-// CoA template account, and the server-start backfill (server.js v5.10.78)
-// populates it for legacy installs via the same heuristics. Classifiers
-// check this column FIRST; only fall through to prefix-matching
-// when the column is NULL (unmigrated row).
-const reportSectionMap = {
-  // Assets
-  cash:               ['currentAssets',    'cash'],
-  receivables:        ['currentAssets',    'receivables'],
-  allowance_doubtful: ['currentAssets',    'allowanceDoubtful'],
-  inventory:          ['currentAssets',    'inventory'],
-  vat_input:          ['currentAssets',    'vatInput'],
-  prepaid:            ['currentAssets',    'prepaid'],
-  other_current_asset:['currentAssets',    'otherCA'],
-  ppe:                ['nonCurrentAssets', 'ppe'],
-  rou:                ['nonCurrentAssets', 'rou'],            // v5.10.81 — IFRS 16
-  acc_dep:            ['nonCurrentAssets', 'accDep'],
-  intangibles:        ['nonCurrentAssets', 'intangibles'],
-  // Liabilities
-  payables:           ['currentLiab',      'payables'],
-  accrued:            ['currentLiab',      'accrued'],
-  vat_output:         ['currentLiab',      'vatOutput'],
-  net_vat:            ['currentLiab',      'netVat'],
-  gosi:               ['currentLiab',      'gosi'],
-  withholding:        ['currentLiab',      'withholding'],
-  customer_deposits:  ['currentLiab',      'customerDeposits'],
-  short_term_debt:    ['currentLiab',      'shortTermDebt'],
-  other_current_liability: ['currentLiab', 'otherCL'],
-  long_term_debt:     ['nonCurrentLiab',   'longTermDebt'],
-  lease_obligation:   ['nonCurrentLiab',   'leaseObligation'],  // v5.10.81 — IFRS 16
-  eosb:               ['nonCurrentLiab',   'eosb'],
-  // Equity
-  capital:            ['equity',           'capital'],
-  retained:           ['equity',           'retained'],
-  drawings:           ['equity',           'drawings'],
-  reserves:           ['equity',           'reserves'],
-  zakat:              ['equity',           'zakat']
-};
+// PACKAGE G — report_section → [topGroup, subGroup] now comes from the shared
+// section catalog in lib/coa/classify.js, which mirrors the `statement_sections`
+// table (0028 §12) and registers the live gl_accounts spellings that predate it
+// (vat_input↔input_vat, prepaid↔prepayments, vat_output↔output_vat,
+// customer_deposits↔customer_advances, retained↔retained_earnings) as aliases.
+// Same inputs, same outputs, ONE vocabulary — instead of five private maps
+// that disagree.
+//
+// Kept exported: routes/erp/reports/equity-changes.js imports this to
+// reconcile exactly with totEq, and must never re-implement it.
 function classifyByReportSection(reportSection) {
-  if (!reportSection) return null;
-  return reportSectionMap[reportSection] || null;
+  const entry = classify.resolveSection(reportSection);
+  return entry && entry.bsGroup ? entry.bsGroup.slice() : null;
 }
 
+// Legacy code-prefix equity classifier. Quarantined in classify.js; this stays
+// as a named export because equity-changes.js calls it directly for the
+// presentation bucket of a mis-sectioned equity account. Equity always lands
+// somewhere (default 'capital') — totEq must never silently lose a row.
 function classifyEquity(code) {
-  const c = String(code || '');
-  // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
-  // GG=30 → Equity. MM bucket map:
-  //   01 capital, 02 retained earnings, 03 period P&L (folds
-  //   into 'retained' per IAS 1 Statement of Changes in Equity).
-  if (/^\d{6}$/.test(c) && c.startsWith('30')) {
-    const mm = c.substr(2, 2);
-    if (mm === '01') return ['equity', 'capital'];
-    if (mm === '02') return ['equity', 'retained'];
-    if (mm === '03') return ['equity', 'retained'];
-    if (mm === '04') return ['equity', 'reserves'];   // v5.10.85
-    if (mm === '05') return ['equity', 'drawings'];   // v5.10.85 (contra)
-    return ['equity', 'capital'];
-  }
-  // ── Legacy fallback (pre-v5.10.84) ──
-  if (c.startsWith('31')) return ['equity', 'capital'];
-  if (c.startsWith('32')) return ['equity', 'retained'];
-  if (c.startsWith('33')) return ['equity', 'drawings'];
-  if (c.startsWith('343')) return ['equity', 'zakat'];
-  if (c.startsWith('34')) return ['equity', 'reserves'];
-  return ['equity', 'capital'];
+  const legacy = classify.legacySectionByCode({ code, type: 'equity' });
+  const entry = legacy.section ? classify.SECTIONS[legacy.section] : null;
+  return entry && entry.bsGroup ? entry.bsGroup.slice() : ['equity', 'capital'];
 }
 
 // Build the CoA tree with rolled-up balances. Returns the root nodes
@@ -556,9 +537,14 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     // through to the legacy prefix logic — fully backward compatible.
     // v5.10.82 — Load LEAF accounts for the legacy buckets pass, then
     // load ALL accounts (folders + leaves) for the CoA-tree builder.
+    // PACKAGE G — project the stored classification columns (0028). Without
+    // them in the SELECT, classify.js correctly reports every account as
+    // unmapped: a missing projection is indistinguishable from missing data,
+    // which is exactly why the provenance field exists.
     const [accounts] = await db.query(
       "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.level, " +
-      "       a.balance, a.is_active, " +
+      "       a.balance, a.is_active, a.status, " +
+      "       a.normal_balance, a.is_contra, a.cash_flow_activity, " +
       "       COALESCE(a.is_folder, 0) AS is_folder, " +
       "       COALESCE(a.account_class, 'detail') AS account_class, " +
       "       a.report_section " +
@@ -569,11 +555,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     // Full CoA (folders + leaves) for the hierarchical tree view.
     const [allAccountsForTree] = await db.query(
       "SELECT a.id, a.code, a.name_ar, a.name_en, a.type, a.parent_id, a.level, " +
+      "       a.status, a.normal_balance, a.is_contra, " +
       "       COALESCE(a.is_folder, 0) AS is_folder, " +
       "       COALESCE(a.account_class, 'detail') AS account_class, " +
       "       a.report_section " +
       "FROM gl_accounts a " +
-      "WHERE a.is_active = 1 " +
+      "WHERE " + classify.REPORTABLE_ACCOUNT_SQL('a') + " " +
       "ORDER BY " + coaTree.ORDER_BY('a')
     );
 
@@ -655,94 +642,17 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     // classifyByReportSection now live at module scope (exported for the
     // equity-changes reconciliation) — same logic, same precedence.
 
-    // v5.10.80 — Name-based override that runs BEFORE the explicit
-    // report_section lookup. Rescues legacy mis-coded accounts whose
-    // names clearly identify their nature (e.g. 11301 "عهدة ADLAN" coded
-    // under 113=Inventory). Otherwise report_section would dominate and
-    // pin them to the wrong bucket forever — the user can't un-stick
-    // them without re-coding every row.
-    function classifyAssetByName(code, nameAr) {
-      const c = String(code || '');
-      const name = String(nameAr || '');
-      if (/إهلاك|depreciation/i.test(name) && /^1[0-9]/.test(c)) return ['nonCurrentAssets', 'accDep'];
-      if (/مخصص|allowance|provision/i.test(name) && /^11/.test(c)) return ['currentAssets', 'allowanceDoubtful'];
-      if (/عهدة|سلفة|سلف|advance|custody/i.test(name) && /^11/.test(c)) return ['currentAssets', 'receivables'];
-      return null;
-    }
-
-    function classifyAsset(code, nameAr) {
-      const c = String(code || '');
-      const name = String(nameAr || '');
-      // ── Step A: keyword-based override (template-agnostic) ──
-      const nameHit = classifyAssetByName(code, nameAr);
-      if (nameHit) return nameHit;
-      // ── Step B: v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
-      // GG=10 → Assets. MM bucket map:
-      //   01 cash, 02 receivables, 03 inventory, 04 prepaid,
-      //   05 fixed assets (PPE), 06 accumulated depreciation (contra).
-      if (/^\d{6}$/.test(c) && c.startsWith('10')) {
-        const mm = c.substr(2, 2);
-        if (mm === '01') return ['currentAssets',    'cash'];
-        if (mm === '02') return ['currentAssets',    'receivables'];
-        if (mm === '03') return ['currentAssets',    'inventory'];
-        if (mm === '04') return ['currentAssets',    'prepaid'];
-        if (mm === '05') return ['nonCurrentAssets', 'ppe'];
-        if (mm === '06') return ['nonCurrentAssets', 'accDep'];
-        return ['currentAssets', 'otherCA'];
-      }
-      // ── Step C: legacy fallback (pre-v5.10.84 codes) ──
-      if (c.startsWith('111')) return ['currentAssets', 'cash'];
-      if (c.startsWith('1124')) return ['currentAssets', 'allowanceDoubtful'];
-      if (c.startsWith('112')) return ['currentAssets', 'receivables'];
-      if (c.startsWith('113')) return ['currentAssets', 'inventory'];
-      if (c.startsWith('114')) return ['currentAssets', 'prepaid'];
-      if (c.startsWith('115')) return ['currentAssets', 'receivables'];
-      if (c.startsWith('116')) return ['currentAssets', 'vatInput'];
-      if (c.startsWith('122')) return ['nonCurrentAssets', 'accDep'];
-      if (c.startsWith('124')) return ['nonCurrentAssets', 'rou'];
-      if (c.startsWith('121')) return ['nonCurrentAssets', 'ppe'];
-      if (c.startsWith('123')) return ['nonCurrentAssets', 'intangibles'];
-      if (c.startsWith('125') || c.startsWith('126'))
-        return ['nonCurrentAssets', 'intangibles'];
-      if (c.startsWith('11')) return ['currentAssets', 'otherCA'];
-      if (c.startsWith('12')) return ['nonCurrentAssets', 'ppe'];
-      return null;
-    }
-    function classifyLiability(code) {
-      const c = String(code || '');
-      // ── v5.10.84 — Saudi/International standard 6-digit GGMMPP ──
-      // GG=20 → Liabilities. MM bucket map:
-      //   01 payables, 02 accrued, 03 VAT payable, 04 loans.
-      if (/^\d{6}$/.test(c) && c.startsWith('20')) {
-        const mm = c.substr(2, 2);
-        if (mm === '01') return ['currentLiab',    'payables'];
-        if (mm === '02') return ['currentLiab',    'accrued'];
-        if (mm === '03') return ['currentLiab',    'vatOutput'];
-        if (mm === '04') return ['nonCurrentLiab', 'longTermDebt'];
-        if (mm === '05') return ['nonCurrentLiab', 'eosb'];            // v5.10.85 — IAS 19
-        if (mm === '06') return ['currentLiab',    'customerDeposits']; // v5.10.85
-        return ['currentLiab', 'otherCL'];
-      }
-      // ── Legacy fallback (pre-v5.10.84) ──
-      if (c.startsWith('211')) return ['currentLiab', 'payables'];
-      if (c.startsWith('212')) return ['currentLiab', 'accrued'];
-      if (c.startsWith('2132')) return ['currentLiab', 'netVat'];
-      if (c.startsWith('2131')) return ['currentLiab', 'vatOutput'];
-      if (c === '213' || c.startsWith('213')) return ['currentLiab', 'vatOutput'];
-      if (c.startsWith('214')) return ['currentLiab', 'customerDeposits'];
-      if (c.startsWith('215')) return ['currentLiab', 'otherCL'];
-      if (c.startsWith('216')) return ['currentLiab', 'gosi'];
-      if (c.startsWith('217')) return ['currentLiab', 'withholding'];
-      if (c.startsWith('218') || c.startsWith('219')) return ['currentLiab', 'shortTermDebt'];
-      if (c.startsWith('223')) return ['nonCurrentLiab', 'eosb'];
-      if (c.startsWith('222')) return ['nonCurrentLiab', 'leaseObligation'];
-      if (c.startsWith('221')) return ['nonCurrentLiab', 'longTermDebt'];
-      if (c.startsWith('22'))  return ['nonCurrentLiab', 'longTermDebt'];
-      if (c.startsWith('21'))  return ['currentLiab', 'otherCL'];
-      return null;
-    }
-    // classifyEquity now lives at module scope (exported for the
-    // equity-changes reconciliation) — same logic, same fallbacks.
+    // PACKAGE G — the three local classifiers (by-name, by-asset-code,
+    // by-liability-code) are GONE. The by-name one ran a regex over the Arabic
+    // name BEFORE the stored report_section, so renaming an account moved it
+    // on the balance sheet — it beat the very column that exists to prevent
+    // that. The accounts it was "rescuing" (11301 عهدة under 113=Inventory) were fixed
+    // at the DATA level instead: routes/custody.js now creates custody under
+    // 115 with report_section='receivables' (tests/custodyNotInventory.test.js
+    // pins that), which is where a classification belongs.
+    //
+    // Order is now: stored report_section → legacy code prefix (flagged).
+    // classify.balanceSheetGroupOf() applies it for every type at once.
 
     // Backward-compat flat arrays
     const currentAssets = [], nonCurrentAssets = [], currentLiab = [], nonCurrentLiab = [], equityItems = [];
@@ -751,6 +661,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     // v5.10.38 — collect accounts that don't fit any classification rule
     // so the UI can surface a "Unclassified" warning section.
     const unclassified = [];
+    // PACKAGE G — accounts whose bucket did NOT come from stored metadata.
+    // An empty array is the only honest way to claim the chart is migrated.
+    const unmapped = [];
+    function noteUnmapped(a, cls) {
+      unmapped.push(classify.unmappedRow(a, cls, { bucket: cls && cls.group ? cls.group.join('.') : null }));
+    }
 
     // v5.10.61 — pushAccount helper applies the correct sign convention
     // for both the group total AND the top-level total. For contra
@@ -769,6 +685,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     accounts.forEach(a => {
       const entry = balMap[a.id] || { debit: 0, credit: 0, count: 0 };
       const net = entry.debit - entry.credit; // debit-normal
+      const hasMovement = (entry.count || 0) > 0 || Math.abs(net) >= 0.001;
+      // PACKAGE G — an archived account is in the result set ONLY so its
+      // history survives. With no movement in scope it is not "a zero-balance
+      // account the user asked to see" (showZero), it is a closed account —
+      // never list it.
+      if (!classify.isReportable(a, hasMovement)) return;
       // v5.10.38 — primary filter: no posted journal entries means no
       // display, regardless of stored balance.
       if ((entry.count || 0) === 0 && !includeZero) return;
@@ -777,26 +699,22 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
 
       const flatItem = { id: a.id, code: a.code, name: a.name_ar, balance: 0, level: a.level };
 
-      // v5.10.78 — Prefer the explicit report_section column. Falls back to
-      // the legacy prefix classifier for unmigrated rows (report_section
-      // IS NULL). New installs + post-migration rows take the fast path
-      // and stay correctly classified even if codes are later renamed.
-      const fromSection = classifyByReportSection(a.report_section);
+      // PACKAGE G — ONE call, one order of precedence, for every type:
+      // stored report_section (validated against statement_sections) first,
+      // legacy code prefix only when the column is absent — and when it is,
+      // the account is reported in `unmapped` rather than passing silently.
+      const cls = classify.balanceSheetGroupOf(a);
+      const bucket = cls.group;
+      if (cls.unmapped) noteUnmapped(a, cls);
 
       if (a.type === 'asset') {
         const magnitude = net;
-        // v5.10.80 — name-based override beats report_section so legacy
-        // mis-coded custody/allowance/depreciation accounts get routed
-        // by their semantic name first.
-        const cls = classifyAssetByName(a.code, a.name_ar)
-                 || fromSection
-                 || classifyAsset(a.code, a.name_ar);
-        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          const targetGroup = groups[cls[0]][cls[1]];
+        if (bucket && groups[bucket[0]] && groups[bucket[0]][bucket[1]]) {
+          const targetGroup = groups[bucket[0]][bucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
-          if (cls[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
-          else                                { currentAssets.push(flatItem);    totCA  += signed; }
+          if (bucket[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
+          else                                   { currentAssets.push(flatItem);    totCA  += signed; }
         } else {
           flatItem.balance = magnitude;
           unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
@@ -805,13 +723,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         }
       } else if (a.type === 'liability') {
         const magnitude = -net;
-        const cls = fromSection || classifyLiability(a.code);
-        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          const targetGroup = groups[cls[0]][cls[1]];
+        if (bucket && groups[bucket[0]] && groups[bucket[0]][bucket[1]]) {
+          const targetGroup = groups[bucket[0]][bucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
-          if (cls[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
-          else                              { currentLiab.push(flatItem);    totCL  += signed; }
+          if (bucket[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
+          else                                 { currentLiab.push(flatItem);    totCL  += signed; }
         } else {
           flatItem.balance = magnitude;
           unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
@@ -820,9 +737,11 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         }
       } else if (a.type === 'equity') {
         const magnitude = -net;
-        const cls = fromSection || classifyEquity(a.code);
-        if (cls && groups[cls[0]] && groups[cls[0]][cls[1]]) {
-          const targetGroup = groups[cls[0]][cls[1]];
+        // Equity never falls through: classifyEquity's legacy default is
+        // 'capital', so totEq keeps every row even on an un-coded chart.
+        const cls2 = bucket || classifyEquity(a.code);
+        if (cls2 && groups[cls2[0]] && groups[cls2[0]][cls2[1]]) {
+          const targetGroup = groups[cls2[0]][cls2[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
           equityItems.push(flatItem);
@@ -933,6 +852,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
       orderedGroups: orderedGroups,   // v5.10.79 — IFRS-ordered arrays
       coaTree: coaTreeView,            // v5.10.82 — CoA-mirrored hierarchical tree
       unclassified: unclassified,
+      // PACKAGE G — accounts whose bucket did NOT come from stored metadata
+      // (report_section absent or not in the section catalog, so the legacy
+      // code-prefix guess was used). `unclassified` above means "landed
+      // nowhere"; `unmapped` means "landed somewhere, but on a guess".
+      unmapped: unmapped,
+      sectionCatalogGaps: classify.catalogGaps(),
       prior: priorSnapshot,           // v5.10.79 — comparison snapshot (or null)
       change: change                   // v5.10.79 — deltas (or null)
     });
@@ -952,7 +877,7 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
       currentAssets: [], nonCurrentAssets: [], currentLiab: [], nonCurrentLiab: [], equityItems: [],
       totCA: 0, totNCA: 0, totCL: 0, totNCL: 0, totEq: 0,
       totalAssets: 0, totalLiabilities: 0, netIncome: 0,
-      isBalanced: false, groups: {}, unclassified: [],
+      isBalanced: false, groups: {}, unclassified: [], unmapped: [],
       degraded: true, requestId: req.requestId || null,
     });
   }

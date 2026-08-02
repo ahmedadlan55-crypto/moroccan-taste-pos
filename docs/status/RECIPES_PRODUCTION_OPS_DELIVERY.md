@@ -316,6 +316,27 @@ either way.
 The new ERP recipe page was never exposed to this (it saves a draft, then calls
 the separate activate endpoint), so this hit API and legacy-shell callers.
 
+### 5.3 Blast radius in the real database: nil, verified
+
+Both defects above are real, but a read-only check against the **production**
+database shows neither had actually bitten yet — the fixes are preventive, and no
+data repair is needed:
+
+| Checked in production | Result |
+|---|---|
+| `_migrations` | 0024, 0025, 0026, 0027 all recorded |
+| `bom` | **112 recipes, all `active`**, `is_active = 1`; no drafts, no orphans |
+| `bom_lines` | 492 lines, **0** remaining duplicate groups |
+| `bom_outputs` | 112 rows — the Primary-output backfill landed, one per recipe |
+| **Products whose `menu.bom_id` points at a non-active version** | **0** — the 5.2 defect never fired; nobody saved through a legacy writer between the two deploys |
+| `production_output_lots` / `production_material_allocations` | **0 / 0** |
+| `production_orders` | **0** |
+
+The last three lines are why 5.1 had no visible effect either: the production
+module has never been used in this database, so there was no historical genealogy
+to lose. Both fixes matter the moment it *is* used — which is the point of
+shipping them before that happens rather than after.
+
 ### Proof the tests have teeth
 
 Both fixes were mutation-tested by restoring the exact shipped code:
@@ -329,14 +350,12 @@ Both fixes were mutation-tested by restoring the exact shipped code:
 
 Stated plainly rather than buried.
 
-1. **The conditional UNIQUE key.** `uq_bom_lines_component` is added only when
-   the fold leaves zero duplicate groups. A production database holding
-   *cross-unit* duplicates (same component, two different units — which the fold
-   deliberately does not merge, because summing 2 kg into 3 g is nonsense) will
-   not get the index. The API canonicalises on every write regardless, and
-   `_expandBom` collapses on every read, so the behaviour is correct either way;
-   the index is defence in depth. **Check after deploying** whether the index
-   exists in production, and resolve any remaining cross-unit duplicates by hand.
+1. ~~**The conditional UNIQUE key.**~~ **RESOLVED — verified against the
+   production database (read-only) after the deploy.** `uq_bom_lines_component`
+   exists on `bom_lines (bom_id, component_item_id)` with `NON_UNIQUE = 0`, and a
+   `GROUP BY bom_id, component_item_id, unit HAVING COUNT(*) > 1` returns **zero**
+   groups. The fold cleared every duplicate, including cross-unit ones, so the
+   index applied. No manual cleanup needed.
 
 2. **Seven `res.json([])` sites remain in `routes/erp-core.js`** (lines 66, 121,
    165, 172, 215, 327, 400) on non-BOM routes — companies, categories, price

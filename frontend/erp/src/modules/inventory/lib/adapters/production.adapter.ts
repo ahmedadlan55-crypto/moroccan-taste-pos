@@ -142,7 +142,11 @@ export interface GenealogyRow {
   outputLotNumber: string;
   componentLotId: string | null;
   componentLotNumber: string | null;
+  componentName: string;
   qty: number;
+  /** True for orders produced before the allocation ledger existed: the lot
+   *  LINKAGE is real, but the per-output quantity split was never recorded. */
+  approximate: boolean;
 }
 
 export interface MovementRow {
@@ -358,10 +362,20 @@ export function toProductionDetail(body: any): ProductionDetail {
       itemId: str(m.item_id), warehouseId: str(m.warehouse_id), signedQty: num(m.signed_qty),
       referenceType: str(m.reference_type), referenceId: str(m.reference_id),
     })),
-    genealogy: (Array.isArray(body?.genealogy) ? body.genealogy : []).map((g: any): GenealogyRow => ({
-      id: str(g.id), outputLotId: str(g.output_lot_id), outputLotNumber: str(g.output_lot_number),
-      componentLotId: g.component_lot_id ? str(g.component_lot_id) : null,
-      componentLotNumber: g.component_lot_number ? str(g.component_lot_number) : null, qty: num(g.qty),
+    // The allocation ledger serialises camelCase and carries no row id. This
+    // used to read snake_case only, so every field except qty came back empty
+    // and each row rendered as "— ← (5)". Both spellings are accepted: the
+    // pre-ledger fallback rows are shaped the same way, and a browser holding a
+    // cached bundle across the deploy still renders.
+    genealogy: (Array.isArray(body?.genealogy) ? body.genealogy : []).map((g: any, i: number): GenealogyRow => ({
+      id: str(g.id ?? `${g.outputEventId ?? g.output_event_id ?? "g"}:${g.componentLotId ?? g.component_lot_id ?? i}:${i}`),
+      outputLotId: str(g.outputLotId ?? g.output_lot_id),
+      outputLotNumber: str(g.outputLotNumber ?? g.output_lot_number),
+      componentLotId: (g.componentLotId ?? g.component_lot_id) ? str(g.componentLotId ?? g.component_lot_id) : null,
+      componentLotNumber: (g.componentLotNumber ?? g.component_lot_number) ? str(g.componentLotNumber ?? g.component_lot_number) : null,
+      componentName: str(g.componentName ?? g.component_name),
+      qty: num(g.qty),
+      approximate: g.approximate === true,
     })),
     timeline: (Array.isArray(body?.timeline) ? body.timeline : []).map((t: any): TimelineEvent => ({
       id: str(t.id), action: str(t.action), fromStatus: t.from_status ? str(t.from_status) : null,

@@ -79,7 +79,11 @@ export const NAV: NavGroup[] = [
     items: [
       { id: "mn-hub", path: "/menu/hub", label: "nav.items.mn-hub", icon: "LayoutGrid", cap: "menu.view", module: "menu" },
       { id: "mn-brand", path: "/menu/brand", label: "nav.items.mn-brand", icon: "BookOpen", cap: "menu.view", module: "menu", subRoutes: true },
-      { id: "mn-recipes", path: "/menu/recipes-bom", label: "nav.items.mn-recipes", icon: "ChefHat", cap: "menu.view", module: "menu" },
+      // The recipe catalog owns its subtree: /menu/recipes lists every product
+      // (including the ones with NO recipe) and /menu/recipes/:source/:productId
+      // is a real, deep-linkable full page rather than a query param. The old
+      // /menu/recipes-bom path redirects — see REDIRECTS in app/router.tsx.
+      { id: "mn-recipes", path: "/menu/recipes", label: "nav.items.mn-recipes", icon: "ChefHat", cap: "menu.view", module: "menu", subRoutes: true },
       { id: "mn-price-lists", path: "/menu/price-lists", label: "nav.items.mn-price-lists", icon: "Tags", cap: "menu.view", module: "menu" },
       { id: "mn-combos", path: "/menu/combos", label: "nav.items.mn-combos", icon: "Layers", cap: "menu.view", module: "menu" },
       { id: "mn-semi", path: "/menu/semi-finished", label: "nav.items.mn-semi", icon: "Soup", cap: "menu.view", module: "menu" },
@@ -121,7 +125,14 @@ export const NAV: NavGroup[] = [
       { id: "inv-waste", path: "/inventory/waste", label: "nav.items.inv-waste", icon: "PackageMinus", cap: "inventory.view", module: "inventory" },
       { id: "inv-lots-expiry", path: "/inventory/lots-expiry", label: "nav.items.inv-lots-expiry", icon: "CalendarClock", cap: "expiry.view", module: "inventory" },
       { id: "inv-replenishment", path: "/inventory/replenishment", label: "nav.items.inv-replenishment", icon: "RefreshCcw", cap: "replenishment.view", module: "inventory" },
-      { id: "inv-production", path: "/inventory/production", label: "nav.items.inv-production", icon: "Factory", cap: "production.view", module: "production" },
+      // ONE place to find every inventory DOCUMENT — generic inbound, purchase
+      // receipts, transfers, production, issues/adjustments — with real detail
+      // pages at /inventory/operations/:type/:id instead of a ?view= panel.
+      { id: "inv-operations", path: "/inventory/operations", label: "nav.items.inv-operations", icon: "ListChecks", cap: "inventory.view", module: "inventory", subRoutes: true },
+      // subRoutes so /inventory/production/new and /inventory/production/:id are
+      // real URLs; the create flow was a ?new=1 query param that no one could
+      // link to and that a refresh discarded.
+      { id: "inv-production", path: "/inventory/production", label: "nav.items.inv-production", icon: "Factory", cap: "production.view", module: "production", subRoutes: true },
       { id: "inv-method", path: "/inventory/method", label: "nav.items.inv-method", icon: "Scale", cap: "inventory.method.view", module: "inventory" },
     ],
   },

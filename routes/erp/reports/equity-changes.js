@@ -68,9 +68,16 @@ const EQUITY_BUCKETS = [
 // Dispatch the REAL /reports/balance-sheet-ifrs handler in-process and
 // resolve with its JSON body. This is deliberate reuse-not-reimplement:
 // the reconciliation figure comes from the exact code path an HTTP
-// caller would hit. The mock req carries only what the handler reads
-// (query); res captures json().
-function fetchBalanceSheetIfrs(asOfDate) {
+// caller would hit.
+//
+// `user` MUST be forwarded. The balance-sheet route is itself wrapped in
+// requireCapability('finance.reports.view'), which rejects with 401 when
+// `req.user` is absent — so a synthetic request without it made this whole
+// endpoint answer 500 with "تعذّر احتساب مرجع المطابقة". This is not a way
+// round the guard: the caller below has ALREADY passed the very same
+// capability, so what is forwarded is an identity that was authorized a
+// moment earlier for exactly this data.
+function fetchBalanceSheetIfrs(asOfDate, user) {
   return new Promise((resolve, reject) => {
     const req = {
       method: 'GET',
@@ -79,7 +86,8 @@ function fetchBalanceSheetIfrs(asOfDate) {
       baseUrl: '',
       query: { asOfDate },
       params: {},
-      headers: {}
+      headers: {},
+      user,
     };
     const res = {
       statusCode: 200,
@@ -248,10 +256,11 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
     const totalClosing = accountsClosing + preNet + periodNet + closingNet;
 
     // ── Reconciliation: the actual balance-sheet-ifrs route, in-process ──
-    const bsBody = await fetchBalanceSheetIfrs(to);
-    // The bs handler's catch answers a zeroed shape WITHOUT asOfDate — a
-    // zeroed ledger is not a reconciliation target, it is a failure.
-    if (!bsBody || !('asOfDate' in bsBody)) {
+    const bsBody = await fetchBalanceSheetIfrs(to, req.user);
+    // The bs handler's catch answers a zeroed shape WITHOUT asOfDate (and now
+    // WITH degraded:true) — a zeroed ledger is not a reconciliation target, it
+    // is a failure.
+    if (!bsBody || !('asOfDate' in bsBody) || bsBody.degraded) {
       console.error('[erp/reports/equity-changes] balance-sheet-ifrs reconciliation source failed');
       return res.status(500).json({ success: false, error: 'تعذّر احتساب مرجع المطابقة (قائمة المركز المالي)' });
     }

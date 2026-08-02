@@ -56,11 +56,24 @@ const STEPS = [
   // directory, so tsc ran in the repo root, found no project, printed its help
   // and exited 1. `npm --prefix X run <script>` executes with cwd = X, so tsc
   // sees frontend/<app>/tsconfig.json.
+  // Design-system guards. BOTH existed as opt-in manual commands and neither
+  // was in this gate, so a page violating them shipped green. tokens:check is
+  // a hex ratchet; check:rtl-literals holds the POS at zero and ratchets the
+  // ERP, so every NEW ERP file must use logical direction utilities.
+  { id: 'static:design-tokens', cmd: NPM, args: ['run', 'tokens:check'] },
+  { id: 'static:rtl-literals',  cmd: NPM, args: ['run', 'check:rtl-literals'] },
   { id: 'erp:tsc',            cmd: NPM, args: ['--prefix', 'frontend/erp', 'run', 'typecheck'] },
   { id: 'pos:tsc',            cmd: NPM, args: ['--prefix', 'frontend/pos', 'run', 'typecheck'] },
   { id: 'erp:vitest',         cmd: NPM, args: ['--prefix', 'frontend/erp', 'run', 'test'] },
   { id: 'pos:vitest',         cmd: NPM, args: ['--prefix', 'frontend/pos', 'run', 'test'] },
   { id: 'root:tests',         cmd: NPM, args: ['test'] },
+  // The recipe / production / operations domains, each asserting the DATABASE
+  // effect rather than the status code, plus the mutation harness that proves
+  // the financial guards actually fail when broken.
+  { id: 'backend:recipes-api',        cmd: NPM, args: ['run', 'test:recipes-api'] },
+  { id: 'backend:production-integrity', cmd: NPM, args: ['run', 'test:production-integrity'] },
+  { id: 'backend:operations-api',     cmd: NPM, args: ['run', 'test:operations-api'] },
+  { id: 'audit:mutation-guards',      cmd: NPM, args: ['run', 'test:mutation'] },
   { id: 'backend:coa-gl-gate', cmd: NPM, args: ['run', 'test:coa-gl-gate'] },
   { id: 'backend:jv-concurrency', cmd: process.execPath, args: ['tests/integration/glJournalConcurrency.api.test.js'] },
   // CO-4 item 7 — the recipe cost-lock (COST_LOCKED_BY_RECIPE + costOverride

@@ -618,6 +618,9 @@ const { loadWarehouseScope } = require('./middleware/warehouseScope');
 app.use('/api/inventory', loadWarehouseScope);
 app.use('/api/erp', loadWarehouseScope);
 app.use('/api/stocktake-pro', loadWarehouseScope);
+// The unified recipe domain reads warehouse stock for its availability view, so
+// it needs req.guardWh / req.whScopeClause like every other stock reader.
+app.use('/api/recipes', loadWarehouseScope);
 
 // ── Procurement / P2P unified module (flag-gated: PROCUREMENT_P2P_ENABLE) ─────
 // One namespace for suppliers + purchase orders + goods receipts + supplier
@@ -695,6 +698,12 @@ app.use('/api/cashier-readiness', require('./routes/cashier-readiness'));
 // bilingual-i18n-images — Owner C: bulk product image management. Same
 // /menu*-prefix-match caveat as above — mounted at its own top-level path.
 app.use('/api/product-images', require('./routes/product-images'));
+// THE unified recipe / BOM domain. Deliberately at its own top-level path and
+// NOT under /menu*: the global /api gate above prefix-matches '/menu' and would
+// make every recipe read — including costs — fully anonymous. The two older
+// surfaces (/api/menu/:id/recipe-bom and /api/erp/bom) stay mounted as a
+// compatibility layer that delegates its rules here.
+app.use('/api/recipes', require('./routes/recipes'));
 // Sprint 3 (A2) — per-user preferences (UI language persistence) + server-backed
 // saved table views. Both at clean top-level paths (not /menu*), each chains
 // its own verifyToken.
@@ -709,6 +718,16 @@ app.use('/api/saved-views', require('./routes/saved-views'));
 // RC hardening — per-user mutation rate limiter for the whole /v2 surface
 // (state-changing methods only; reads/exports pass through). Generous default
 // (300/min/user) so legitimate use + tests never trip it; env-tunable.
+// Inventory OPERATIONS CENTRE — one read model over every inventory DOCUMENT
+// header (receipts, issues, adjustments, stocktakes, transfers, production,
+// purchase receipts/returns and the two legacy families). Read-only.
+// Mounted at /api/inventory/operations, NOT under /api/inventory/v2, on
+// purpose: the /v2 prefix is wrapped by _v2Canary (403 for non-canary users)
+// and by the V2 WRITE gate below. A cross-cutting READ surface must stay
+// available to everyone the per-branch capabilities already allow. It still
+// inherits loadWarehouseScope from the /api/inventory mount above, and it is
+// claimed BEFORE the /api/inventory catch-all router further down.
+app.use('/api/inventory/operations', require('./routes/inventory-operations'));
 app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));
 // Phase 5C — canary allow-list. Gates the ENTIRE v2 surface (reads + writes)
@@ -730,6 +749,13 @@ app.use('/api/inventory/v2/stocktakes', require('./routes/inventory-stocktakes')
 // completed→closed, +cancel/reverse/delete). Path-scoped mount so it inherits
 // scope/canary/metrics; claimed BEFORE the sibling v2 routers.
 app.use('/api/inventory/v2/production-orders', require('./routes/inventory-production'));
+// ONE production document covering SEVERAL INDEPENDENT products, atomic across
+// its children. Replaces the `items` array branch of the legacy
+// POST /api/erp/production-orders, which looped unwrapped INSERTs with no
+// transaction and reported success after silently dropping bad lines (that
+// branch now returns 410 pointing here). Mounted BEFORE the sibling v2 routers
+// so /production-batches is claimed here.
+app.use('/api/inventory/v2/production-batches', require('./routes/production-batches'));
 // Phase W2b — negative-stock policy settings (mounted BEFORE the doc router so
 // /negative-policy is claimed here; sibling scoped router, canary-gated above).
 app.use('/api/inventory/v2/negative-policy', require('./routes/negative-policy'));

@@ -10,9 +10,9 @@
 // Every scope-aware page reads the shared Warehouse Scope (?wh) via the locally
 // mounted providers; the scope-first sections expose a WarehouseScopeSelect since
 // the unified Topbar has no scope slot.
-import { useLocation, useSearchParams } from "react-router-dom";
-import { Barcode } from "lucide-react";
-import { PageHeader, EmptyState } from "@/shared/ui";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { Barcode, FileQuestion } from "lucide-react";
+import { PageHeader, EmptyState, StateShell } from "@/shared/ui";
 import { useT } from "@/i18n";
 import { normalizeRoutePath } from "@/shared/lib";
 import { NotFound } from "@/app/shell/NotFound";
@@ -38,6 +38,8 @@ import { LotsPage } from "./features/lots/LotsPage";
 import { ExpiryPage } from "./features/expiry/ExpiryPage";
 import { InventoryMethodPage } from "./features/method/InventoryMethodPage";
 import { WastePage } from "./features/waste/WastePage";
+import { OperationsHubPage } from "./features/operations/OperationsHubPage";
+import { OperationDetailPage } from "./features/operations/OperationDetailPage";
 
 // Sections that filter their data by the shared scope but have no in-page
 // warehouse picker — surface the persistent scope selector for them.
@@ -47,6 +49,18 @@ const SCOPE_FIRST = new Set<string>([
   "/inventory/lots-expiry",
   "/inventory/replenishment",
 ]);
+
+// Legacy `?view=<id>` deep links. Those list pages used to open the document in
+// a detail DRAWER; the document detail is now a real route under the operations
+// centre, so an old bookmark / shared link resolves to the SAME document instead
+// of silently doing nothing. The value is the operations `documentType` — the
+// list page's own doc family, not a guess.
+const LEGACY_VIEW_TYPE: Record<string, string> = {
+  "/inventory/transfers": "transfer",
+  "/inventory/receiving": "receipt",
+  "/inventory/issues": "issue",
+  "/inventory/adjustments": "adjustment",
+};
 
 function LotsExpiry() {
   const t = useT();
@@ -97,6 +111,21 @@ function UnitsBarcodes() {
   );
 }
 
+// A half-written operations path (`/inventory/operations/transfer` with no id)
+// is a broken link, not an empty document — say so with the not-found state the
+// closure gate recognises rather than rendering a hollow page.
+function OperationsPathInvalid() {
+  const t = useT();
+  return (
+    <StateShell
+      state="not-found"
+      icon={<FileQuestion className="h-6 w-6" />}
+      title={t("operations.detail.notFoundTitle")}
+      body={t("operations.detail.notFoundBody")}
+    />
+  );
+}
+
 function Section() {
   const { pathname } = useLocation();
   const [sp] = useSearchParams();
@@ -107,6 +136,38 @@ function Section() {
   // but useLocation().pathname returns it RAW — so "/inventory/items/" used to
   // fall through this switch to the default and render the wrong screen.
   const route = normalizeRoutePath(pathname);
+
+  // ── legacy drawer deep links ──
+  // Runs BEFORE any section renders so `?view=` can never re-open a drawer.
+  const viewId = sp.get("view");
+  if (viewId && LEGACY_VIEW_TYPE[route]) {
+    return (
+      <Navigate
+        to={`/inventory/operations/${LEGACY_VIEW_TYPE[route]}/${encodeURIComponent(viewId)}`}
+        replace
+      />
+    );
+  }
+
+  // The operations centre OWNS its subtree (manifest subRoutes:true), so the
+  // shell mounts this module for /inventory/operations/:type/:id as well. The
+  // document detail is a REAL full page — never a drawer, never a side panel.
+  if (route === "/inventory/operations") return <OperationsHubPage />;
+  if (route.startsWith("/inventory/operations/")) {
+    // MATCH on the normalized (lower-cased) route, but read the id from the RAW
+    // pathname. Document ids carry meaningful case — `STK-0a71624b4013` — and
+    // `normalizeRoutePath` lower-cases the whole string. Looking a document up
+    // as `stk-0a71624b4013` happens to work only because MySQL's default
+    // collation is case-insensitive; that is luck, not design, and it breaks the
+    // moment a column uses a binary or `_bin` collation. `documentType` is a
+    // fixed lower-case vocabulary, so taking it from the normalized copy is safe.
+    const rawParts = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+    const opsIndex = rawParts.findIndex((p) => p.toLowerCase() === "operations");
+    const docType = (rawParts[opsIndex + 1] || "").toLowerCase();
+    const docId = rawParts[opsIndex + 2] ? decodeURIComponent(rawParts[opsIndex + 2]) : "";
+    if (docType && docId) return <OperationDetailPage documentType={docType} documentId={docId} />;
+    return <OperationsPathInvalid />;
+  }
 
   // Items OWNS its subtree (manifest subRoutes:true), so the shell mounts this
   // module for /inventory/items/new, /inventory/items/:id and .../:id/edit too.

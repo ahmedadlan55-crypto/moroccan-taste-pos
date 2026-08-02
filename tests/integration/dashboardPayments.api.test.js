@@ -109,10 +109,24 @@ async function fixtures() {
     [P('RF1'), B1]);
   // Rollup row with REAL COGS for the margin KPI (what the rollup worker
   // rebuilds from order facts): net 281.74 ex-VAT, cogs 90.
+  //
+  // DELIBERATELY dated 2032-06-20, NOT 2032-06-10. `analytics_daily_branch` is
+  // a DERIVED table: any analytics worker that drains `analytics_rollup_dirty`
+  // DELETEs the (branch, day) pair and rebuilds it from `ar_document_lines`,
+  // which this test does not seed — so a row on a dirty day comes back with
+  // cogs = 0 and the margin silently drops to the `proxy` basis.
+  //
+  // The sales above are on 06-10 and 06-12, so those two days are enqueued.
+  // 06-20 never is, which makes this row immune to a rebuild no matter WHICH
+  // process drains the queue. That matters: this suite runs against the shared
+  // DEV database, so a stray server left listening from another run (observed:
+  // ports 3000 and 3061) rebuilds it even when THIS test's own server has the
+  // worker disabled. The cogs query sums the whole window with no per-day
+  // filter, so moving the day changes nothing about what is asserted.
   await db.query(
     `INSERT INTO analytics_daily_branch
        (business_day, brand_id, branch_id, orders, gross_product, net_ex_vat, vat, invoice_total, cogs, gross_profit)
-     VALUES ('2032-06-10', NULL, ?, 2, 281.74, 281.74, 42.26, 324, 90, 191.74)`,
+     VALUES ('2032-06-20', NULL, ?, 2, 281.74, 281.74, 42.26, 324, 90, 191.74)`,
     [B1]);
 }
 
@@ -120,7 +134,20 @@ async function fixtures() {
   await cleanup();
   await fixtures();
 
-  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT) }, stdio: ['ignore', 'ignore', 'inherit'] });
+  // ANALYTICS_DISABLE_WORKER=1 — this test hand-seeds a row into
+  // `analytics_daily_branch`, which is a DERIVED table, for the very
+  // (branch, business_day) pair its own projectPosSale() call marks dirty. With
+  // the worker alive, drainDirty -> _rebuildPair DELETEs that row and rebuilds
+  // it from `ar_document_lines`, which this test does not seed — so cogs came
+  // back 0 and the margin silently fell to the `proxy` basis. It was a RACE,
+  // not a hard failure: on a fast database it could pass for the wrong reason.
+  //
+  // The four sibling tests that touch this table (analyticsRollupParity,
+  // analyticsAnomalies, analyticsForecastApi, analyticsReconciliation) all set
+  // this flag for exactly this reason; this file was the outlier. Nothing here
+  // needs the worker: projectPosSale runs in-process and the fallback
+  // assertions delete their own rows.
+  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..', '..'), env: { ...process.env, PORT: String(PORT), ANALYTICS_DISABLE_WORKER: '1' }, stdio: ['ignore', 'ignore', 'inherit'] });
   try {
     if (!(await waitUp())) { console.error('server did not start'); process.exit(2); }
     const admin = await login(ADMIN);

@@ -1360,62 +1360,35 @@ router.post('/production-orders/preview-availability', async (req, res) => {
 // cancel/reverse (MGR). Creation reserves component demand — not a till action.
 router.post('/production-orders', BACKOFFICE, async (req, res) => {
   try {
-    // ── Multi-item batch (new format: items array) ──────────────────────────
+    // ── Multi-item batch — RETIRED (410 Gone) ───────────────────────────────
+    //
+    // This branch used to accept an `items` array and, for each entry, run
+    // unwrapped `db.query` INSERTs in a bare `for` loop. It had no transaction,
+    // it silently `continue`d past three classes of bad input (missing/zero
+    // quantity, BOM not found or inactive, BOM with no components), and it then
+    // returned `{ success: true, orders, count }` while reporting
+    // `orderNumber: orders[0].orderNumber` as though the first of N were the
+    // only one. "Create 5 orders" could persist 2, name none of the 3 it
+    // dropped, and report success. A crash between the header INSERT and the
+    // consumption loop left an order with a material plan of zero lines, which
+    // then failed release with "no consumption lines" — long after the user was
+    // told it worked.
+    //
+    // It is replaced by POST /api/inventory/v2/production-batches, which is
+    // ATOMIC across children (one transaction, all-or-nothing) and refuses the
+    // whole request naming every invalid line instead of dropping it. The
+    // single-item branch below is untouched and still works.
+    //
+    // 410 rather than a silent redirect: a caller that was relying on partial
+    // success must SEE that the contract changed, not have its semantics
+    // quietly altered underneath it.
     if (req.body.items && Array.isArray(req.body.items) && req.body.items.length > 0) {
-      const { warehouseId, outputWarehouseId, plannedDate, brandId, branchId,
-              notes, createdBy, priority, costBreakdown } = req.body;
-      if (!warehouseId) return res.status(400).json({ error: 'warehouseId required' });
-      const whIds = [warehouseId];
-      if (outputWarehouseId && String(outputWarehouseId) !== String(warehouseId)) whIds.push(outputWarehouseId);
-      const [whRows] = await db.query('SELECT id FROM warehouses WHERE id IN (?)', [whIds]);
-      if (whRows.length !== whIds.length)
-        return res.status(400).json({ error: 'مستودع غير موجود — تحقق من مستودع المواد ومستودع الإخراج', code: 'warehouse-not-found' });
-      let _cbJson = null;
-      try { _cbJson = costBreakdown ? JSON.stringify(costBreakdown) : null; } catch(_) {}
-      const _priority = (typeof priority === 'string' && priority) ? priority.slice(0,20) : 'normal';
-      const orders = [];
-      for (const item of req.body.items) {
-        const { bomId: itemBomId, qtyPlanned: itemQty, allowedScrapPct: itemScrap, batchNumber: itemBatch } = item;
-        if (!itemBomId || !itemQty || Number(itemQty) <= 0) continue;
-        const [bomRows] = await db.query('SELECT id,product_id,yield_quantity FROM bom WHERE id=? AND is_active=1', [itemBomId]);
-        if (!bomRows.length) continue;
-        const bom = bomRows[0];
-        const [lines] = await db.query('SELECT * FROM bom_lines WHERE bom_id=?', [itemBomId]);
-        if (!lines.length) continue;
-        const ymd = _ymd();
-        const serial = await _nextSerial('production_counter', ymd);
-        const orderNumber = 'PRD-' + ymd + '-' + String(serial).padStart(4,'0');
-        const id = 'PO-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
-        const qtyPlan = Number(itemQty);
-        const batches = qtyPlan / (Number(bom.yield_quantity) || 1);
-        const _scrapPct = (itemScrap != null && !isNaN(Number(itemScrap))) ? Number(itemScrap) : 0;
-        const _batchNo  = (typeof itemBatch === 'string' && itemBatch.trim()) ? itemBatch.trim().slice(0,80) : null;
-        await db.query(
-          `INSERT INTO production_orders
-           (id,order_number,bom_id,product_id,warehouse_id,output_warehouse_id,brand_id,branch_id,
-            qty_planned,status,notes,created_by,planned_date,priority,allowed_scrap_pct,batch_number,cost_breakdown)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [id, orderNumber, itemBomId, bom.product_id, warehouseId, outputWarehouseId || warehouseId,
-           brandId||null, branchId||null, qtyPlan, 'planned', notes||'', createdBy||'',
-           plannedDate || new Date().toISOString().slice(0,10),
-           _priority, _scrapPct, _batchNo, _cbJson]);
-        for (const l of lines) {
-          const qtyBase = Number(l.quantity) * batches;
-          const waste   = Number(l.waste_pct || 0) / 100;
-          const qtyW    = qtyBase * (1 + waste);
-          const unitCost = await _getEffectiveCost(l.component_item_id, warehouseId);
-          await db.query(
-            `INSERT INTO production_consumption
-             (id,production_order_id,item_id,warehouse_id,qty_planned,unit_cost,total_cost)
-             VALUES (?,?,?,?,?,?,?)`,
-            ['PCC-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),
-             id, l.component_item_id, warehouseId, qtyW, unitCost, qtyW*unitCost]);
-        }
-        orders.push({ id, orderNumber });
-      }
-      if (!orders.length)
-        return res.status(400).json({ error: 'لم يُنشأ أي أمر — تحقق من صحة BOMs والكميات' });
-      return res.json({ success: true, orders, count: orders.length, orderNumber: orders[0].orderNumber });
+      return res.status(410).json({
+        success: false,
+        code: 'LEGACY_MULTI_ITEM_RETIRED',
+        error: 'مسار إنشاء عدة أوامر دفعة واحدة من هنا أُوقف لأنه كان ينجح جزئيًا بصمت. استخدم POST /api/inventory/v2/production-batches (سند إنتاج واحد بعدة منتجات، ذرّي بالكامل).',
+        replacement: { method: 'POST', path: '/api/inventory/v2/production-batches' },
+      });
     }
     // ── Legacy single-item (backward compat) ───────────────────────────────
     const { bomId, warehouseId, outputWarehouseId, qtyPlanned, plannedDate, brandId, branchId, notes, createdBy,

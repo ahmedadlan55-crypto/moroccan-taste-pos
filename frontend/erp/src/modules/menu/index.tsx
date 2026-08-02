@@ -15,8 +15,18 @@ import { Combos } from "./Combos";
 import { SemiFinished } from "./SemiFinished";
 import { ImageManager } from "./ImageManager";
 import { CategoryTranslations } from "./CategoryTranslations";
+import { RecipesSection } from "./features/recipes";
 
-type Section = "hub" | "brand" | "recipes-bom" | "price-lists" | "combos" | "semi-finished" | "images" | "categories";
+type Section =
+  | "hub"
+  | "brand"
+  | "recipes"
+  | "recipes-bom"
+  | "price-lists"
+  | "combos"
+  | "semi-finished"
+  | "images"
+  | "categories";
 
 function sectionFromPath(pathname: string): Section {
   // First segment after /menu, not the last: brand owns a subtree (subRoutes:true),
@@ -26,6 +36,9 @@ function sectionFromPath(pathname: string): Section {
   const seg = parts[parts.indexOf("menu") + 1] ?? "";
   switch (seg) {
     case "brand": return "brand";
+    // `recipes` owns its subtree too (manifest subRoutes:true), so
+    // /menu/recipes/:source/:productId stays in this section.
+    case "recipes": return "recipes";
     case "recipes-bom": return "recipes-bom";
     case "price-lists": return "price-lists";
     case "combos": return "combos";
@@ -63,6 +76,7 @@ export default function MenuModule() {
 
   switch (section) {
     case "brand": return <BrandSection pathname={pathname} />;
+    case "recipes": return <RecipesSection pathname={pathname} />;
     case "recipes-bom": return <RecipesBom />;
     case "price-lists": return <PriceLists />;
     case "combos": return <Combos />;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * RTL-literals guard — "no hardcoded physical-direction classes in POS components".
+ * RTL-literals guard — no hardcoded physical-direction classes.
  *
  *   node scripts/check-rtl-literals.mjs
  *
@@ -18,14 +18,27 @@
  * Windows-path-safe, deterministic ordering.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, '..');
-const SCAN_ROOT = path.join(ROOT, 'frontend', 'pos', 'src');
+// The POS is held at ZERO — it has always been clean and stays that way.
+const SCAN_ROOTS = [
+  { key: 'frontend/pos/src', abs: path.join(ROOT, 'frontend', 'pos', 'src'), mode: 'zero' },
+  // The ERP was NEVER scanned before, and carries ~390 pre-existing hits —
+  // including inside the shared table kit itself. Failing on all of them would
+  // make the guard unrunnable, and leaving the ERP unscanned means every NEW
+  // page is free to hardcode a physical side that silently breaks the moment
+  // the app renders LTR (the provider really does flip <html dir> for English).
+  // So: a RATCHET, exactly like scripts/check-design-tokens.mjs. Existing debt
+  // is recorded per file in the baseline and may only ever go DOWN; a file not
+  // in the baseline — i.e. every new file — must be at ZERO.
+  { key: 'frontend/erp/src', abs: path.join(ROOT, 'frontend', 'erp', 'src'), mode: 'ratchet' },
+];
+const BASELINE_PATH = path.join(ROOT, 'scripts', 'rtl-literals.baseline.json');
 
 // Same shape as the task's confirmation-grep pattern — kept in sync intentionally.
 const RTL_RE = /(right-[0-9]|left-[0-9]|\bpr-[0-9]|\bpl-[0-9]|text-right|text-left)/g;
@@ -61,14 +74,23 @@ function collectFiles(absDir, out) {
 }
 
 function buildScanSet() {
-  const files = [];
-  collectFiles(SCAN_ROOT, files);
-  files.sort((a, b) => {
-    const ka = toKey(a);
-    const kb = toKey(b);
+  const out = [];
+  for (const rootSpec of SCAN_ROOTS) {
+    const files = [];
+    collectFiles(rootSpec.abs, files);
+    for (const abs of files) out.push({ abs, mode: rootSpec.mode });
+  }
+  out.sort((a, b) => {
+    const ka = toKey(a.abs);
+    const kb = toKey(b.abs);
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
-  return files;
+  return out;
+}
+
+function readBaseline() {
+  if (!existsSync(BASELINE_PATH)) return {};
+  try { return JSON.parse(readFileSync(BASELINE_PATH, 'utf8')); } catch (_) { return {}; }
 }
 
 function isAllowlisted(key, line) {
@@ -95,23 +117,61 @@ function scanFile(absPath) {
 // ---------------------------------------------------------------------------
 
 function run() {
-  const files = buildScanSet();
-  const failures = [];
+  const entries = buildScanSet();
+  const baseline = readBaseline();
+  const failures = [];      // zero-tolerance violations (the POS)
+  const regressions = [];   // the ERP ratchet went UP
+  const improvements = [];  // the ERP ratchet went DOWN — nudge to re-baseline
+  const counts = {};
   let scannedFiles = 0;
 
-  for (const abs of files) {
+  for (const { abs, mode } of entries) {
     scannedFiles++;
     const key = toKey(abs);
-    const hits = scanFile(abs);
-    for (const hit of hits) {
-      if (isAllowlisted(key, hit.line)) continue;
-      failures.push({ key, ...hit });
+    const hits = scanFile(abs).filter((h) => !isAllowlisted(key, h.line));
+    if (hits.length) counts[key] = hits.length;
+    if (mode === 'zero') {
+      for (const hit of hits) failures.push({ key, ...hit });
+      continue;
     }
+    // A file ABSENT from the baseline is allowed ZERO — that is what makes
+    // every NEW page clean by construction.
+    const allowed = Object.prototype.hasOwnProperty.call(baseline, key) ? baseline[key] : 0;
+    if (hits.length > allowed) regressions.push({ key, found: hits.length, allowed, samples: hits.slice(0, 3) });
+    else if (hits.length < allowed) improvements.push({ key, found: hits.length, allowed });
   }
+
+  if (process.argv.includes('--update')) {
+    const next = {};
+    for (const k of Object.keys(counts).sort()) if (k.startsWith('frontend/erp/src')) next[k] = counts[k];
+    writeFileSync(BASELINE_PATH, JSON.stringify(next, null, 2) + '\n');
+    console.log('✔ baseline updated: ' + Object.keys(next).length + ' ERP file(s) recorded in scripts/rtl-literals.baseline.json');
+    return 0;
+  }
+
 
   console.log('فحص الاتجاه المكتوب حرفياً — RTL-literals guard (hardcoded direction check)');
   console.log(`  الملفات المفحوصة (files scanned): ${scannedFiles}`);
   console.log('');
+
+  if (regressions.length > 0) {
+    console.error('✖ فشل صارم (HARD FAIL) — كلاسات اتجاه فعلي جديدة في ERP (ratchet regression):');
+    for (const r of regressions) {
+      console.error('  - ' + r.key + ': found ' + r.found + ', allowed ' + r.allowed +
+        (r.allowed === 0 ? '  (ملف جديد يجب أن يكون نظيفاً تماماً / new file must be clean)' : ''));
+      for (const h of r.samples) console.error('      ' + r.key + ':' + h.line + '  [' + h.match + ']  ' + h.text.slice(0, 120));
+    }
+    console.error('');
+    console.error('استبدل: right-N/left-N -> start-N/end-N | pr-N/pl-N -> ps-N/pe-N | text-right/-left -> text-start/-end');
+    console.error('(New ERP files must use LOGICAL utilities. Existing debt is recorded in scripts/rtl-literals.baseline.json and may only go DOWN.)');
+    return 1;
+  }
+
+  if (improvements.length > 0) {
+    console.log('↓ تحسّن (improved) in ' + improvements.length + ' file(s) — run with --update to lower the baseline.');
+    for (const i of improvements.slice(0, 10)) console.log('  - ' + i.key + ': ' + i.allowed + ' -> ' + i.found);
+    console.log('');
+  }
 
   if (failures.length > 0) {
     console.error('✖ فشل صارم (HARD FAIL) — كلاسات اتجاه فعلي (physical-direction) بدل المنطقي (logical):');

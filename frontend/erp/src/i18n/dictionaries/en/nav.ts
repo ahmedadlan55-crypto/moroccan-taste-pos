@@ -33,7 +33,7 @@ export const nav = {
     // menu
     "mn-hub": "Menu Dashboard",
     "mn-brand": "Brand Menu",
-    "mn-recipes": "Recipes & BOM",
+    "mn-recipes": "Recipe catalog",
     "mn-price-lists": "Price Lists",
     "mn-combos": "Combo Meals",
     "mn-semi": "Semi-finished Products",
@@ -59,6 +59,7 @@ export const nav = {
     "inv-waste": "Waste",
     "inv-lots-expiry": "Lots & Expiry",
     "inv-replenishment": "Replenishment",
+    "inv-operations": "Inventory operations",
     "inv-production": "Production",
     "inv-method": "Valuation Method",
     // purchasing

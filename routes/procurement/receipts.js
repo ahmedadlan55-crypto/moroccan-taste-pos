@@ -27,13 +27,43 @@ function genId() { return 'GRN-' + Date.now() + '-' + Math.random().toString(36)
 function lineId() { return 'GRL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
 // ── POST / — create draft receipt (from a PO or direct) ──────────────────────
+/**
+ * المستودع المستلِم: القيمة الصريحة تفوز دائمًا، وإلا يُورَّث من أمر الشراء
+ * المستلَم عليه (`purchase_orders.warehouse_id`) — فأمر الشراء يحمله أصلًا،
+ * وطلبه من جديد كان يرفض كل استلام صادر من الواجهة بـ 422.
+ *
+ * Returns the id, or null when neither source supplies one. This resolves the
+ * value ONLY; the caller still runs req.guardWh on the result — an inherited
+ * warehouse must never be a way past the scope check.
+ */
+async function resolveWarehouseId(body) {
+  const explicit = body.warehouseId == null ? '' : String(body.warehouseId).trim();
+  if (explicit) return explicit;
+  const poId = body.poId == null ? '' : String(body.poId).trim();
+  if (!poId) return null;
+  const [po] = await db.query('SELECT warehouse_id FROM purchase_orders WHERE id = ?', [poId]);
+  const inherited = po.length && po[0].warehouse_id != null ? String(po[0].warehouse_id).trim() : '';
+  return inherited || null;
+}
+
 router.post('/', requireCapability('receipts.create'), async (req, res) => {
   try {
     const b = req.body || {};
-    if (!b.warehouseId) throw err('VALIDATION_ERROR', 'المستودع مطلوب');
-    if (typeof req.guardWh === 'function' && !req.guardWh(res, b.warehouseId)) return;
+    const warehouseId = await resolveWarehouseId(b);
+    if (!warehouseId) throw err('VALIDATION_ERROR', 'المستودع مطلوب');
+    // النطاق يسري على المستودع النهائي أيًّا كان مصدره — الصريح أو الموروث.
+    if (typeof req.guardWh === 'function' && !req.guardWh(res, warehouseId)) return;
     const rawLines = b.lines || b.items;
     if (!Array.isArray(rawLines) || !rawLines.length) throw err('VALIDATION_ERROR', 'الاستلام يتطلب سطرًا واحدًا على الأقل');
+    // A per-line warehouse overrides the header one all the way into
+    // applyReceiptStock (`ln.warehouse_id || grn.warehouse_id`), so it has to
+    // clear the same guard — otherwise the header check is decorative.
+    if (typeof req.guardWh === 'function') {
+      for (const l of rawLines) {
+        const lw = l && l.warehouseId != null ? String(l.warehouseId).trim() : '';
+        if (lw && lw !== warehouseId && !req.guardWh(res, lw)) return;
+      }
+    }
     const actor = H.actorOf(req);
 
     const out = await db.withTransaction(async (conn) => {
@@ -60,7 +90,7 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
           po_line_id: l.poLineId || l.po_line_id || null, quantity: baseQty, unit: l.enteredUnitCode || l.unit || 'PCS',
           unit_cost: baseUnitCost, entered_qty: enteredQty, entered_unit_code: l.enteredUnitCode || l.unit || null,
           conversion_factor_snapshot: factor, base_qty: baseQty, base_unit_cost: baseUnitCost, line_total: net,
-          warehouse_id: l.warehouseId || b.warehouseId, lot_no: l.lotNo || l.lot_no || null, expiry_date: l.expiryDate || l.expiry_date || null,
+          warehouse_id: l.warehouseId || warehouseId, lot_no: l.lotNo || l.lot_no || null, expiry_date: l.expiryDate || l.expiry_date || null,
         });
       }
       subtotal = calc.money(subtotal);
@@ -70,7 +100,7 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
            subtotal, vat_amount, total, status, version, created_by, idempotency_key)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',1,?,?)`,
         [id, b.poId || null, b.supplierId || null, supplier ? supplier.name : null, number,
-         b.receiptDate || new Date().toISOString().slice(0, 10), b.warehouseId, b.brandId || null, b.branchId || null, b.costCenterId || null,
+         b.receiptDate || new Date().toISOString().slice(0, 10), warehouseId, b.brandId || null, b.branchId || null, b.costCenterId || null,
          subtotal, vatTotal, calc.money(subtotal + vatTotal), actor, H.idemOf(req)]);
       for (const l of linesToInsert) {
         await conn.query(

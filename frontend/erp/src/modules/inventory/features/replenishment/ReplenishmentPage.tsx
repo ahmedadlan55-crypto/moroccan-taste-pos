@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Search, Printer, Download, AlertTriangle, ClipboardList, Wallet, Info } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Search, Printer, Download, AlertTriangle, ClipboardList, Wallet, Info, FilePlus } from "lucide-react";
 import { PageHeader,
   PrintDocument,
 } from "@/shared/ui";
@@ -15,8 +15,27 @@ import { getToken } from "@/shared/api";
 import { formatCurrency, formatNumber, formatQty } from "@/shared/lib";
 import { reorderStatusToLabel, stockoutRiskToLabel } from "@/modules/inventory/lib/status-labels";
 import { useReplenishment, useReplenishmentSummary } from "@/modules/inventory/lib/hooks/useReplenishment";
+import type { ReplenishmentRow } from "@/modules/inventory/lib/adapters/replenishment.adapter";
+import { useCan } from "@/app/providers";
+// The shortage → requisition bridge reuses the EXISTING purchasing endpoint
+// (POST /api/procurement/requisitions) through its own typed hook — no new
+// endpoint, and the requisitions list is invalidated for us on success.
+import { useCreateRequisition } from "@/modules/purchasing/requisitions/api";
 
 const PAGE_SIZES = [25, 50, 100];
+
+/**
+ * A requisition carries ONE warehouse_id, so the shortage rows it is built from
+ * must all belong to one warehouse. Returns that warehouse, or "" when the
+ * listed rows straddle several and the user has not narrowed the filter — in
+ * which case we ask them to pick rather than silently filing the whole lot
+ * against the first warehouse we happened to see.
+ */
+function singleWarehouseOf(rows: ReplenishmentRow[], filterWarehouseId: string): string {
+  if (filterWarehouseId) return filterWarehouseId;
+  const ids = Array.from(new Set(rows.map((r) => r.warehouseId).filter(Boolean)));
+  return ids.length === 1 ? ids[0] : "";
+}
 
 async function exportCsv(params: Record<string, string>) {
   const qs = new URLSearchParams(params).toString();
@@ -67,13 +86,64 @@ export function ReplenishmentPage() {
   const whOptions = useMemo(() => allWarehousesAccess ? (allWh.data?.warehouses ?? []).map((w) => ({ id: w.id, name: w.name })) : accessibleWarehouses.map((w) => ({ id: w.id, name: w.name })), [allWarehousesAccess, accessibleWarehouses, allWh.data]);
   const pg = data?.pagination; const totalPages = pg?.totalPages ?? 1; const s = summary.data;
 
+  // ── «طلب النواقص» — turn what is on screen into a draft requisition ────────
+  // The page was advisory-only: it told you what was short and left you to
+  // re-key it into a requisition by hand. It now files one for the rows listed
+  // under the ACTIVE filters (this page, recommendedQty > 0) as a DRAFT, so the
+  // requester still reviews and submits it on the purchasing screen.
+  const canRequest = useCan("purchasing.requisitions.manage");
+  const createRequisition = useCreateRequisition();
+  const [reqMsg, setReqMsg] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const shortageRows = useMemo(() => (data?.rows ?? []).filter((r) => r.recommendedQty > 0), [data]);
+  const requestWarehouseId = singleWarehouseOf(shortageRows, warehouseId);
+
+  function requestShortages() {
+    setReqMsg(null);
+    if (!shortageRows.length) { setReqMsg({ tone: "warn", text: t("inventoryRest.replenishment.request.noRows") }); return; }
+    if (!requestWarehouseId) { setReqMsg({ tone: "warn", text: t("inventoryRest.replenishment.request.pickWarehouse") }); return; }
+    const warehouseName = shortageRows.find((r) => r.warehouseId === requestWarehouseId)?.warehouseName || requestWarehouseId;
+    createRequisition.mutate(
+      {
+        warehouseId: requestWarehouseId,
+        notes: t("inventoryRest.replenishment.request.notes", { warehouse: warehouseName }),
+        lines: shortageRows.map((r) => ({
+          itemId: r.itemId,
+          itemName: r.name,
+          quantity: r.recommendedQty,
+          unit: r.unit || null,
+          // recommendedValue = recommendedQty × unit cost, so dividing it back
+          // gives the same unit cost the plan priced the shortage with.
+          estimatedPrice: r.recommendedQty > 0 ? r.recommendedValue / r.recommendedQty : 0,
+        })),
+      },
+      {
+        onSuccess: (r) => setReqMsg({
+          tone: "ok",
+          text: t("inventoryRest.replenishment.request.done", {
+            number: r?.documentNumber ?? "", count: formatNumber(shortageRows.length),
+          }),
+        }),
+        onError: () => setReqMsg({ tone: "warn", text: t("inventoryRest.replenishment.request.failed") }),
+      },
+    );
+  }
+
   return (
     // Every report printed inside the system wears the same head and hides
     // the app chrome. Before this, the page printed the sidebar and the
     // buttons with it, and the sheet did not say what report it was.
     <PrintDocument title={t("inventoryRest.replenishment.title")}>
       <PageHeader eyebrow={t("inventoryRest.replenishment.eyebrow")} title={t("inventoryRest.replenishment.title")} subtitle={t("inventoryRest.replenishment.subtitle")}
-        action={<div className="no-print flex gap-2">
+        action={<div className="no-print flex flex-wrap gap-2">
+          {canRequest && (
+            <Button
+              onClick={requestShortages}
+              loading={createRequisition.isPending}
+              title={t("inventoryRest.replenishment.request.hint", { count: formatNumber(shortageRows.length) })}
+            >
+              <FilePlus className="h-4 w-4" /> {t("inventoryRest.replenishment.request.btn")}
+            </Button>
+          )}
           <Button variant="secondary" onClick={() => setShowHow((v) => !v)}><Info className="h-4 w-4" /> {t("inventoryRest.replenishment.howBtn")}</Button>
           <Button variant="secondary" onClick={() => exportCsv({ ...(warehouseId ? { warehouseId } : {}), ...(risk ? { risk } : {}), ...(q ? { q } : {}) }).catch(() => setExpErr(t("inventoryRest.replenishment.exportFailed")))}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>
           <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
@@ -106,6 +176,16 @@ export function ReplenishmentPage() {
           <select className="field lg:w-36" value={risk} onChange={(e) => patch({ risk: e.target.value })} aria-label={t("inventoryRest.replenishment.riskAria")}>{riskOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
         </div>
         {expErr && <p className="text-xs font-bold text-rose-600">{expErr}</p>}
+        {reqMsg && (
+          <p className={`flex flex-wrap items-center gap-2 text-xs font-bold ${reqMsg.tone === "ok" ? "text-teal-700" : "text-amber-700"}`}>
+            {reqMsg.text}
+            {reqMsg.tone === "ok" && (
+              <Link className="underline hover:no-underline" to="/purchasing/requisitions">
+                {t("inventoryRest.replenishment.request.open")}
+              </Link>
+            )}
+          </p>
+        )}
       </section>
 
       <section className="mt-4">

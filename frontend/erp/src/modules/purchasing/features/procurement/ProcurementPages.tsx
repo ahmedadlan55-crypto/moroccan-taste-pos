@@ -140,8 +140,12 @@ export function ReceiptsListPage() {
   const t = useT();
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useReceipts(params);
+  const canCreate = useCan("procurement.manage");
   return (
     <SimpleList title={t("purchasing.receipts.title")} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+      // Receiving must be reachable from the screen a user looks at when they
+      // want to receive — not only from a purchase order's detail page.
+      action={canCreate ? <Link to="/purchasing/receiving?new=1"><Button>+ {t("purchasing.receive.action")}</Button></Link> : null}
       empty={t("purchasing.receipts.empty")} rows={data?.rows ?? []} page={data?.page ?? 1} totalPages={data?.totalPages ?? 1} onPage={(p) => patch({ page: p })}
       columns={[
         { h: t("purchasing.col.number"), c: (r) => <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/receiving?doc=${r.id}`}>{r.receiptNumber}</Link> }, { h: t("purchasing.col.supplier"), c: (r) => r.supplierName },
@@ -195,11 +199,16 @@ interface Col<T> { h: string; c: (r: T) => ReactNode; left?: boolean }
 function SimpleList<T extends { id: string }>(props: {
   title: string; isLoading: boolean; isError: boolean; error: unknown; onRetry: () => void;
   empty: string; rows: T[]; columns: Col<T>[]; page: number; totalPages: number; onPage: (p: number) => void;
+  action?: ReactNode;
 }) {
-  const { title, isLoading, isError, error, onRetry, empty, rows, columns, page, totalPages, onPage } = props;
+  const { title, isLoading, isError, error, onRetry, empty, rows, columns, page, totalPages, onPage, action } = props;
   return (
     <div>
-      <h2 className="mb-3 text-lg font-extrabold text-slate-800">{title}</h2>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="text-lg font-extrabold text-slate-800">{title}</h2>
+        <div className="grow" />
+        {action}
+      </div>
       {isLoading ? <LoadingState /> : isError ? <ErrorState error={error} onRetry={onRetry} /> : rows.length === 0 ? (
         <EmptyState title={empty} />
       ) : (

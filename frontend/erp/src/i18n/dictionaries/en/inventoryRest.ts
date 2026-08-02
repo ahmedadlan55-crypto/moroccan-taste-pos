@@ -1010,6 +1010,18 @@ export const inventoryRest = {
     itemsTotal: "{count} items",
     statusFilter: { all: "All statuses", critical: "Critical", reorder: "Reorder", watch: "Watch", ok: "Sufficient" },
     riskFilter: { all: "All risks", high: "High", medium: "Medium", low: "Low" },
+    // "Request shortages" — turns the currently listed rows (under the active
+    // filters) into a draft requisition via POST /api/procurement/requisitions.
+    request: {
+      btn: "Request shortages",
+      hint: "Creates a draft requisition from the rows listed right now ({count} items) — review and approve it on the Requisitions screen.",
+      noRows: "No shortages on the page shown.",
+      pickWarehouse: "Pick a single warehouse first — a requisition belongs to one warehouse.",
+      notes: "Shortages from the replenishment plan — {warehouse}",
+      done: "Draft requisition {number} created with {count} items.",
+      open: "Open requisitions",
+      failed: "Could not create the requisition",
+    },
   },
 
   waste: {

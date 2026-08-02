@@ -203,14 +203,39 @@ function transition(action, capability, opts = {}) {
 
 router.post('/:id/submit', ...transition('submit', 'purchase_orders.submit', { actorColumns: { by: 'submitted_by', at: 'submitted_at' } }));
 
+/**
+ * فصل المهام عند الاعتماد — السياسة يتحكم بها المالك من «الإدارة › الأمان»
+ * (settings.ProcurementSelfApprovalPolicy عبر PUT /api/security-policies).
+ * الفرض هنا في الخادم داخل معاملة الاعتماد نفسها بعد قفل الصف، فلا يمكن
+ * تجاوزه بإرسال الطلب مباشرة من أي عميل.
+ *
+ * القاعدة: يُمنع الاعتماد إذا كان المعتمِد ضمن «سلسلة إنشاء» الأمر
+ * (created_by أو submitted_by) وكان الإجمالي شامل الضريبة ≥ الحد المضبوط.
+ * لا استثناء لمدير النظام: المالك نفسه هو من يريد ضبط هذه القاعدة، فاستثناؤه
+ * يُفرغها من معناها (يختلف هنا عن قيود اليومية في lib/glTransitions.js).
+ *
+ * الغموض يُغلق لا يُفتح: أمر شراء بلا مُنشئ معروف لا يُعتمد ما دامت السياسة
+ * مُفعّلة — الفتح الصامت هو ما كان يسمح باعتماد ذاتي غير مرئي.
+ */
+async function _assertSelfApprovalAllowed(conn, row, req) {
+  const policy = await cfg.selfApprovalPolicy(conn);
+  if (!policy.enabled) return; // المالك سمح بالاعتماد الذاتي صراحةً
+  const amount = Number(row.total_after_vat) || 0;
+  if (amount < policy.thresholdAmount) return; // دون حد فصل المهام
+  const actor = H.actorOf(req);
+  const makers = [row.created_by, row.submitted_by].map((v) => String(v == null ? '' : v).trim()).filter(Boolean);
+  if (!makers.length) {
+    throw err('PERMISSION_DENIED', 'لا يمكن اعتماد أمر شراء مجهول المُنشئ ما دام فصل المهام مُفعّلًا — أعد إنشاء الأمر أو عطّل السياسة من الإدارة › الأمان');
+  }
+  // makers خالية من الفراغات، فالمعتمِد المجهول لا يطابق أحدًا منها
+  if (makers.includes(actor)) {
+    throw err('PERMISSION_DENIED', 'لا يمكن للمُنشئ اعتماد أمر الشراء الخاص به (فصل المهام)');
+  }
+}
+
 router.post('/:id/approve', ...transition('approve', 'purchase_orders.approve', {
   actorColumns: { by: 'approved_by', at: 'approved_at' },
-  check: async (conn, row, req) => {
-    if (cfg.makerCheckerEnabled()) {
-      const maker = row.submitted_by || row.created_by;
-      if (maker && maker === H.actorOf(req)) throw err('PERMISSION_DENIED', 'لا يمكن للمُنشئ اعتماد أمر الشراء الخاص به (فصل المهام)');
-    }
-  },
+  check: _assertSelfApprovalAllowed,
 }));
 
 router.post('/:id/send', ...transition('send', 'purchase_orders.approve', { actorColumns: { by: 'sent_by', at: 'sent_at' } }));

@@ -76,27 +76,67 @@ export interface LineTotals {
 
 type MoneyLine = Pick<CartLine, "qty" | "unitPrice" | "lineDiscount" | "vatCategory" | "baseQty" | "taxInclusive">;
 
+/**
+ * WHOLE-RIYAL SHELF PRICING.
+ *
+ * The customer-facing price of one base unit, rounded to a whole riyal.
+ *
+ * The owner sells at whole riyals: a bottle is 35, not 34.99. But menu prices
+ * are stored NET, so 30.4261 × 1.15 = 34.99 and the till printed halalas on
+ * every standard-rated row. Tuning the stored prices fixes it too, but only
+ * after somebody edits the database — and until they do, the register lies to
+ * the customer. Rounding HERE means the till is right no matter what is stored.
+ *
+ * ROUNDED AT THE UNIT, NOT AT THE INVOICE TOTAL. Two reasons:
+ *   • The customer is told "35 each" and 2 of them cost exactly 70. Rounding a
+ *     total instead makes the unit price unquotable — 2 × 34.99 = 69.98 → 70,
+ *     but 3 × 34.99 = 104.97 → 105, and neither divides back into a price.
+ *   • The register's own reconciliation compares a line-by-line sum against the
+ *     server's; a total-level round would make those two disagree by design.
+ *
+ * NET AND VAT ARE DERIVED FROM THE ROUNDED GROSS, never the other way round, so
+ * `net + vat === gross` holds EXACTLY. That invariant is what ZATCA validates
+ * and what routes/sales.js's journal asserts — a rounded total with unrounded
+ * components would break both.
+ */
+export function wholeUnitGross(
+  unitPrice: number,
+  vatCategory: TaxCategory,
+  taxInclusive: boolean | undefined,
+  vatRatePct: number = DEFAULT_VAT_RATE_PCT,
+): number {
+  const p = Number(unitPrice) || 0;
+  if (p <= 0) return 0; // free / not-yet-priced lines are left alone
+  const rate = rateFor(vatCategory, vatRatePct);
+  // round2 FIRST. 50 × 1.15 is 57.49999999999999 in IEEE-754, and rounding that
+  // straight to a whole riyal gives 57 — a full riyal below the 58 every human
+  // and every calculator gets. Snapping to halalas first restores the exact
+  // 57.50 the arithmetic means, and only then do we round to the riyal.
+  const gross = round2(taxInclusive === true ? p : p * (1 + rate));
+  // Never round a real price down to nothing: a 0.40 item stays sellable at 1.
+  return Math.max(1, Math.round(gross));
+}
+
 export function lineTotals(line: MoneyLine, vatRatePct: number = DEFAULT_VAT_RATE_PCT): LineTotals {
   // Phase U — money uses the BASE quantity (= enteredQty × factor), matching the
   // server (which stores qty as base). A single-unit line has baseQty == qty.
   const qty = Number(line.baseQty ?? line.qty) || 0;
-  const unitPrice = Number(line.unitPrice) || 0;
-  const discount = Math.min(Math.max(Number(line.lineDiscount) || 0, 0), qty * unitPrice);
   const rate = rateFor(line.vatCategory, vatRatePct);
   // Absent flag → EXCLUSIVE, matching what the server will compute: every
   // menu row is is_tax_inclusive=0 (server.js v7.1 migration) and the server
   // reads the flag from the DB per item, not from the cart doc. Only carts
   // persisted before this field existed can reach here without it.
-  const inclusive = line.taxInclusive === true;
+  const unit = wholeUnitGross(line.unitPrice, line.vatCategory, line.taxInclusive, vatRatePct);
+  // The discount cap is the line's own gross — the space the discount is now
+  // expressed in. It used to be capped against `qty × unitPrice`, which was the
+  // NET side; leaving it there would let a discount exceed a line it can no
+  // longer be compared to.
+  const lineGross = round2(qty * unit);
+  const discount = Math.min(Math.max(Number(line.lineDiscount) || 0, 0), lineGross);
 
-  if (inclusive) {
-    const gross = round2(qty * unitPrice - discount);
-    const vat = rate > 0 ? round2(gross - gross / (1 + rate)) : 0;
-    return { gross, vat, net: round2(gross - vat), discount: round2(discount) };
-  }
-  const net = round2(qty * unitPrice - discount);
-  const vat = rate > 0 ? round2(net * rate) : 0;
-  return { gross: round2(net + vat), vat, net, discount: round2(discount) };
+  const gross = round2(lineGross - discount);
+  const vat = rate > 0 ? round2(gross - gross / (1 + rate)) : 0;
+  return { gross, vat, net: round2(gross - vat), discount: round2(discount) };
 }
 
 /**

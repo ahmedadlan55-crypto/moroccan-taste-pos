@@ -88,11 +88,14 @@ describe("the price on the card is the price the customer pays", () => {
     expect(screen.getByText("105")).toBeInTheDocument();
   });
 
-  it("still shows the halalas of a price the rounding sweep has not tuned", () => {
-    // 16.00 NET → 18.40 gross. Untuned rows must read 18.40, never a rounded
-    // "18" the invoice would then contradict.
+  it("an untuned stored price still reaches the card as a whole riyal", () => {
+    // 16.00 NET → 18.40 → the till sells it at 18. The card no longer depends
+    // on anyone having tuned the stored price first: rounding happens in the
+    // register's own math (cartMath.wholeUnitGross), so the shelf is right
+    // whatever the database holds — and the invoice charges the same 18.
     renderGrid(makeCatalog([{ ...TEA, price: 16 }]));
-    expect(screen.getByText("18.40")).toBeInTheDocument();
+    expect(screen.getByText("18")).toBeInTheDocument();
+    expect(screen.queryByText("18.40")).not.toBeInTheDocument();
   });
 });
 

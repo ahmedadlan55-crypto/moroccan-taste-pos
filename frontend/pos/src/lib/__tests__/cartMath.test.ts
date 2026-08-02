@@ -46,11 +46,16 @@ describe("lineTotals", () => {
 // is_tax_inclusive = 0 on all of them) — and the one the whole suite left
 // untested while asserting the opposite everywhere.
 describe("lineTotals — TAX-EXCLUSIVE items (VAT added on top)", () => {
-  it("the owner's case: 16.00 net → 2.40 VAT → customer pays 18.40", () => {
+  // v8.2 — the customer-facing UNIT price snaps to a whole riyal. This case
+  // used to assert 18.40, which is the arithmetic the owner rejected: he sells
+  // at whole riyals and the till printed halalas on every standard-rated row.
+  // net/vat are derived FROM the rounded gross, so the invariant below still
+  // holds exactly — the sale journal and ZATCA both depend on it.
+  it("the owner's case: 16.00 net rings up as a whole 18", () => {
     const t = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
-    expect(t.net).toBe(16);
-    expect(t.vat).toBe(2.4);
-    expect(t.gross).toBe(18.4);
+    expect(t.gross).toBe(18);
+    expect(t.net).toBe(15.65);
+    expect(t.vat).toBe(2.35);
     // The property the owner asked for, stated as arithmetic.
     expect(round2(t.net + t.vat)).toBe(t.gross);
   });
@@ -68,23 +73,28 @@ describe("lineTotals — TAX-EXCLUSIVE items (VAT added on top)", () => {
     expect(t.gross).toBe(30);
   });
 
-  it("a line discount reduces the NET before VAT is added", () => {
+  it("a line discount comes off the GROSS, which is the space it is entered in", () => {
+    // 50 net → 57.50 → whole unit 58; minus a 10 discount = 48 charged.
     const t = lineTotals({ qty: 1, unitPrice: 50, lineDiscount: 10, vatCategory: "S", taxInclusive: false });
-    expect(t.net).toBe(40);
-    expect(t.vat).toBe(6);
-    expect(t.gross).toBe(46);
+    expect(t.gross).toBe(48);
+    expect(round2(t.net + t.vat)).toBe(t.gross);
+  });
+
+  it("the whole unit price multiplies cleanly — a quoted 18 each is 36 for two", () => {
+    const t = lineTotals({ qty: 2, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
+    expect(t.gross).toBe(36);
   });
 
   it("an ABSENT flag behaves like the database does today (exclusive)", () => {
     const t = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S" });
-    expect(t.gross).toBe(18.4);
+    expect(t.gross).toBe(18);
   });
 
   it("the flag actually changes the customer-facing amount", () => {
     const inc = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: true });
     const exc = lineTotals({ qty: 1, unitPrice: 16, lineDiscount: 0, vatCategory: "S", taxInclusive: false });
     expect(inc.gross).toBe(16);
-    expect(exc.gross).toBe(18.4);
+    expect(exc.gross).toBe(18);
   });
 });
 

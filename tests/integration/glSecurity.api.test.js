@@ -115,7 +115,7 @@ async function main() {
       [A, cA, {}], [B, cB, {}], [INACT, cI, { isActive: false }], [PARENT, cP, { isFolder: true }],
     ]) {
       const r = await j('POST', '/erp/gl/accounts', T.admin, {
-        id, code, nameAr: id, type: 'asset', parentId: null, level: 1, ...extra,
+        id, code, nameAr: id, type: 'asset', parentId: null, ...extra,
       });
       madeAccounts.push(id);
       if (r.data && r.data.success === false) check('fixture account ' + id, false, r.data);

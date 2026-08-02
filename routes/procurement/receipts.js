@@ -46,9 +46,47 @@ async function resolveWarehouseId(body) {
   return inherited || null;
 }
 
+// أوامر الشراء التي يجوز الاستلام عليها.
+//
+// كان الإنشاء لا يفحص حالة أمر الشراء إطلاقًا. المرصود حيًّا: أمر عالق على
+// 'submitted' — رُفضت موافقته بحارس الموافقة الذاتية — قَبِل استلامًا، ورُحّل،
+// ودحرج الأمر مباشرةً إلى 'fully_received'. أي أن بضاعة تُستلَم وتدخل المخزون
+// على أمر لم يوافق عليه أحد، فيلتفّ الاستلام حول الموافقة كلها.
+//
+// الواجهة كانت تعرض «استلام» على هذه الحالات وحدها أصلًا؛ هذا يجعلها عقدًا
+// على الخادم بدل أن تكون أدبًا في العميل.
+// قائمة منع لا قائمة سماح، والفرق ليس أسلوبيًّا.
+//
+// أول صياغة كانت تسمح بـ approved/sent/partially_received وحدها، فاعترضت
+// fully_received أيضًا — وطبعت عليه «يجب اعتماده أولًا» وهو أمر *معتمَد*
+// ومستلَم بالكامل. جملة كاذبة تُعرض على المستخدم، وتحجب في الوقت نفسه رسالة
+// OVER_RECEIPT الأدقّ التي تذكر الكميات الفعلية.
+//
+// مهمّة هذا الحارس واحدة: منع الاستلام على أمر **لم يُعتمد** أو أُغلق. أما
+// «طلبت أكثر من المتبقّي» فقاعدة كمّية يملكها فحص OVER_RECEIPT على صفّ
+// po_lines المقفول — وهو الموضع الوحيد الخالي من السباق — فتُترك له.
+const NEVER_APPROVED = Object.freeze(['draft', 'submitted', 'rejected']);
+const TERMINATED = Object.freeze(['cancelled', 'canceled', 'closed']);
+
+async function assertPoReceivable(poId) {
+  if (!poId) return; // استلام مباشر بلا أمر شراء — مسار قائم ومشروع
+  const [rows] = await db.query('SELECT status FROM purchase_orders WHERE id = ? LIMIT 1', [poId]);
+  if (!rows.length) throw err('NOT_FOUND', 'أمر الشراء غير موجود');
+  const status = String(rows[0].status || '').toLowerCase();
+  if (NEVER_APPROVED.includes(status)) {
+    throw err('VALIDATION_ERROR',
+      `لا يمكن الاستلام على أمر شراء حالته «${status}» — يجب اعتماده أولًا`);
+  }
+  if (TERMINATED.includes(status)) {
+    throw err('VALIDATION_ERROR',
+      `لا يمكن الاستلام على أمر شراء حالته «${status}»`);
+  }
+}
+
 router.post('/', requireCapability('receipts.create'), async (req, res) => {
   try {
     const b = req.body || {};
+    await assertPoReceivable(b.poId == null ? '' : String(b.poId).trim());
     const warehouseId = await resolveWarehouseId(b);
     if (!warehouseId) throw err('VALIDATION_ERROR', 'المستودع مطلوب');
     // النطاق يسري على المستودع النهائي أيًّا كان مصدره — الصريح أو الموروث.

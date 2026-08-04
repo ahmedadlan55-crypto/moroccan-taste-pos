@@ -100,6 +100,8 @@ const salesRoute = read('routes/sales.js');
     /status = 'archived'/.test(cutover) && /archived_by = 'migration:0034'/.test(cutover));
   check('inventory roles converge on 1200',
     /WORK_IN_PROGRESS/.test(cutover) && /FINISHED_GOODS/.test(cutover) && /code = '1200'/.test(cutover));
+  check('cutover role ids are deterministic without unavailable database hash functions',
+    /ARH34-/.test(cutover) && /AR34-/.test(cutover) && !/MD5\s*\(/i.test(cutover));
   check('pre-cutover sales with a legacy journal are marked posted_legacy',
     /0034_cutover_guard_failed/.test(cutover) && /status = 'posted_legacy'/.test(cutover));
   check('orphan posted_legacy rows are requeued for one governed batch journal',

@@ -264,7 +264,7 @@ WHERE folder_row.is_system_root = 0
 INSERT IGNORE INTO account_role_history
   (id, role_key, company_id, old_account_id, new_account_id,
    expected_version, reason, changed_by)
-SELECT CONCAT('ARH-', LEFT(MD5(CONCAT(role_row.role_key, ':', role_row.company_id, ':0034')), 32)),
+SELECT CONCAT('ARH34-', role_row.role_key, '-', role_row.company_id),
        role_row.role_key, role_row.company_id, role_row.account_id, inventory_account.id,
        role_row.version,
        'Consolidate inventory detail into one control account; preserve detail in subledger/dimensions',
@@ -278,7 +278,7 @@ WHERE role_row.role_key IN ('INVENTORY','BRANCH_INVENTORY','WORK_IN_PROGRESS','F
 
 INSERT INTO account_roles
   (id, role_key, company_id, account_id, is_active, notes, created_by)
-SELECT CONCAT('AR-', LEFT(MD5(CONCAT(role_keys.role_key, ':CO-MAIN')), 32)),
+SELECT CONCAT('AR34-', role_keys.role_key, '-CO-MAIN'),
        role_keys.role_key, 'CO-MAIN', inventory_account.id, 1,
        'One Inventory Control account; detail is carried by dimensions/subledger',
        'migration:0034'

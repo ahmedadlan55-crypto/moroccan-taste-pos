@@ -49,8 +49,11 @@ async function cleanup() {
     try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [jid]); } catch (_) {}
     try { await db.query('DELETE FROM gl_journals WHERE id = ?', [jid]); } catch (_) {}
   }
-  // cycle accounts reference each other as parent — clear the FK before deleting either
-  try { await db.query("UPDATE gl_accounts SET parent_id = NULL WHERE id IN (?, ?)", [IDS.cycleA, IDS.cycleB]); } catch (_) {}
+  // Release schema enforces fk_gl_accounts_parent. Detach every fixture first
+  // so cleanup is order-independent (parent rows must not survive just because
+  // Object.values() happens to list them before their children).
+  const fixtureIds = Object.values(IDS);
+  try { await db.query(`UPDATE gl_accounts SET parent_id = NULL WHERE id IN (${fixtureIds.map(() => '?').join(',')})`, fixtureIds); } catch (_) {}
   for (const id of Object.values(IDS)) {
     try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [id]); } catch (_) {}
   }
@@ -69,6 +72,14 @@ async function tableCounts() {
   // call) — provision schema, then seed the same baseline CORE_ACCOUNTS the
   // real dev DB already has, so code='111'/'1110' below resolve for real.
   await harness.ensureSchema();
+  const [[companyScopeColumn]] = await db.query(
+    "SELECT IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gl_accounts' AND COLUMN_NAME = 'company_id'"
+  );
+  check(
+    'test harness applies numbered migrations after legacy provisioning (gl_accounts.company_id is release-ready)',
+    !!companyScopeColumn && companyScopeColumn.IS_NULLABLE === 'NO' && companyScopeColumn.COLUMN_DEFAULT === 'CO-MAIN',
+    companyScopeColumn
+  );
   await harness.ensureCoreAccounts(db);
   await cleanup();
   const before = await tableCounts();
@@ -501,10 +512,20 @@ async function tableCounts() {
 
     // ── 13. Orphan account (parent_id set but dangling) — flagged, and flips isClean ──
     const orphanId = 'ITEST-TBE-ORPHAN';
-    await db.query(
-      'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
-      [orphanId, 'ITEST900030', 'حساب يتيم (ITEST)', 'asset', 'ITEST-DOES-NOT-EXIST', 2]
-    );
+    // A normal write must never create an orphan because the release schema
+    // has fk_gl_accounts_parent. Simulate the only state this diagnostic is
+    // intended to catch (a damaged import/migration) on one dedicated session
+    // so FOREIGN_KEY_CHECKS cannot leak through the pool.
+    const orphanConn = await db.getConnection();
+    try {
+      await orphanConn.query('SET FOREIGN_KEY_CHECKS=0');
+      await orphanConn.query(
+        'INSERT INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active, is_folder) VALUES (?,?,?,?,?,?,1,0)',
+        [orphanId, 'ITEST900030', 'حساب يتيم (ITEST)', 'asset', 'ITEST-DOES-NOT-EXIST', 2]
+      );
+    } finally {
+      try { await orphanConn.query('SET FOREIGN_KEY_CHECKS=1'); } finally { orphanConn.release(); }
+    }
     const rOrphan = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const orphanDiag = rOrphan.diagnostics.orphanAccounts.find((a) => a.code === 'ITEST900030');
     check('an account with a dangling parent_id is surfaced in diagnostics.orphanAccounts', !!orphanDiag && orphanDiag.parentId === 'ITEST-DOES-NOT-EXIST', rOrphan.diagnostics.orphanAccounts);
@@ -523,6 +544,16 @@ async function tableCounts() {
       "INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, total_debit, total_credit, status) VALUES (?,?,?,?,?,?, 'posted')",
       [unbalY, 'ITEST-TBE-UNBALY', '2026-05-06', 'itest_fixture', 100, 110]
     );
+    // Company-scoped diagnostics intentionally ignore a header with no
+    // attributable lines. Give both malformed journals real CO-MAIN lines;
+    // their opposite 10-unit imbalances cancel only in aggregate.
+    await db.query(
+      'INSERT INTO gl_entries (id, journal_id, account_id, debit, credit) VALUES (?,?,?,?,0), (?,?,?,0,?), (?,?,?, ?,0), (?,?,?,0,?)',
+      ['ITEST-TBE-E-UX1', unbalX, realCash.id, 110,
+       'ITEST-TBE-E-UX2', unbalX, IDS.parentWithActivityChild, 100,
+       'ITEST-TBE-E-UY1', unbalY, realCash.id, 100,
+       'ITEST-TBE-E-UY2', unbalY, IDS.parentWithActivityChild, 110]
+    );
     const rUnbal = await computeTrialBalance(db, { ...YEAR_2026, includeZero: true });
     const foundX = rUnbal.diagnostics.unbalancedJournals.find((j) => j.id === unbalX);
     const foundY = rUnbal.diagnostics.unbalancedJournals.find((j) => j.id === unbalY);
@@ -533,6 +564,7 @@ async function tableCounts() {
       foundY
     );
     check('unbalanced journals make the report non-clean', rUnbal.isClean === false, rUnbal.isClean);
+    await db.query('DELETE FROM gl_entries WHERE journal_id IN (?, ?)', [unbalX, unbalY]);
     await db.query('DELETE FROM gl_journals WHERE id IN (?, ?)', [unbalX, unbalY]);
 
     // ── header-vs-lines mismatch: header is internally balanced (100=100)

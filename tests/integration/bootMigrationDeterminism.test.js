@@ -9,9 +9,10 @@
  * never double-seeded (schema.sql now INSERT IGNOREs into a UNIQUE(name), and a
  * dedup+unique migration heals long-lived DBs).
  *
- * Proves: (1) MIGRATE_ONLY exits 0 on a ready DB; (2) two concurrent
- * MIGRATE_ONLY boots both exit 0; (3) no duplicate payment-method names after;
- * (4) the uq_pm_name UNIQUE index exists.
+ * Proves: (1) MIGRATE_ONLY exits 0 on a ready DB; (2) the first completed pass
+ * already contains late-created POS/workflow/procurement schema (no restart is
+ * needed to finish it); (3) two concurrent MIGRATE_ONLY boots both exit 0;
+ * (4) payment-method seeding remains deterministic.
  *
  * Run: node tests/integration/bootMigrationDeterminism.test.js
  */
@@ -31,6 +32,7 @@ function migrateOnly() {
       MIGRATE_ONLY: '1',
       DB_NAME: 'moroccan_taste_pos_test', MYSQL_DATABASE: 'moroccan_taste_pos_test',
       DATABASE_URL: '', MYSQL_URL: '',
+      PROCUREMENT_P2P_ENABLE: '1',
       JWT_SECRET: process.env.JWT_SECRET || 'rc_gate_test_secret_2026_ADLAN_verify_XYZ',
       ZATCA_DISABLE_WORKER: '1', NAME_EN_BACKFILL_DISABLE_WORKER: '1', IMAGE_SOURCING_DISABLE_WORKER: '1',
     });
@@ -47,6 +49,38 @@ function migrateOnly() {
     // 1) single fail-closed migrate step exits 0 on a ready DB
     const one = await migrateOnly();
     check('MIGRATE_ONLY=1 exits 0 on a ready DB (fail-closed success)', one.code === 0, one);
+
+    // Regression: these objects used to be created only on the second boot.
+    // Assert their canonical shape immediately after the first completed pass.
+    const [[procurementTable]] = await db.query(
+      `SELECT TABLE_COLLATION AS collation
+         FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '_procurement_migrations'`
+    );
+    check(
+      '_procurement_migrations is born with the canonical collation',
+      procurementTable && procurementTable.collation === 'utf8mb4_unicode_ci',
+      procurementTable
+    );
+    const [posColumns] = await db.query(
+      `SELECT TABLE_NAME, COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH AS max_len
+         FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND ((TABLE_NAME = 'pos_order_lines' AND COLUMN_NAME = 'combo_choices_json')
+            OR (TABLE_NAME = 'pos_payments' AND COLUMN_NAME = 'method'))`
+    );
+    const comboColumn = posColumns.find((c) => c.TABLE_NAME === 'pos_order_lines');
+    const paymentMethod = posColumns.find((c) => c.TABLE_NAME === 'pos_payments');
+    check('first pass creates pos_order_lines.combo_choices_json', !!comboColumn, posColumns);
+    check('first pass widens pos_payments.method to VARCHAR(50)', Number(paymentMethod && paymentMethod.max_len) === 50, posColumns);
+    const [replyIndex] = await db.query(
+      `SELECT INDEX_NAME
+         FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'transaction_replies'
+          AND INDEX_NAME = 'idx_replies_txn_created'`
+    );
+    check('first pass creates transaction_replies.idx_replies_txn_created', replyIndex.length === 2, replyIndex);
 
     // 2) two concurrent MIGRATE_ONLY boots — both succeed (serialized on the lock)
     const [a, b] = await Promise.all([migrateOnly(), migrateOnly()]);

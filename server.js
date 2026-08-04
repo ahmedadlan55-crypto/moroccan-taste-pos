@@ -2070,8 +2070,9 @@ async function runMigrations() {
   // Action log
   try { await db.query("CREATE INDEX idx_log_txn_actor ON transaction_steps_log (transaction_id, action_by, action_type)"); } catch(e) {}
   try { await db.query("CREATE INDEX idx_log_actor_step ON transaction_steps_log (action_by, workflow_definition_id, action_type)"); } catch(e) {}
-  // Replies pagination
-  try { await db.query("CREATE INDEX idx_replies_txn_created ON transaction_replies (transaction_id, created_at DESC)"); } catch(e) {}
+  // Replies pagination is added immediately after transaction_replies is
+  // created below. Keeping it here made an empty-DB first boot swallow
+  // ER_NO_SUCH_TABLE, then add the index only on the second identical boot.
   // SLA enforcement
   try { await db.query("CREATE INDEX idx_txn_due ON transactions (due_date, status)"); } catch(e) {}
 
@@ -2227,6 +2228,13 @@ async function runMigrations() {
   // V3.1: rich attachment metadata + ensure utf8mb4 on existing deploys
   await addColumnIfMissing('transaction_replies', 'attachment_name', "VARCHAR(255) DEFAULT NULL");
   await addColumnIfMissing('transaction_replies', 'attachment_mime', "VARCHAR(100) DEFAULT NULL");
+  // Must follow CREATE TABLE above. This guard also upgrades long-lived DBs
+  // without relying on a second server restart.
+  await addIndexIfMissing(
+    'transaction_replies',
+    'idx_replies_txn_created',
+    'transaction_id, created_at DESC'
+  );
   // V3.1 FORCE utf8mb4 on each Arabic-bearing text column individually.
   // This is more reliable than CONVERT TO TABLE which can fail silently or
   // partially. We MODIFY each column with explicit charset/collation.
@@ -6261,20 +6269,30 @@ async function runMigrations() {
       vat_category CHAR(1) NOT NULL DEFAULT 'S',
       notes VARCHAR(300) NULL,
       sort INT NOT NULL DEFAULT 0,
+      combo_choices_json TEXT NULL,
       INDEX idx_pol_order (order_id)
     ) ENGINE=InnoDB
   `);
+  // The POS router used to own this upgrade lazily. On an empty database its
+  // module-level ensure runs before this table exists, so the ALTER failed and
+  // the column appeared only after the next boot. Keep the router fallback for
+  // old deployments, but make the canonical boot path converge immediately.
+  await addColumnIfMissing('pos_order_lines', 'combo_choices_json', 'TEXT NULL');
   await createTableIfMissing('pos_payments', `
     CREATE TABLE pos_payments (
       id VARCHAR(50) PRIMARY KEY,
       order_id VARCHAR(40) NOT NULL,
-      method VARCHAR(20) NOT NULL,
+      method VARCHAR(50) NOT NULL,
       amount DECIMAL(12,2) NOT NULL,
       ref VARCHAR(100) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_pp_order (order_id)
     ) ENGINE=InnoDB
   `);
+  // Owner-defined payment-method names exceed the original 20-char budget.
+  // modifyColumnDefinition is idempotent and upgrades existing databases in
+  // this same first migration pass instead of waiting for routes/pos-v2.js.
+  await modifyColumnDefinition('pos_payments', 'method', 'VARCHAR(50) NOT NULL');
 
   // ── Phase U — per-line frozen UoM snapshot columns (runs AFTER all v2 line
   // tables above exist). NULL-safe: legacy rows keep NULL and behave as base. ──

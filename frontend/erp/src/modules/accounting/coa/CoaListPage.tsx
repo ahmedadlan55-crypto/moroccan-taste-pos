@@ -4,14 +4,13 @@
 // URL (…/new, …/:id/edit, …/:id/move) rather than a dialog, so a half-finished
 // edit survives a refresh and can be linked to.
 //
-// LAYOUT RULE: below `lg` there is NO second pane. The tree is the whole
+// LAYOUT RULE: below `xl` there is NO second pane. The tree is the whole
 // screen and a tap NAVIGATES to /…/:id. A stacked detail panel under a
 // 600-row tree is a scroll position nobody can find their way back from.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  AlertTriangle,
   ChevronsDownUp,
   ChevronsUpDown,
   Download,
@@ -101,7 +100,7 @@ export function CoaListPage() {
   const lang = useLang();
   const navigate = useNavigate();
   const canManage = useCan(MANAGE_CAP);
-  const isStacked = useMediaQuery("(max-width: 1023px)");
+  const isStacked = useMediaQuery("(max-width: 1279px)");
 
   const [asOf, setAsOf] = useState<string>("");
   const data = useCoaData(asOf || null);
@@ -197,26 +196,12 @@ export function CoaListPage() {
         id: "name",
         header: t("accounting.coa.col.name"),
         accessor: (a) => accountName(a, lang),
-        cell: (a) => {
-          const issues = health.byAccount.get(a.id) ?? [];
-          const structural =
-            issues.includes("strayRoot") || issues.includes("orphan") || issues.includes("cycle");
-          return (
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-bold text-slate-800">{accountName(a, lang)}</span>
-              {structural && (
-                <Badge tone="warning">
-                  {issues.includes("orphan")
-                    ? t("accounting.coa.health.orphanShort")
-                    : issues.includes("cycle")
-                      ? t("accounting.coa.health.cycleShort")
-                      : t("accounting.coa.health.strayShort")}
-                </Badge>
-              )}
-              {!a.isActive && <Badge tone="neutral">{t("accounting.common.suspended")}</Badge>}
-            </span>
-          );
-        },
+        cell: (a) => (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-bold text-slate-800">{accountName(a, lang)}</span>
+            {!a.isActive && <Badge tone="neutral">{t("accounting.common.suspended")}</Badge>}
+          </span>
+        ),
       },
       {
         id: "type",
@@ -273,7 +258,7 @@ export function CoaListPage() {
         },
       },
     ],
-    [t, lang, health, byParent, shownBalance],
+    [t, lang, byParent, shownBalance],
   );
 
   const exportRows = useCallback(() => {
@@ -314,7 +299,7 @@ export function CoaListPage() {
       />
 
       {/* ── KPI row ── */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard icon={Layers} label={t("accounting.coa.kpi.total")} value={String(kpis.total)} />
         <MetricCard icon={ListTree} label={t("accounting.coa.kpi.control")} value={String(kpis.control)} />
         <MetricCard icon={Wallet} label={t("accounting.coa.kpi.posting")} value={String(kpis.posting)} />
@@ -323,27 +308,6 @@ export function CoaListPage() {
           label={t("accounting.coa.kpi.inactive")}
           value={String(kpis.inactive)}
           tone={kpis.inactive > 0 ? "blue" : "teal"}
-        />
-        <MetricCard
-          icon={AlertTriangle}
-          label={t("accounting.coa.kpi.issues")}
-          value={String(kpis.issues)}
-          tone={kpis.issues > 0 ? "amber" : "teal"}
-          onClick={() => navigate(`${COA_BASE}/health`)}
-        />
-        <MetricCard
-          icon={Search}
-          label={t("accounting.coa.kpi.unmapped")}
-          value={String(kpis.unmapped)}
-          tone={kpis.unmapped > 0 ? "amber" : "teal"}
-          onClick={() => patch({ issue: "unmapped" })}
-        />
-        <MetricCard
-          icon={AlertTriangle}
-          label={t("accounting.coa.kpi.abnormal")}
-          value={String(kpis.abnormal)}
-          tone={kpis.abnormal > 0 ? "rose" : "teal"}
-          onClick={() => patch({ issue: "abnormal" })}
         />
       </div>
 
@@ -567,8 +531,11 @@ export function CoaListPage() {
         />
       ) : (
         <div
+          data-testid="coa-tree-workspace"
           className={
-            isStacked ? "" : "grid items-start gap-4 lg:grid-cols-[minmax(320px,460px)_1fr]"
+            isStacked
+              ? ""
+              : "grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]"
           }
         >
           {/* Mobile/tablet: the tree is the WHOLE screen and scrolls with the
@@ -576,17 +543,14 @@ export function CoaListPage() {
               touch). The extra bottom pad clears the fixed MobileNav and the
               iOS home indicator, so the last account is never under the bar. */}
           <Card
+            data-testid="coa-tree-panel"
             className={
               isStacked
-                ? "flex flex-col overflow-hidden pb-[calc(1rem+env(safe-area-inset-bottom))]"
-                : "flex max-h-[70vh] min-h-[24rem] flex-col overflow-hidden"
+                ? "flex min-w-0 flex-col overflow-hidden pb-[calc(1rem+env(safe-area-inset-bottom))]"
+                : "flex min-w-0 flex-col overflow-hidden"
             }
           >
-            <div
-              className={
-                isStacked ? "p-2" : "min-h-0 flex-1 overflow-y-auto p-2"
-              }
-            >
+            <div className="min-w-0 p-3 sm:p-4">
               <CoaTree
                 accounts={accounts}
                 matchIds={matchIds}
@@ -595,7 +559,6 @@ export function CoaListPage() {
                 onActivate={openDetail}
                 openIds={openSet}
                 onToggle={toggleOpen}
-                health={health}
                 hideZero={filters.hideZero}
                 emptyLabel={
                   filterCount > 0
@@ -609,7 +572,7 @@ export function CoaListPage() {
           </Card>
 
           {!isStacked && (
-            <div>
+            <div className="min-w-0 xl:sticky xl:top-4">
               {selected ? (
                 <AccountDetail
                   account={selected}

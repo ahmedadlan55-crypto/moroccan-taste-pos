@@ -17,14 +17,12 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
-  AlertTriangle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   FileText,
   Folder,
   FolderOpen,
-  Unlink,
 } from "lucide-react";
 import { Badge } from "@/shared/ui";
 import { cn } from "@/shared/lib";
@@ -38,7 +36,6 @@ import {
   getTreeRoots,
   isFolderAccount,
   nodeDisplayBalance,
-  type CoaHealth,
 } from "./coaModel";
 
 export interface CoaTreeProps {
@@ -52,7 +49,6 @@ export interface CoaTreeProps {
   onActivate?: (id: string) => void;
   openIds: Set<string>;
   onToggle: (id: string) => void;
-  health: CoaHealth;
   /** Hide rows whose displayed balance rounds to zero. */
   hideZero?: boolean;
   className?: string;
@@ -77,7 +73,6 @@ export function CoaTree({
   onActivate,
   openIds,
   onToggle,
-  health,
   hideZero = false,
   className,
   emptyLabel,
@@ -248,9 +243,6 @@ export function CoaTree({
       const row = rows[cursor];
       cursor += 1;
       const a = row.account;
-      const issues = health.byAccount.get(a.id) ?? [];
-      const structural =
-        issues.includes("strayRoot") || issues.includes("orphan") || issues.includes("cycle");
       const folder = isFolderAccount(a, row.hasChildren);
       const selected = selectedId === a.id;
       const balance = nodeDisplayBalance(a, row.depth, row.hasChildren, rollups);
@@ -321,21 +313,11 @@ export function CoaTree({
             <span
               className={cn(
                 "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
-                structural
-                  ? "bg-amber-50 text-amber-700"
-                  : folder
-                    ? "bg-teal-50 text-teal-700"
-                    : "bg-slate-100 text-slate-500",
+                folder ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-500",
               )}
               aria-hidden="true"
             >
-              {structural ? (
-                issues.includes("orphan") ? (
-                  <Unlink className="h-4 w-4" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4" />
-                )
-              ) : folder ? (
+              {folder ? (
                 row.expanded ? (
                   <FolderOpen className="h-4 w-4" />
                 ) : (
@@ -358,15 +340,6 @@ export function CoaTree({
               {accountName(a, lang)}
             </span>
 
-            {structural && (
-              <Badge tone="warning" className="shrink-0">
-                {issues.includes("orphan")
-                  ? t("accounting.coa.health.orphanShort")
-                  : issues.includes("cycle")
-                    ? t("accounting.coa.health.cycleShort")
-                    : t("accounting.coa.health.strayShort")}
-              </Badge>
-            )}
             {inactive && (
               <Badge tone="neutral" className="shrink-0">
                 {t("accounting.common.suspended")}

@@ -593,14 +593,26 @@ describe("ChartOfAccountsPage — list", () => {
     expect(within(tree).getAllByRole("treeitem").length).toBe(5);
   });
 
-  it("surfaces a stray root in the tree instead of dropping it", async () => {
+  it("keeps a stray root visible without mixing health warnings into the working tree", async () => {
     mockChart(CHART);
     wrap(<ChartOfAccountsPage />);
 
     const tree = await screen.findByRole("tree");
     expect(within(tree).getByText("990000")).toBeInTheDocument();
-    // …and it is labelled as a defect, not shown as an ordinary root.
-    expect(within(tree).getByText("جذر شاذّ")).toBeInTheDocument();
+    expect(within(tree).queryByText("جذر شاذّ")).not.toBeInTheDocument();
+  });
+
+  it("uses a fluid wide workspace and lets the page own vertical scrolling", async () => {
+    mockChart(CHART);
+    wrap(<ChartOfAccountsPage />);
+    await screen.findByRole("tree");
+
+    const workspace = screen.getByTestId("coa-tree-workspace");
+    const panel = screen.getByTestId("coa-tree-panel");
+    expect(workspace.className).not.toContain("460px");
+    expect(workspace.className).toContain("minmax(0,3fr)");
+    expect(panel.className).not.toContain("max-h-");
+    expect(panel.querySelector(".overflow-y-auto")).toBeNull();
   });
 
   it("searches the ENGLISH name as well as the Arabic one", async () => {

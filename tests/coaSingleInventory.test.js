@@ -128,6 +128,13 @@ const salesRoute = read('routes/sales.js');
   check('bottom-up folder archival is also MySQL-safe on every pass',
     (cutover.match(/child_row\.parent_id = folder_row\.id/g) || []).length === 3 &&
     !/NOT EXISTS \(SELECT 1 FROM gl_accounts child_row[^)]*folder_row\.id/.test(cutover));
+  check('bottom-up cleanup can archive folders only, never unused posting leaves',
+    (cutover.match(/COALESCE\(folder_row\.is_folder, 0\) = 1/g) || []).length === 3);
+  check('partially archived runtime controls are restored on an idempotent retry',
+    /operational_account\.status = 'active'/.test(cutover) &&
+    /operational_account\.is_active = 1/.test(cutover) &&
+    /operational_account\.is_postable = 1/.test(cutover) &&
+    /operational_account\.archived_at = NULL/.test(cutover));
   check('unused standard-template leaves may retire instead of keeping 300+ active rows',
     !/WHERE account_row\.is_system_root = 0\s+AND COALESCE\(account_row\.system_managed/.test(cutover));
   check('the migration never assumes gl_accounts has company_id',

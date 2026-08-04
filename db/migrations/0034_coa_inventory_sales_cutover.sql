@@ -102,6 +102,11 @@ JOIN (
 JOIN gl_accounts governed_parent ON governed_parent.code = account_map.parent_code
 SET operational_account.parent_id = governed_parent.id,
     operational_account.level = governed_parent.level + 1,
+    operational_account.status = 'active',
+    operational_account.is_active = 1,
+    operational_account.is_postable = 1,
+    operational_account.archived_by = NULL,
+    operational_account.archived_at = NULL,
     operational_account.updated_by = 'migration:0034',
     operational_account.updated_at = NOW();
 
@@ -221,6 +226,7 @@ SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
+  AND COALESCE(folder_row.is_folder, 0) = 1
   AND entry_row.account_id IS NULL
   AND role_row.account_id IS NULL
   AND child_row.id IS NULL;
@@ -236,6 +242,7 @@ SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
+  AND COALESCE(folder_row.is_folder, 0) = 1
   AND entry_row.account_id IS NULL
   AND role_row.account_id IS NULL
   AND child_row.id IS NULL;
@@ -251,6 +258,7 @@ SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
+  AND COALESCE(folder_row.is_folder, 0) = 1
   AND entry_row.account_id IS NULL
   AND role_row.account_id IS NULL
   AND child_row.id IS NULL;

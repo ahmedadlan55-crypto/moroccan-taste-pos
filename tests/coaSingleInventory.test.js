@@ -120,6 +120,12 @@ const salesRoute = read('routes/sales.js');
     /legacy_inventory\.status = 'archived'/.test(cutover));
   check('the stale account balance cache is rebuilt from posted journal lines',
     /SET account_row\.balance = COALESCE\(ledger_total\.ledger_balance, 0\)/.test(cutover));
+  check('account archival uses MySQL-safe self joins, never target-table correlated subqueries',
+    /LEFT JOIN gl_accounts child_row[\s\S]{0,160}child_row\.parent_id = account_row\.id/.test(cutover) &&
+    !/NOT EXISTS \(SELECT 1 FROM gl_accounts child_row/.test(cutover));
+  check('bottom-up folder archival is also MySQL-safe on every pass',
+    (cutover.match(/child_row\.parent_id = folder_row\.id/g) || []).length === 3 &&
+    !/NOT EXISTS \(SELECT 1 FROM gl_accounts child_row[^)]*folder_row\.id/.test(cutover));
   check('unused standard-template leaves may retire instead of keeping 300+ active rows',
     !/WHERE account_row\.is_system_root = 0\s+AND COALESCE\(account_row\.system_managed/.test(cutover));
   check('the migration never assumes gl_accounts has company_id',

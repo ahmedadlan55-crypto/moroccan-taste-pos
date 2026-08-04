@@ -178,7 +178,18 @@ SET account_row.balance = COALESCE(ledger_total.ledger_balance, 0);
 -- Preserve every account that has history, backs a governed role, is owned by
 -- a subledger/integration, is a system root, or is a runtime control account.
 -- Everything else can be retired without changing a single balance.
+-- Use explicit self-joins rather than correlated NOT EXISTS queries: MySQL
+-- rejects a correlated read of gl_accounts while that same table is updated.
 UPDATE gl_accounts account_row
+LEFT JOIN gl_entries entry_row
+  ON entry_row.account_id = account_row.id
+LEFT JOIN account_roles role_row
+  ON role_row.account_id = account_row.id
+ AND role_row.is_active = 1
+ AND role_row.role_key NOT IN ('INVENTORY','BRANCH_INVENTORY','WORK_IN_PROGRESS','FINISHED_GOODS')
+LEFT JOIN gl_accounts child_row
+  ON child_row.parent_id = account_row.id
+ AND child_row.status = 'active'
 SET account_row.status = 'archived',
     account_row.is_active = 0,
     account_row.archived_by = 'migration:0034',
@@ -187,13 +198,9 @@ SET account_row.status = 'archived',
     account_row.updated_at = NOW()
 WHERE account_row.is_system_root = 0
   AND account_row.source_entity_type IS NULL
-  AND NOT EXISTS (SELECT 1 FROM gl_entries entry_row WHERE entry_row.account_id = account_row.id)
-  AND NOT EXISTS (
-    SELECT 1 FROM account_roles role_row
-    WHERE role_row.account_id = account_row.id AND role_row.is_active = 1
-      AND role_row.role_key NOT IN ('INVENTORY','BRANCH_INVENTORY','WORK_IN_PROGRESS','FINISHED_GOODS')
-  )
-  AND NOT EXISTS (SELECT 1 FROM gl_accounts child_row WHERE child_row.parent_id = account_row.id AND child_row.status = 'active')
+  AND entry_row.account_id IS NULL
+  AND role_row.account_id IS NULL
+  AND child_row.id IS NULL
   AND account_row.code NOT IN (
     '1110','1120','1130','1150','1200','1290','2100','2201','2202','2210','2310','2320',
     '4100','4201','4910','5100','5200','5300','5301','5302','5303','5304','5350',
@@ -202,35 +209,51 @@ WHERE account_row.is_system_root = 0
 
 -- Retire empty folders bottom-up after their leaves were archived. Repeating
 -- the same idempotent statement covers the chart's maximum four levels.
+-- These passes use the same MySQL-safe self-join shape as the leaf cleanup.
 UPDATE gl_accounts folder_row
+LEFT JOIN gl_entries entry_row ON entry_row.account_id = folder_row.id
+LEFT JOIN account_roles role_row
+  ON role_row.account_id = folder_row.id AND role_row.is_active = 1
+LEFT JOIN gl_accounts child_row
+  ON child_row.parent_id = folder_row.id AND child_row.status = 'active'
 SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_by = 'migration:0034',
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
-  AND NOT EXISTS (SELECT 1 FROM gl_entries entry_row WHERE entry_row.account_id = folder_row.id)
-  AND NOT EXISTS (SELECT 1 FROM account_roles role_row WHERE role_row.account_id = folder_row.id AND role_row.is_active = 1)
-  AND NOT EXISTS (SELECT 1 FROM gl_accounts child_row WHERE child_row.parent_id = folder_row.id AND child_row.status = 'active');
+  AND entry_row.account_id IS NULL
+  AND role_row.account_id IS NULL
+  AND child_row.id IS NULL;
 
 UPDATE gl_accounts folder_row
+LEFT JOIN gl_entries entry_row ON entry_row.account_id = folder_row.id
+LEFT JOIN account_roles role_row
+  ON role_row.account_id = folder_row.id AND role_row.is_active = 1
+LEFT JOIN gl_accounts child_row
+  ON child_row.parent_id = folder_row.id AND child_row.status = 'active'
 SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_by = 'migration:0034',
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
-  AND NOT EXISTS (SELECT 1 FROM gl_entries entry_row WHERE entry_row.account_id = folder_row.id)
-  AND NOT EXISTS (SELECT 1 FROM account_roles role_row WHERE role_row.account_id = folder_row.id AND role_row.is_active = 1)
-  AND NOT EXISTS (SELECT 1 FROM gl_accounts child_row WHERE child_row.parent_id = folder_row.id AND child_row.status = 'active');
+  AND entry_row.account_id IS NULL
+  AND role_row.account_id IS NULL
+  AND child_row.id IS NULL;
 
 UPDATE gl_accounts folder_row
+LEFT JOIN gl_entries entry_row ON entry_row.account_id = folder_row.id
+LEFT JOIN account_roles role_row
+  ON role_row.account_id = folder_row.id AND role_row.is_active = 1
+LEFT JOIN gl_accounts child_row
+  ON child_row.parent_id = folder_row.id AND child_row.status = 'active'
 SET folder_row.status = 'archived', folder_row.is_active = 0,
     folder_row.archived_by = 'migration:0034',
     folder_row.archived_at = COALESCE(folder_row.archived_at, NOW()),
     folder_row.updated_by = 'migration:0034', folder_row.updated_at = NOW()
 WHERE folder_row.is_system_root = 0
-  AND NOT EXISTS (SELECT 1 FROM gl_entries entry_row WHERE entry_row.account_id = folder_row.id)
-  AND NOT EXISTS (SELECT 1 FROM account_roles role_row WHERE role_row.account_id = folder_row.id AND role_row.is_active = 1)
-  AND NOT EXISTS (SELECT 1 FROM gl_accounts child_row WHERE child_row.parent_id = folder_row.id AND child_row.status = 'active');
+  AND entry_row.account_id IS NULL
+  AND role_row.account_id IS NULL
+  AND child_row.id IS NULL;
 
 -- One physical account may satisfy several inventory lifecycle roles. The
 -- operational classification is stored in warehouse/item/BOM subledgers, not

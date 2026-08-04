@@ -42,7 +42,9 @@ export const EMPTY_FILTERS: CoaFilters = {
   type: "all",
   level: "all",
   kind: "all",
-  status: "all",
+  // Keep archived history available through the filter, but do not flood the
+  // default tree with accounts retired by the consolidation migration.
+  status: "active",
   section: "all",
   normal: "all",
   origin: "all",
@@ -58,7 +60,7 @@ export function activeFilterCount(f: CoaFilters): number {
   if (f.type !== "all") n += 1;
   if (f.level !== "all") n += 1;
   if (f.kind !== "all") n += 1;
-  if (f.status !== "all") n += 1;
+  if (f.status !== "active") n += 1;
   if (f.section !== "all") n += 1;
   if (f.normal !== "all") n += 1;
   if (f.origin !== "all") n += 1;
@@ -130,7 +132,9 @@ export function accountPasses(account: GlAccount, ctx: FilterContext, f: CoaFilt
 
 /** Ids of every account passing the filters (null when nothing is filtering). */
 export function matchingIds(ctx: FilterContext, f: CoaFilters): Set<string> | null {
-  if (isDefaultFilters(f)) return null;
+  // EMPTY_FILTERS intentionally includes status=active. Therefore "zero
+  // user-selected chips" still performs a real lifecycle filter and cannot
+  // use the old null/all-rows fast path.
   const out = new Set<string>();
   for (const a of ctx.accounts) if (accountPasses(a, ctx, f)) out.add(a.id);
   return out;

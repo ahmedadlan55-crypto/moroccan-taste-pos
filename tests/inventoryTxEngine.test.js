@@ -30,7 +30,7 @@ test('non-positive total returns addCost', () => eq(E.newWAC(-5, 4, 0, 3), 3));
 console.log('\n─── inventoryAccountFor ───');
 test('main warehouse → INVENTORY 1200', () => eq(E.inventoryAccountFor({ is_main: 1 }), A.INVENTORY.code));
 test('type=main → INVENTORY 1200', () => eq(E.inventoryAccountFor({ type: 'main' }), A.INVENTORY.code));
-test('branch warehouse → BRANCH_INVENTORY 1210', () => eq(E.inventoryAccountFor({ type: 'branch' }), A.BRANCH_INVENTORY.code));
+test('branch warehouse → the same INVENTORY 1200 control account', () => eq(E.inventoryAccountFor({ type: 'branch' }), A.INVENTORY.code));
 
 console.log('\n─── adjustmentExpenseCode ───');
 test('تالف → WASTE_EXPENSE', () => eq(E.adjustmentExpenseCode('تالف'), A.WASTE_EXPENSE.code));
@@ -52,7 +52,7 @@ test('issue: Dr expense / Cr inventory, default expense = STOCK_VARIANCE', () =>
   eq(s.referenceType, 'inv_issue');
   eq(s.entries[0].accountCode, A.STOCK_VARIANCE.code);
   eq(s.entries[0].debit, 170);
-  eq(s.entries[1].accountCode, A.BRANCH_INVENTORY.code);
+  eq(s.entries[1].accountCode, A.INVENTORY.code);
   eq(s.entries[1].credit, 170);
   balanced(s);
 });

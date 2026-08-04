@@ -59,7 +59,7 @@ describe("computeRatios — refuses to fabricate", () => {
   it("gross margin is UNAVAILABLE when there are no COGS accounts (legacy guessed 60% of expenses)", () => {
     const r = get({ ...base, cogs: null }, "gross-margin");
     expect(r.value).toBeNull();
-    expect(r.unavailableReason).toContain("تكلفة مبيعات");
+    expect(r.unavailableReason).toContain("51xx");
   });
 
   it("inventory turnover is unavailable without COGS", () => {
@@ -69,13 +69,13 @@ describe("computeRatios — refuses to fabricate", () => {
   it("current ratio is UNAVAILABLE without current-asset accounts (legacy substituted ALL assets)", () => {
     const r = get({ ...base, currentAssets: null }, "current");
     expect(r.value).toBeNull();
-    expect(r.unavailableReason).toContain("أصول متداولة");
+    expect(r.unavailableReason).toContain("11xx");
   });
 
   it("current ratio is unavailable without current-liability accounts", () => {
     const r = get({ ...base, currentLiabilities: null }, "current");
     expect(r.value).toBeNull();
-    expect(r.unavailableReason).toContain("التزامات متداولة");
+    expect(r.unavailableReason).toContain("21xx");
   });
 
   it("a zero denominator yields null, not zero or Infinity", () => {
@@ -121,24 +121,6 @@ describe("extractInputs", () => {
     expect(i.currentAssets).toBe(600); // 1101 + 1121 both start with "11"
     expect(i.inventory).toBe(200);     // 1121 starts with "112"
     expect(i.currentLiabilities).toBe(300);
-    expect(i.cogs).toBe(800);
-    expect(i.netIncome).toBe(300);
-  });
-
-  it("uses governed IFRS groups instead of guessing from account prefixes", () => {
-    const i = extractInputs(
-      {
-        totalAssets: 1000, totalLiabilities: 400, totEq: 600,
-        totCA: 650, totCL: 280,
-        groups: { currentAssets: { inventory: { total: 225 } } },
-        // A deliberately unrelated code proves classification wins.
-        assets: [{ code: "9999", balance: 999 }],
-      },
-      { totalRevenue: 2000, totalExpense: 1700, totalCOGS: 800, netIncome: 300 },
-    );
-    expect(i.currentAssets).toBe(650);
-    expect(i.inventory).toBe(225);
-    expect(i.currentLiabilities).toBe(280);
     expect(i.cogs).toBe(800);
     expect(i.netIncome).toBe(300);
   });

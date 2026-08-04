@@ -4,9 +4,9 @@
 // enqueue an economic event; here a human picks a granularity, reads the exact
 // journal that would be written, and posts one aggregated entry.
 //
-// THE GRANULARITY SELECTOR RESLICES THE SAME QUEUE. There are not two
+// THE GRANULARITY SELECTOR RESLICES THE SAME QUEUE. There are not three
 // queues — the server regroups one list — and EVERY row expands to its
-// invoices in both modes. That was the owner's non-negotiable:
+// invoices in all three modes. That was the owner's non-negotiable:
 // «مع رؤية التفصيل في كل الحالات».
 //
 // Nothing here recomputes a total. The server sends `legs` already balanced,
@@ -28,6 +28,7 @@ import {
 const GRAN_LABEL: Record<Granularity, string> = {
   daily: "يومي",
   monthly: "شهري",
+  invoice: "فاتورة بفاتورة",
 };
 
 type Tab = "pending" | "posted" | "problems";

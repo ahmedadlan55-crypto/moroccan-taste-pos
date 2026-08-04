@@ -40,18 +40,17 @@ function check(name, cond, extra) {
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-// ── 1. Inventory has one governed control account, outside custody ─────────
+// ── 1. `113` really is Inventory — the premise, stated by the code itself ──
 {
   const gl = read('lib/glPosting.js');
-  const { CORE_ACCOUNTS } = require('../lib/glPosting');
-  check('lib/glPosting.js documents one Inventory Control account',
-    /Inventory is intentionally one control account/.test(gl));
-  for (const name of ['INVENTORY', 'BRANCH_INVENTORY', 'WIP', 'FINISHED_GOODS']) {
-    check(`${name} resolves to Inventory Control 1200`, CORE_ACCOUNTS[name].code === '1200', CORE_ACCOUNTS[name]);
-    check(`${name} is parented under governed folder 100300`, CORE_ACCOUNTS[name].parent === '100300', CORE_ACCOUNTS[name]);
+  check('lib/glPosting.js documents 113 = Inventory', /113 = Inventory/.test(gl));
+  check('lib/glPosting.js documents 115 = Custody', /115 = Custody/.test(gl));
+  for (const [code, name] of [['1200', 'INVENTORY'], ['1210', 'BRANCH_INVENTORY'],
+                              ['1220', 'WIP'], ['1230', 'FINISHED_GOODS']]) {
+    const re = new RegExp(name + ":[^}]*code: '" + code + "'[^}]*parent: '113'");
+    check(`${name} (${code}) is parented under 113 — so 113 is the warehouse group`,
+      re.test(gl), code);
   }
-  check('operational aliases do not create independent accounts',
-    ['BRANCH_INVENTORY', 'WIP', 'FINISHED_GOODS'].every((name) => CORE_ACCOUNTS[name].aliasOf === 'INVENTORY'));
 }
 
 // ── 2. The custody creator uses 115, and NEVER 113 ────────────────────────

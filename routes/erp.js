@@ -1153,30 +1153,6 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
     const [existing] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     if (existing[0].cnt > 0) return res.json({ success: true, msg: 'already seeded' });
 
-    // The historical inline cafe chart below is retained only as migration
-    // evidence. New databases must be born from the governed bilingual
-    // six-digit template, whose inventory section contains exactly one
-    // posting leaf (1200) under 100300.
-    let seeded = 0;
-    for (const a of COA_TEMPLATE) {
-      await db.query(
-        `INSERT INTO gl_accounts
-           (id, code, name_ar, name_en, type, parent_id, level, is_active,
-            is_folder, is_postable, balance, report_section, cash_flow_activity,
-            normal_balance, is_contra, system_managed)
-         VALUES (?,?,?,?,?,?,?,1,?,?,0,?,?,?,?,1)`,
-        [a.code, a.code, a.nameAr, a.nameEn || null, a.type,
-         a.parentCode || null, a.level, a.kind === 'folder' ? 1 : 0,
-         a.kind === 'folder' ? 0 : 1, a.reportSection || null,
-         a.cashFlowActivity || null,
-         (a.type === 'asset' || a.type === 'expense') ? 'debit' : 'credit',
-         a.isContra ? 1 : 0]
-      );
-      seeded++;
-    }
-    return res.json({ success: true, count: seeded, source: 'governed-coa-template' });
-
-    /* istanbul ignore next -- unreachable pre-governance seed retained for forensic history */
     const accounts = [
       // ═══ 1 الأصول ═══
       {code:'1',name:'الأصول',type:'asset',parent:null,level:1},
@@ -1372,15 +1348,18 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
 // never a historical accident to be cleaned up once — it was a standing
 // contradiction between two migrations.
 //
-// The governed six-digit chart has one Inventory folder (100300) and one
-// posting leaf (1200). Warehouse/category/product detail is never a GL node.
-const INVENTORY_GROUP_CODE = '100300';
+// `113` wins, and not by preference: `lib/glPosting.js` is the authority that
+// actually WRITES journals — every sale, purchase, waste entry and till
+// movement — and its CORE_ACCOUNTS parents 1200/1210/1220/1230 under `113`
+// with the header map at :44-45 (112 = AR · 113 = Inventory · 115 = Custody).
+// server.js:4893 already agrees with it. This helper was the only dissenter.
+const INVENTORY_GROUP_CODE = '113';
 
 async function _repairInventoryClassification(db) {
   const repaired = [];
   // Resolve the inventory group. It is NEVER created here: creating a group
   // from a repair helper is exactly how the second one appeared. If the chart
-  // has no `100300`, this reports that and does nothing — a missing group is a
+  // has no `113`, this reports that and does nothing — a missing group is a
   // seeding problem, not something a classification pass should paper over.
   const [pInv] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [INVENTORY_GROUP_CODE]);
   const target112Id = pInv.length ? pInv[0].id : null;
@@ -1446,11 +1425,6 @@ router.post('/gl/repair-inventory-classification', requireCapability('finance.ac
 //     skipped:  [{ id, code, nameAr, reason }]   // for human review
 //   }
 router.post('/gl/repair-classification', requireCapability('finance.accounts.manage'), async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    code: 'LEGACY_COA_REPAIR_RETIRED',
-    error: 'تم إيقاف الإصلاح القائم على كلمات أسماء الحسابات؛ استخدم قالب دليل الحسابات والترحيل المعتمد.'
-  });
   try {
     // Keyword → preferred parent code map (ordered: most-specific first)
     // Each entry: [regex, parentCode, label]
@@ -1745,11 +1719,6 @@ async function _repairCoaByPrefix(db) {
 router._repairCoaByPrefix = _repairCoaByPrefix;
 
 router.post('/gl/repair-tree-by-prefix', requireCapability('finance.accounts.manage'), async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    code: 'LEGACY_COA_REPAIR_RETIRED',
-    error: 'تم إيقاف إعادة بناء الشجرة من بادئات الأرقام القديمة.'
-  });
   try {
     const r = await _repairCoaByPrefix(db);
     res.json({
@@ -2263,11 +2232,6 @@ async function _coaRecomputeBalances(db) {
 // become visible. If a step throws, the transaction rolls back and the
 // HTTP response includes the actual error message + the step that failed.
 router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    code: 'LEGACY_COA_REPAIR_RETIRED',
-    error: 'تم إيقاف الإصلاح العميق القديم لأنه يعيد تصنيف الحسابات آليًا.'
-  });
   let lastStep = 'init';
   try {
     const result = await db.withTransaction(async (conn) => {
@@ -2723,7 +2687,6 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     const [p] = await db.query('SELECT * FROM accounting_periods WHERE id=?', [req.params.id]);
     if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
     const period = p[0];
-    let closeTransitionCommitted = false;
 
     // ── «ترحيل المبيعات» guard ────────────────────────────────────────────
     // The SECOND close implementation. routes/erp/periods.js carries the same
@@ -2734,26 +2697,16 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     // trial balance that looks finished and is wrong. Only on a real close —
     // `soft_closed` is a review state, and reopening must never be blocked.
     if (status === 'closed' && period.status !== 'closed') {
-      const wantsForce = req.body && req.body.force === true;
-      const reason = String((req.body && req.body.reason) || '').trim();
-      const mayOverride = wantsForce
-        ? await requireCapability.hasCapability(req.user, 'finance.periods.override_lock').catch(() => false)
-        : false;
-      const salesPosting = require('./erp/sales-posting');
       try {
-        await db.withTransaction(async (conn) => {
-        const [[lockedPeriod]] = await conn.query(
-          'SELECT * FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
-        if (!lockedPeriod) { const e = new Error('period not found'); e.status = 404; throw e; }
-        await salesPosting.assertNoUnpostedSales(conn, {
+        await require('./erp/sales-posting').assertNoUnpostedSales(db, {
           from: period.start_date, to: period.end_date,
           brandId: period.brand_id, branchId: period.branch_id });
-        await conn.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
-          [status, username || '', req.params.id]);
-        });
-        closeTransitionCommitted = true;
       } catch (guardErr) {
         if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
+          const wantsForce = req.body && req.body.force === true;
+          const reason = String((req.body && req.body.reason) || '').trim();
+          const mayOverride = await requireCapability
+            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
           if (!wantsForce || !mayOverride || reason.length < 10) {
             return res.status(409).json({
               success: false, error: 'UNPOSTED_SALES_IN_PERIOD',
@@ -2765,16 +2718,8 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
               overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
             });
           }
-          const stranded = await db.withTransaction(async (conn) => {
-            await conn.query('SELECT id FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
-            const n = await salesPosting.strandUnposted(conn, {
-              from: period.start_date, to: period.end_date,
-              brandId: period.brand_id, branchId: period.branch_id });
-            await conn.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
-              [status, username || '', req.params.id]);
-            return n;
-          });
-          closeTransitionCommitted = true;
+          const stranded = await require('./erp/sales-posting').strandUnposted(db,
+            { from: period.start_date, to: period.end_date });
           console.warn('[period.lock] FORCED close of ' + req.params.id + ' by ' + username +
             ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
         } else { throw guardErr; }
@@ -2800,19 +2745,11 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
           // Don't block the reopen — the user can still post manual reversals.
         }
       }
-      await db.withTransaction(async (conn) => {
-        await conn.query('SELECT id FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
-        await conn.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
-          [status, req.params.id]);
-        await require('./erp/sales-posting').recoverStranded(conn, {
-          from: period.start_date, to: period.end_date,
-          brandId: period.brand_id, branchId: period.branch_id });
-      });
+      await db.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
+        [status, req.params.id]);
     } else {
-      if (!closeTransitionCommitted) {
-        await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
-          [status, username||'', req.params.id]);
-      }
+      await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
+        [status, username||'', req.params.id]);
       // v5.10.61 — Generate closing entries only on the open→closed transition
       // (NOT on open→soft_closed; soft-close is a review state, not a final).
       if (status === 'closed' && period.status !== 'closed') {
@@ -3351,11 +3288,6 @@ router.post('/gl/repair', requireCapability('finance.accounts.manage'), async (r
 // Repair: create GL entries for old custody topups that have no journal
 // Fix: restructure to 5 main accounts (merge old 6 into 5)
 router.post('/gl/fix-tree', requireCapability('finance.accounts.manage'), async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    code: 'LEGACY_COA_REPAIR_RETIRED',
-    error: 'تم إيقاف أداة إصلاح الشجرة القديمة؛ الشجرة تُدار عبر القالب والترحيلات المعتمدة.'
-  });
   try {
     let fixed = 0;
 
@@ -3935,14 +3867,166 @@ router.get('/inventory-valuation', async (req, res) => {
   }
 });
 
-// Compatibility tombstone: inventory detail belongs to the stock subledger
-// and dimensions. This endpoint must never create or mutate GL accounts.
+// v5.10.88 — Resolve the inventory CoA parent. Priority:
+//   1. settings.inventory_coa_parent_id (if the row exists in gl_accounts)
+//   2. Auto-detect: '100300' (GGMMPP) → '113' (legacy) → '112' (older)
+// Returns { id, code, level, name_ar, source } or null if nothing matches.
+async function _resolveInventoryParent(opts) {
+  opts = opts || {};
+  if (!opts.ignoreSetting) {
+    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
+    const savedId = pset.length ? String(pset[0].setting_value || '') : '';
+    if (savedId) {
+      const [row] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE id = ? LIMIT 1', [savedId]);
+      if (row.length) return Object.assign({}, row[0], { source: 'setting' });
+    }
+  }
+  // Auto-detect — prefer GGMMPP, then legacy fallbacks
+  for (const code of ['100300', '113', '112']) {
+    const [r] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
+    if (r.length) return Object.assign({}, r[0], { source: 'auto-detect' });
+  }
+  return null;
+}
+
+// v5.10.88 — GET /inventory-coa-parent
+// Returns the resolved parent + the raw setting (if any) so the UI
+// can show a mismatch banner when the saved id no longer resolves.
+// Query param ?reset=1 ignores the setting and runs auto-detect only.
+router.get('/inventory-coa-parent', async (req, res) => {
+  try {
+    const ignoreSetting = String(req.query.reset || '') === '1';
+    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
+    const savedId = pset.length ? String(pset[0].setting_value || '') : null;
+    const [pcode] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_code' LIMIT 1");
+    const savedCode = pcode.length ? String(pcode[0].setting_value || '') : null;
+    const resolved = await _resolveInventoryParent({ ignoreSetting });
+    let childrenCount = 0;
+    if (resolved && resolved.id) {
+      const [kids] = await db.query('SELECT COUNT(*) AS n FROM gl_accounts WHERE parent_id = ?', [resolved.id]);
+      childrenCount = Number(kids[0].n) || 0;
+    }
+    res.json({
+      success: true,
+      settingId: savedId,
+      settingCode: savedCode,
+      resolved: resolved ? {
+        id: resolved.id,
+        code: resolved.code,
+        nameAr: resolved.name_ar,
+        level: resolved.level,
+        type: resolved.type,
+        childrenCount: childrenCount
+      } : null,
+      source: resolved ? resolved.source : null
+    });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// v5.10.88 — Sync inventory CoA accounts. Reads its parent from
+// settings via _resolveInventoryParent so the owner can re-target
+// the auto-numbering through the UI. Sub-account codes follow the
+// parent's prefix style:
+//   • 6-digit GGMMPP parent (e.g. 100300) → 1003 PP slots
+//     (100310, 100320, 100330, 100340, …). Used by the v5.10.85+
+//     Saudi/International standard CoA.
+//   • 3-digit legacy parent (e.g. 113) → 113xx 2-digit suffix
+//     (11301, 11302, …) preserved for backward-compat.
 router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), async (req, res) => {
-  return res.status(410).json({
-    success: false,
-    code: 'INVENTORY_COA_SYNC_RETIRED',
-    error: 'يستخدم النظام حساب مراقبة مخزون واحد؛ التفاصيل متاحة في تقارير وحركات المخزون.',
-  });
+  try {
+    let parent = await _resolveInventoryParent();
+    // Fall back: if nothing resolved, create '113' under '11' (legacy)
+    if (!parent) {
+      const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
+      const parentId = 'GL-113';
+      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [parentId, '113', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
+      parent = { id: parentId, code: '113', name_ar: 'المخزون', level: 3, type: 'asset', source: 'created' };
+    }
+
+    const parentId = parent.id;
+    const parentCode = String(parent.code || '');
+    const parentLevel = Number(parent.level || 2);
+    const childLevel = parentLevel + 1;
+
+    // Determine code template for new children based on parent style
+    // GGMMPP (6 digits): siblings of 100310/100320/…  use PP slot iteration
+    //                    on the parent's first 4 chars (1003) + 2-digit PP
+    // Legacy (3 chars):  '113' + 2-digit suffix → 11301, 11302, …
+    const isGgmmpp = /^\d{6}$/.test(parentCode);
+    const childPrefix = isGgmmpp ? parentCode.substr(0, 4) : parentCode;
+    const childCodeRegex = isGgmmpp
+      ? '^' + childPrefix + '[0-9]{2}$'
+      : '^' + childPrefix + '[0-9]{2}$';
+
+    // Get inventory categories
+    const [cats] = await db.query('SELECT DISTINCT category FROM inv_items WHERE active = 1 AND category IS NOT NULL AND category != ""');
+    let created = 0;
+
+    const [existing] = await db.query(
+      "SELECT code, name_ar FROM gl_accounts WHERE code REGEXP ? ORDER BY code",
+      [childCodeRegex]
+    );
+    const existingNames = existing.map(e => (e.name_ar || '').toLowerCase());
+
+    for (const cat of cats) {
+      const catName = 'مخزون ' + cat.category;
+      if (existingNames.includes(catName.toLowerCase())) continue;
+
+      // Next code in the child-prefix range
+      const [lastChild] = await db.query(
+        "SELECT code FROM gl_accounts WHERE code REGEXP ? ORDER BY code DESC LIMIT 1",
+        [childCodeRegex]
+      );
+      let nextCode;
+      if (lastChild.length) {
+        const suffix = lastChild[0].code.substr(childPrefix.length);
+        const num = parseInt(suffix, 10) || 0;
+        nextCode = childPrefix + String(num + 1).padStart(2, '0');
+      } else {
+        nextCode = childPrefix + '01';
+      }
+      const id = 'GL-' + nextCode;
+      await db.query(
+        'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
+        [id, nextCode, catName, 'asset', parentId, childLevel]
+      );
+
+      // Update balance with current stock value for this category
+      const [catItems] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [cat.category]);
+      const catValue = Number(catItems[0].val) || 0;
+      if (catValue > 0) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [catValue, id]);
+      existingNames.push(catName.toLowerCase());
+      created++;
+    }
+
+    // Update ALL existing inventory sub-account balances (perpetual sync).
+    // We match descendants of the resolved parent, not a hardcoded prefix.
+    const [allInvAccounts] = await db.query(
+      "SELECT id, name_ar FROM gl_accounts WHERE parent_id = ? AND id <> ?",
+      [parentId, parentId]
+    );
+    for (const acc of allInvAccounts) {
+      const catName = (acc.name_ar || '').replace(/^مخزون\s*/, '');
+      if (catName) {
+        const [catVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [catName]);
+        await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(catVal[0].val) || 0, acc.id]);
+      }
+    }
+
+    // Update parent balance (total of all active inventory)
+    const [totalVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE active = 1');
+    await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val) || 0, parentId]);
+
+    res.json({
+      success: true,
+      categoriesCreated: created,
+      totalCategories: cats.length,
+      parent: { id: parentId, code: parentCode, source: parent.source }
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 // ─── Financial Reports ───

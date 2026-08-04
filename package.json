@@ -5,8 +5,6 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test:procurement-accounts": "node tests/procurementAccounts.test.js",
-    "test:accounting-consolidation": "node tests/coaSingleInventory.test.js && node tests/procurementAccounts.test.js && node tests/erpCoreInventoryAtomicity.test.js && node tests/salesPostingCapture.test.js && node tests/salesPostingAggregate.test.js && node tests/salesPostingService.test.js",
     "dev": "nodemon server.js",
     "build": "npm run build:pos && npm run build:erp",
     "build:pos": "npm --prefix frontend/pos install && npm --prefix frontend/pos run build",

@@ -554,7 +554,6 @@ export function CoaListPage() {
               <CoaTree
                 accounts={accounts}
                 matchIds={matchIds}
-                forceOpenMatches={filterCount > 0}
                 selectedId={selectedId}
                 onSelect={onSelect}
                 onActivate={openDetail}

@@ -191,14 +191,16 @@ function check(name, cond, extra) {
 // `sales` row the same function can hard-delete.
 {
   const src = fs.readFileSync(path.join(ROOT, 'routes', 'sales.js'), 'utf8');
-  check('checkout no longer posts an invoice-level ChannelCommission journal',
-    !/referenceType: 'ChannelCommission'/.test(src));
-  check('checkout captures commission in the deferred sale payload',
-    /commissions/.test(src) && /salesPostingCapture\.capture\(/.test(src));
-  check('a pending sale event is cancelled rather than reversed in GL',
-    /UPDATE sales_posting_queue SET status='cancelled'/.test(src));
-  check('a posted or in-flight batch is blocked from legacy void',
-    /SALES_BATCH_REQUIRES_CREDIT_NOTE/.test(src));
+  const commitTypes = src.match(/reference_type IN \(\?, \?\) AND reference_id = \?'[\s\S]{0,120}?\]\);/);
+  check('the void query selects both reference types',
+    /reference_type IN \(\?, \?\) AND reference_id = \?/.test(src));
+  check('…and names ChannelCommission explicitly',
+    commitTypes && /'Sale', 'ChannelCommission'/.test(commitTypes[0]), commitTypes && commitTypes[0]);
+  check('the commission journal is still posted under that exact type',
+    /referenceType: 'ChannelCommission'/.test(src));
+  // Guard against the reverse regression: a single-type query coming back.
+  check('no single-type Sale-only journal sweep remains',
+    !/reference_type = \?[\s\S]{0,80}\['Sale', orderId\]/.test(src));
 }
 
 // ── 7. One definition of «the period is closed» ──────────────────────────

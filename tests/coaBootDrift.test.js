@@ -219,22 +219,18 @@ function assertBlockGuarded(label, src, guards, startMark, endMark, mutations) {
 // times and will move again. Each entry names the exact statements that used
 // to run on every start.
 {
-  // (1) The only current inventory boot repair keeps the single 1200 control
-  //     account under governed folder 100300. Numbered migration 0034 owns
-  //     retirement of legacy stage/category accounts; boot never renumbers.
-  assertBlockGuarded('inventory-control', server, serverGuards,
-    '// Keep the single operational Inventory Control account',
-    "[inventory-control] placement check skipped", [
-      '"UPDATE gl_accounts SET parent_id = ?, level = ? WHERE code = \'1200\'"',
+  // (1) v5.11.14 legacy CoA relocation — re-parents 1200/1210/1220/1230 → 113,
+  //     1150 → 112, 1290 → 116, and RENUMBERS auto-created 112NN rows to 113NN.
+  //     The renumbering is the dangerous one: gl_entries.account_code is
+  //     denormalised across all posted history.
+  assertBlockGuarded('v5.11.14', server, serverGuards,
+    '// v5.11.14 — One-time relocation of legacy auto-created accounts',
+    "[v5.11.14] Legacy CoA relocation skipped", [
+      "'UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE '",
+      '"UPDATE gl_accounts SET code = ?, parent_id = ?, level = 4 WHERE id = ?"',
     ]);
-  const inventoryControlStart = server.indexOf('// Keep the single operational Inventory Control account');
-  const inventoryControlEnd = server.indexOf("[inventory-control] placement check skipped", inventoryControlStart);
-  const inventoryControlBlock = server.slice(inventoryControlStart, inventoryControlEnd);
-  const inventoryControlCode = inventoryControlBlock.replace(/^\s*\/\/.*$/gm, '');
-  check('[inventory-control] boot never renumbers any account',
-    !/SET code\s*=/.test(inventoryControlCode));
-  check('[inventory-control] boot does not revive stage/category accounts',
-    !/1210|1220|1230/.test(inventoryControlCode));
+  check('[v5.11.14] the diagnostic still reports the renumbering separately',
+    /would RENUMBER/.test(server));
 
   // (2) V5.7.18 — writes account_name onto POSTED journal lines.
   assertBlockGuarded('V5.7.18', server, serverGuards,

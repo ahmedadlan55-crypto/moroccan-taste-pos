@@ -4,7 +4,7 @@
  *
  * Every posting engine currently resolves its accounts by literal string
  * code — lib/glPosting.js CORE_ACCOUNTS (25), lib/hrGLPosting.js
- * SALARY_ACCOUNTS (8), the remaining governed erp-core fallbacks, and
+ * SALARY_ACCOUNTS (8), routes/erp-core.js WASTE_ACCOUNT_BY_REASON (6), and
  * roughly a hundred more scattered across routes/ and lib/. account_roles
  * exists to replace all of them.
  *
@@ -56,18 +56,18 @@ const NOT_A_GL_CODE = [
 //   lib/glPosting.js 52 — CORE_ACCOUNTS: 25 codes plus the parent code each
 //                       one declares. This is THE map account_roles replaces.
 const BUDGET = {
-  'lib/glPosting.js': 50,
+  'lib/glPosting.js': 52,
   'lib/hrGLPosting.js': 35,
   'lib/order-to-cash/accounts.js': 7,
   'lib/procurement/accounts.js': 3,
-  'lib/procurement/posting.js': 3,
-  'routes/erp.js': 122,
-  'routes/erp-core.js': 2,
+  'lib/procurement/posting.js': 6,
+  'routes/erp.js': 123,
+  'routes/erp-core.js': 7,
   'routes/cash.js': 2,
   'routes/custody.js': 9,
   'routes/inventory.js': 4,
   'routes/expenses.js': 3,
-  'routes/sales.js': 3,
+  'routes/sales.js': 5,
   'routes/erp/vat.js': 3,
   'routes/procurement/invoices.js': 1,
   'services/order-to-cash/InvoiceService.js': 1,

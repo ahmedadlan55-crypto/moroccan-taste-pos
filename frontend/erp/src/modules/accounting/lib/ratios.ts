@@ -72,10 +72,10 @@ function div(a: number | null, b: number | null): number | null {
   return a / b;
 }
 
-const NO_COGS = "لا توجد قيمة مصنفة كتكلفة مبيعات في قائمة الدخل.";
-const NO_CURRENT_ASSETS = "لا توجد قيمة مصنفة كأصول متداولة في قائمة المركز المالي.";
-const NO_CURRENT_LIAB = "لا توجد قيمة مصنفة كالتزامات متداولة في قائمة المركز المالي.";
-const NO_INVENTORY = "لا توجد قيمة مصنفة كمخزون في قائمة المركز المالي.";
+const NO_COGS = "لا توجد حسابات تكلفة بضاعة مباعة (51xx) في دليل الحسابات.";
+const NO_CURRENT_ASSETS = "لا توجد حسابات أصول متداولة (11xx) في دليل الحسابات.";
+const NO_CURRENT_LIAB = "لا توجد حسابات التزامات متداولة (21xx) في دليل الحسابات.";
+const NO_INVENTORY = "لا توجد حسابات مخزون (112x) في دليل الحسابات.";
 const NO_REVENUE = "لا توجد إيرادات في الفترة المحددة.";
 
 // Arabic reason text → stable code (so the UI can localize the reason without
@@ -179,33 +179,22 @@ export function computeRatios(i: RatioInputs): Ratio[] {
 
 /** Map the balance-sheet + P&L API payloads onto the ratio inputs. */
 export function extractInputs(
-  bs: {
-    totals?: { assets?: number; liabilities?: number; equity?: number };
-    assets?: AccountRow[]; liabilities?: AccountRow[];
-    totalAssets?: number; totalLiabilities?: number; totEq?: number;
-    totCA?: number; totCL?: number;
-    groups?: { currentAssets?: { inventory?: { total?: number } } };
-  } | undefined,
-  pnl: {
-    summary?: { totalRevenue?: number; totalExpense?: number; netProfit?: number };
-    expenses?: AccountRow[];
-    totalRevenue?: number; totalExpense?: number; totalCOGS?: number; netIncome?: number;
-  } | undefined,
+  bs: { totals?: { assets?: number; liabilities?: number; equity?: number }; assets?: AccountRow[]; liabilities?: AccountRow[] } | undefined,
+  pnl: { summary?: { totalRevenue?: number; totalExpense?: number; netProfit?: number }; expenses?: AccountRow[] } | undefined,
 ): RatioInputs {
   const bst = bs?.totals ?? {};
   const psum = pnl?.summary ?? {};
-  const revenue = Number(pnl?.totalRevenue ?? psum.totalRevenue ?? 0);
-  const totalExpense = Number(pnl?.totalExpense ?? psum.totalExpense ?? 0);
-  const governedInventory = bs?.groups?.currentAssets?.inventory?.total;
+  const revenue = Number(psum.totalRevenue ?? 0);
+  const totalExpense = Number(psum.totalExpense ?? 0);
   return {
-    totalAssets: Number(bs?.totalAssets ?? bst.assets ?? 0),
-    currentAssets: bs?.totCA != null ? Number(bs.totCA) : sumByPrefix(bs?.assets, ["11"]),
-    inventory: governedInventory != null ? Number(governedInventory) : sumByPrefix(bs?.assets, ["112", "1200"]),
-    totalLiabilities: Number(bs?.totalLiabilities ?? bst.liabilities ?? 0),
-    currentLiabilities: bs?.totCL != null ? Number(bs.totCL) : sumByPrefix(bs?.liabilities, ["21"]),
-    equity: Number(bs?.totEq ?? bst.equity ?? 0),
+    totalAssets: Number(bst.assets ?? 0),
+    currentAssets: sumByPrefix(bs?.assets, ["11"]),
+    inventory: sumByPrefix(bs?.assets, ["112"]),
+    totalLiabilities: Number(bst.liabilities ?? 0),
+    currentLiabilities: sumByPrefix(bs?.liabilities, ["21"]),
+    equity: Number(bst.equity ?? 0),
     revenue,
-    cogs: pnl?.totalCOGS != null ? Number(pnl.totalCOGS) : sumByPrefix(pnl?.expenses, ["51"]),
-    netIncome: Number(pnl?.netIncome ?? psum.netProfit ?? revenue - totalExpense),
+    cogs: sumByPrefix(pnl?.expenses, ["51"]),
+    netIncome: Number(psum.netProfit ?? revenue - totalExpense),
   };
 }

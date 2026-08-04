@@ -43,8 +43,6 @@ export interface CoaTreeProps {
   accounts: GlAccount[];
   /** Ids passing the page's search + filters; null means "no filtering". */
   matchIds: Set<string> | null;
-  /** Search/explicit filters open ancestor chains; a default lifecycle scope does not. */
-  forceOpenMatches?: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Enter / double-click — open the routed detail page. */
@@ -70,7 +68,6 @@ interface FlatRow {
 export function CoaTree({
   accounts,
   matchIds,
-  forceOpenMatches = true,
   selectedId,
   onSelect,
   onActivate,
@@ -102,7 +99,7 @@ export function CoaTree({
       let cursor = byId.get(id)?.parentId ?? null;
       let hops = 0;
       while (cursor && hops < 64) {
-        if (forceOpenMatches) open.add(cursor);
+        open.add(cursor);
         if (vis.has(cursor)) break;
         vis.add(cursor);
         cursor = byId.get(cursor)?.parentId ?? null;
@@ -110,7 +107,7 @@ export function CoaTree({
       }
     }
     return { visible: vis, forceOpen: open };
-  }, [matchIds, byId, forceOpenMatches]);
+  }, [matchIds, byId]);
 
   const isOpen = useCallback(
     (id: string) => (forceOpen ? forceOpen.has(id) || openIds.has(id) : openIds.has(id)),

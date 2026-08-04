@@ -7,9 +7,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 
-export type Granularity = "daily" | "monthly";
+export type Granularity = "daily" | "monthly" | "invoice";
 
-export const GRANULARITIES: Granularity[] = ["daily", "monthly"];
+export const GRANULARITIES: Granularity[] = ["daily", "monthly", "invoice"];
 
 export interface QueueSource {
   id: number;

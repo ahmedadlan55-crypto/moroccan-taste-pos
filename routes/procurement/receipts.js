@@ -268,12 +268,7 @@ router.post('/:id/post', requireCapability('receipts.post'), async (req, res) =>
         const [lines] = await conn.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ?', [req.params.id]);
         if (!lines.length) throw err('VALIDATION_ERROR', 'لا توجد سطور للاستلام');
         const stock = await inv.applyReceiptStock(conn, { grn: Object.assign({}, row, { posted_by: actor }), lines, actor });
-        const journalId = await posting.postReceipt(conn, {
-          grn: Object.assign({}, row, { posted_by: actor }),
-          net: stock.netValue,
-          warehouseId: row.warehouse_id,
-          valueByWarehouse: stock.valueByWarehouse,
-        });
+        const journalId = await posting.postReceipt(conn, { grn: Object.assign({}, row, { posted_by: actor }), net: stock.netValue, warehouseId: row.warehouse_id });
         await _rollupPO(conn, row.po_id, actor);
         return {
           extraSets: { gl_journal_id: journalId, subtotal: stock.netValue, total: stock.netValue },

@@ -7,7 +7,7 @@
  * one-line-per-order noise instead of an accounting record anyone can read.
  *
  * THE MODEL: a sale no longer posts. It ENQUEUES an economic event. Later, a
- * human picks a granularity — daily or monthly — presses
+ * human picks a granularity — daily, monthly, or invoice-by-invoice — presses
  * Post, and one aggregated journal is created for the whole batch. The detail
  * stays visible in every mode, because the queue keeps a row per event no
  * matter how those rows are grouped.
@@ -120,7 +120,6 @@ async function apply(db, log = () => {}) {
 
       -- The pending-screen query: status + day, scoped by brand/branch.
       KEY ix_spq_status_day (status, business_day),
-      KEY ix_spq_status_calendar (status, calendar_date),
       KEY ix_spq_batch (batch_id),
       KEY ix_spq_scope (brand_id, branch_id, business_day)
     ) ${TBL}`, log);
@@ -130,9 +129,7 @@ async function apply(db, log = () => {}) {
     CREATE TABLE sales_posting_batches (
       id ${ID} PRIMARY KEY,
 
-      -- 'daily' | 'monthly' — how the queue was sliced.
-      -- Invoice drill-down is in batch_items; the GL is
-      -- intentionally never posted invoice-by-invoice.
+      -- 'daily' | 'monthly' | 'invoice' — how the queue was sliced.
       granularity VARCHAR(20) NOT NULL,
 
       -- The bucket key this batch covers, e.g. '2026-07-29' or '2026-07'.
@@ -171,19 +168,6 @@ async function apply(db, log = () => {}) {
       UNIQUE KEY uq_spb_idem (idempotency_key),
       KEY ix_spb_bucket (granularity, bucket_key),
       KEY ix_spb_status (status, journal_date)
-    ) ${TBL}`, log);
-
-  // One durable counter per accounting bucket. Posting may happen more than
-  // once for the same day/month when late sales arrive after an earlier batch.
-  // Incrementing this row inside the posting transaction serialises those
-  // generations and keeps their idempotency keys distinct.
-  await H.createTable(db, 'sales_posting_bucket_sequences', `
-    CREATE TABLE sales_posting_bucket_sequences (
-      granularity VARCHAR(20) NOT NULL,
-      bucket_key VARCHAR(190) NOT NULL,
-      last_cycle INT UNSIGNED NOT NULL DEFAULT 0,
-      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (granularity, bucket_key)
     ) ${TBL}`, log);
 
   // ── Batch membership: append-only ────────────────────────────────────────

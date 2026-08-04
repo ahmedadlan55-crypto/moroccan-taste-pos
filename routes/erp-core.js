@@ -21,7 +21,7 @@ const acctDate = require('../lib/accountingDate');
 const db = require('../db/connection');
 const gl = require('../lib/glPosting');
 // v7.1 — waste must actually deduct warehouse stock + carry a document number.
-const { deductWarehouseStock } = require('../lib/stockRecompute');
+const { recomputeInvItemStock, deductWarehouseStock } = require('../lib/stockRecompute');
 const { nextDocNumber } = require('../lib/docNumber');
 // v4 SECURITY — this router is mounted at /api/erp (server.js) and had ZERO
 // capability or role guards, while it contains THREE gl.postJournal call sites
@@ -47,26 +47,6 @@ const isPeriodClosed = (date) => gl.isPeriodClosed(db, date);
 
 function genId(prefix) {
   return prefix + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-}
-
-function roundMoney(value) {
-  return Math.round((Number(value) || 0) * 100) / 100;
-}
-
-function roundCost(value) {
-  return Math.round((Number(value) || 0) * 10000) / 10000;
-}
-
-// The shared legacy helper intentionally swallows failures for ancient schemas.
-// These routes move stock and money together, so their roll-up is part of the
-// transaction contract and must fail closed instead.
-async function recomputeInvItemStockStrict(conn, itemId) {
-  await conn.query(
-    `UPDATE inv_items i SET i.stock =
-       (SELECT COALESCE(SUM(ws.qty), 0) FROM warehouse_stock ws WHERE ws.item_id = i.id)
-     WHERE i.id = ?`,
-    [itemId]
-  );
 }
 
 // ═══════════════════════════════════════
@@ -1645,12 +1625,7 @@ router.get('/waste-entries', requireCapability('inventory.view'), async (req, re
     const fromDate = req.query.fromDate || req.query.from;
     const toDate   = req.query.toDate   || req.query.to;
 
-    // Reversed documents remain append-only evidence, but the legacy list is an
-    // active-work list. Hide rows carrying the committed reversal marker so the
-    // old UI keeps its former "removed after delete" behaviour.
-    const where = [
-      "NOT EXISTS (SELECT 1 FROM inventory_movements wr WHERE wr.reference_type='waste_reversal' AND wr.reference_id=w.id)",
-    ];
+    const where = ['1=1'];
     const params = [];
     if (brand_id)     { where.push('w.brand_id = ?');     params.push(brand_id); }
     if (branch_id)    { where.push('w.branch_id = ?');    params.push(branch_id); }
@@ -1743,142 +1718,69 @@ router.get('/waste-entries', requireCapability('inventory.view'), async (req, re
   } catch(e) { res.status(500).json({ error: e.message, items: [] }); }
 });
 
-// A posted waste document is financial evidence: never delete it. This legacy
-// DELETE endpoint is retained for UI compatibility, but now performs one
-// append-only compensating transaction (stock + lot ledger + GL linkage).
+// v5.10.34 — Delete a waste entry (and reverse its inventory + GL effect).
+// Wrapped in db.withTransaction so a partial failure can never leave a
+// half-deleted entry.
 router.delete('/waste-entries/:id', requireCapability('waste.create'), async (req, res) => {
   try {
     const id = req.params.id;
-    const actor = (req.user && req.user.username) || 'system';
-    const result = await db.withTransaction(async (conn) => {
-      const [hdr] = await conn.query('SELECT * FROM waste_entries WHERE id = ? FOR UPDATE', [id]);
-      if (!hdr.length) return { status: 404, body: { success: false, error: 'not-found' } };
-      const w = hdr[0];
+    const [hdr] = await db.query('SELECT * FROM waste_entries WHERE id = ?', [id]);
+    if (!hdr.length) return res.status(404).json({ success:false, error:'not-found' });
+    const w = hdr[0];
+    const [lines] = await db.query('SELECT * FROM waste_entry_items WHERE waste_id = ?', [id]);
 
-      // This movement is the idempotency marker for zero-value waste too (which
-      // legitimately has no journal). It is committed with every other effect.
-      const [priorReverse] = await conn.query(
-        "SELECT id FROM inventory_movements WHERE reference_type='waste_reversal' AND reference_id=? LIMIT 1 FOR UPDATE",
-        [id]
-      );
-      if (priorReverse.length) {
-        const [rj] = await conn.query(
-          "SELECT id, journal_number FROM gl_journals WHERE reference_type='WasteEntryReversal' AND reference_id=? ORDER BY created_at DESC LIMIT 1",
-          [id]
-        );
-        return { status: 200, body: {
-          success: true, id, reversed: true, replayed: true,
-          reversalJournalId: rj[0] ? rj[0].id : null,
-          reversalJournalNumber: rj[0] ? rj[0].journal_number : null,
-        } };
-      }
-
-      const [lines] = await conn.query(
-        `SELECT wi.*, i.name AS item_name, COALESCE(i.tracking_mode,'none') AS tracking_mode
-           FROM waste_entry_items wi
-           LEFT JOIN inv_items i ON i.id=wi.item_id
-          WHERE wi.waste_id=? FOR UPDATE`,
-        [id]
-      );
-      if (!lines.length) throw Object.assign(new Error('Waste document has no lines'), { code: 'WASTE_LINES_MISSING' });
-
-      const [originalJournals] = await conn.query(
-        "SELECT * FROM gl_journals WHERE reference_type='WasteEntry' AND reference_id=? ORDER BY created_at FOR UPDATE",
-        [id]
-      );
-      if (roundMoney(w.total_cost) > 0 && !originalJournals.length) {
-        throw Object.assign(new Error('Waste GL journal is missing; stock was not reversed'), { code: 'WASTE_GL_MISSING' });
-      }
-      if (originalJournals.some((j) => j.reversed_by_journal_id)) {
-        throw Object.assign(new Error('Waste GL is already reversed without its stock marker'), { code: 'WASTE_REVERSAL_CONFLICT' });
-      }
-
-      // Tracked items must return to the exact lots consumed by the original
-      // waste document. Old malformed documents with no allocation fail closed.
-      const tracked = lines.filter((l) => l.tracking_mode === 'lot' || l.tracking_mode === 'expiry');
-      if (tracked.length) {
-        const expected = new Map();
-        for (const l of tracked) expected.set(l.item_id, roundCost((expected.get(l.item_id) || 0) + Number(l.quantity)));
-        const [allocRows] = await conn.query(
-          `SELECT item_id, SUM(-signed_qty) AS qty
-             FROM inventory_lot_movements
-            WHERE reference_type='waste' AND reference_id=?
-            GROUP BY item_id`,
-          [id]
-        );
-        const actual = new Map(allocRows.map((r) => [r.item_id, roundCost(r.qty)]));
-        for (const [itemId, qty] of expected) {
-          if (Math.abs((actual.get(itemId) || 0) - qty) > 0.001) {
-            throw Object.assign(new Error('Exact lot allocation is missing for tracked waste item ' + itemId), { code: 'WASTE_LOT_HISTORY_MISSING' });
-          }
-        }
-        const lotLedger = require('../lib/lotLedger');
-        await lotLedger.reverseAllocation(conn, {
-          referenceType: 'waste', referenceId: id, movementSeq: null, movementId: null,
-          actor, occurredAt: new Date(),
-        });
-      }
-
+    const runner = async (conn) => {
+      const c = conn || db;
+      // 1. Reverse inventory_movements: insert opposite (positive) entries
       for (const l of lines) {
-        const qty = Number(l.quantity);
-        if (!Number.isFinite(qty) || qty <= 0) throw new Error('Invalid stored waste quantity');
-        const snapshotCost = Math.max(0, Number(l.unit_cost) || 0);
-        await conn.query(
-          `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated)
-           VALUES (?,?,?,?,?,?,NOW())
-           ON DUPLICATE KEY UPDATE qty=qty+VALUES(qty), last_updated=NOW()`,
-          [genId('WS'), w.warehouse_id, l.item_id, qty, snapshotCost, snapshotCost]
-        );
-        await recomputeInvItemStockStrict(conn, l.item_id);
-        await conn.query(
-          `INSERT INTO inventory_movements
-             (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
-           VALUES (?,NOW(),?,?,?,?,?,?,?,?,?,?)`,
-          [genId('IM'), l.item_id, l.item_name || '', 'in', qty, 'Waste reversal', actor,
-           'Reversal of ' + (w.waste_number || id), w.warehouse_id, 'waste_reversal', id]
-        );
+        try {
+          // v7.1 — STANDARD movement shape (type/qty/reason/warehouse_id) so the
+          // warehouse ledger actually shows the reversal. The old txn_type/quantity
+          // columns are not read by the ledger, so reversals were invisible there.
+          await c.query(
+            `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
+             VALUES (?,NOW(),?,?,?,?,?,?,?,?,?,?)`,
+            [genId('IM'), l.item_id, l.item_name || '', 'in', Number(l.quantity) || 0, 'عكس هدر',
+             (req.user && req.user.username) || 'system', 'عكس هدر ' + id, w.warehouse_id, 'waste_reversal', id]);
+        } catch (_) {}
+        // Restore warehouse_stock qty
+        try {
+          await c.query(
+            'UPDATE warehouse_stock SET qty = qty + ? WHERE warehouse_id = ? AND item_id = ?',
+            [Number(l.quantity) || 0, w.warehouse_id, l.item_id]);
+        } catch (_) {}
+        // v7.1 — keep the global rollup (inv_items.stock) in sync after the
+        // restore, else inv_items.stock drifts from SUM(warehouse_stock.qty).
+        try { await recomputeInvItemStock(c, l.item_id); } catch (_) {}
       }
+      // 2. Reverse GL journal
+      try {
+        const [j] = await c.query('SELECT id FROM gl_journals WHERE reference_type = ? AND reference_id = ?', ['WasteEntry', id]);
+        for (const journal of j) {
+          const [es] = await c.query('SELECT * FROM gl_entries WHERE journal_id = ?', [journal.id]);
+          for (const e of es) {
+            if (e.account_id) {
+              const reverseAmount = (Number(e.credit) || 0) - (Number(e.debit) || 0);
+              await c.query('UPDATE gl_accounts SET balance = balance + ? WHERE id = ?', [reverseAmount, e.account_id]);
+            }
+          }
+          await c.query('DELETE FROM gl_entries WHERE journal_id = ?', [journal.id]);
+          await c.query('DELETE FROM gl_journals WHERE id = ?', [journal.id]);
+        }
+      } catch (_) {}
+      // 3. Delete the waste entry + items
+      await c.query('DELETE FROM waste_entry_items WHERE waste_id = ?', [id]);
+      await c.query('DELETE FROM waste_entries WHERE id = ?', [id]);
+    };
 
-      if (tracked.length) {
-        const lotLedger = require('../lib/lotLedger');
-        for (const l of tracked) await lotLedger.assertInvariant(conn, w.warehouse_id, l.item_id);
-      }
+    try {
+      if (typeof db.withTransaction === 'function') await db.withTransaction(runner);
+      else await runner(null);
+    } catch (txErr) {
+      return res.status(500).json({ success:false, error: txErr.message });
+    }
 
-      const reversalJournals = [];
-      for (const original of originalJournals) {
-        const [entries] = await conn.query('SELECT * FROM gl_entries WHERE journal_id=? ORDER BY id', [original.id]);
-        if (!entries.length) throw new Error('Original waste journal has no entries');
-        const post = await gl.postJournal(conn, {
-          journalDate: acctDate.journalDate(),
-          description: 'Reversal of waste ' + (w.waste_number || id),
-          referenceType: 'WasteEntryReversal',
-          referenceId: id,
-          postedBy: actor,
-          entries: entries.map((e) => ({
-            accountCode: e.account_code,
-            debit: roundMoney(e.credit), credit: roundMoney(e.debit),
-            description: 'Reversal: ' + (e.description || ''),
-            branchId: e.branch_id || null, brandId: e.brand_id || null,
-            costCenterId: e.cost_center_id || null, warehouseId: e.warehouse_id || null,
-          })),
-        });
-        if (!post || !post.success) throw new Error((post && post.error) || 'Waste reversal GL posting failed');
-        await conn.query(
-          'UPDATE gl_journals SET reversed_by_journal_id=?, reversed_at=NOW(), reversed_by=? WHERE id=?',
-          [post.journalId, actor, original.id]
-        );
-        await conn.query('UPDATE gl_journals SET reverses_journal_id=? WHERE id=?', [original.id, post.journalId]);
-        reversalJournals.push({ id: post.journalId, number: post.journalNumber || null });
-      }
-
-      return { status: 200, body: {
-        success: true, id, reversed: true, reversedLines: lines.length,
-        reversalJournalId: reversalJournals[0] ? reversalJournals[0].id : null,
-        reversalJournalNumber: reversalJournals[0] ? reversalJournals[0].number : null,
-      } };
-    });
-
-    res.status(result.status).json(result.body);
+    res.json({ success: true, id, reversedLines: lines.length });
   } catch (e) { res.status(500).json({ success:false, error: e.message }); }
 });
 
@@ -1920,9 +1822,10 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
       if (!Number.isFinite(q) || q <= 0) {
         return res.json({ success: false, error: 'الكمية يجب أن تكون رقمًا أكبر من صفر' });
       }
-      // unitCost is deliberately not trusted here. Waste valuation is the
-      // warehouse WAC snapshot (falling back to the item master cost), derived
-      // under a DB row lock inside the transaction.
+      const c = Number(it.unitCost);
+      if (it.unitCost !== undefined && it.unitCost !== null && it.unitCost !== '' && (!Number.isFinite(c) || c < 0)) {
+        return res.json({ success: false, error: 'التكلفة يجب أن تكون رقمًا غير سالب' });
+      }
     }
 
     const effectiveDate = wasteDate || new Date().toISOString().slice(0, 10);
@@ -1945,119 +1848,70 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
       }
     }
 
+    // Compute total + insert header
+    let total = 0;
+    items.forEach(it => { total += (Number(it.quantity) || 0) * (Number(it.unitCost) || 0); });
+    total = Math.round(total * 100) / 100;
+
     const id = genId('WE');
     // v7.1 — sequential document number (WST-YYYYMMDD-NNNN)
     let wasteNumber = '';
     try { wasteNumber = await nextDocNumber(db, 'WST'); } catch(_) { wasteNumber = ''; }
-    const wasteAccountCode = gl.CORE_ACCOUNTS.WASTE_EXPENSE.code;
+    const _wasteNow = new Date();
 
-    // Header + derived valuation + stock + movements + GL are one transaction.
-    // A posting failure is fatal and rolls every preceding stock write back.
+    // v4 — resolve item names ONCE from inv_items. The movement rows used
+    // `it.itemName`, which the client never sends, so every waste movement was
+    // written with item_name='' and the warehouse ledger showed nameless rows.
+    const nameById = new Map();
+    try {
+      const ids = [...new Set(items.map((it) => it.itemId))];
+      const [rows] = await db.query(
+        `SELECT id, name FROM inv_items WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+      rows.forEach((r) => nameById.set(r.id, r.name || ''));
+    } catch (_) { /* names are cosmetic on the ledger — never block the write */ }
+
+    // v4 — ONE transaction around header + lines + stock + movements. A failure
+    // anywhere now rolls the whole entry back instead of leaving partial stock
+    // deducted with no header. Mirrors the DELETE sibling at :1591.
     const writeAll = async (conn) => {
-      const ids = [...new Set(items.map((it) => String(it.itemId)))];
-      // Materialise missing warehouse rows first. The unique-key upsert acquires
-      // a row lock, so the WAC used below cannot race an inbound receipt.
-      for (const itemId of ids) {
-        await conn.query(
-          `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty)
-           VALUES (?,?,?,0) ON DUPLICATE KEY UPDATE item_id=VALUES(item_id)`,
-          [genId('WS'), warehouseId, itemId]
-        );
-      }
-      const [catalog] = await conn.query(
-        `SELECT i.id, i.name, i.unit, i.cost, COALESCE(i.tracking_mode,'none') AS tracking_mode,
-                ws.avg_cost
-           FROM inv_items i
-           JOIN warehouse_stock ws ON ws.item_id=i.id AND ws.warehouse_id=?
-          WHERE i.id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`,
-        [warehouseId].concat(ids)
-      );
-      if (catalog.length !== ids.length) {
-        const found = new Set(catalog.map((r) => String(r.id)));
-        const missing = ids.filter((itemId) => !found.has(itemId));
-        throw Object.assign(new Error('Unknown inventory item: ' + missing.join(', ')), { code: 'ITEM_NOT_FOUND' });
-      }
-      const byId = new Map(catalog.map((r) => [String(r.id), r]));
-      const normalized = items.map((it) => {
-        const master = byId.get(String(it.itemId));
-        const qty = Number(it.quantity);
-        const whCost = Number(master.avg_cost);
-        const masterCost = Number(master.cost);
-        const unitCost = roundCost(whCost > 0 ? whCost : (masterCost > 0 ? masterCost : 0));
-        return {
-          itemId: String(it.itemId), itemName: master.name || '',
-          unit: master.unit || it.unit || 'PCS', quantity: qty, unitCost,
-          lineCost: roundMoney(qty * unitCost), trackingMode: master.tracking_mode || 'none',
-        };
-      });
-      const total = roundMoney(normalized.reduce((sum, line) => sum + line.lineCost, 0));
-
-      await conn.query(
+      const q = conn ? conn.query.bind(conn) : db.query.bind(db);
+      await q(
         `INSERT INTO waste_entries (id, waste_number, brand_id, branch_id, warehouse_id, cost_center_id, waste_date, reason, total_cost, notes, created_by, idempotency_key)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [id, wasteNumber || null, brandId||null, branchId||null, warehouseId, costCenterId||null,
          effectiveDate, reason || 'other', total, notes || '', actor, idemKey || null]);
 
-      for (const line of normalized) {
-        await conn.query(
+      for (const it of items) {
+        const _qty = Number(it.quantity);
+        const lineCost = _qty * (Number(it.unitCost) || 0);
+        await q(
           `INSERT INTO waste_entry_items (id, waste_id, item_id, quantity, unit, unit_cost, line_cost)
            VALUES (?,?,?,?,?,?,?)`,
-          [genId('WEI'), id, line.itemId, line.quantity, line.unit, line.unitCost, line.lineCost]);
+          [genId('WEI'), id, it.itemId, _qty, it.unit||'PCS',
+           Number(it.unitCost)||0, Math.round(lineCost * 100) / 100]);
 
-        await deductWarehouseStock(conn, warehouseId, line.itemId, line.quantity, {
-          referenceType: 'waste', referenceId: id, reason: 'Waste', actor,
-        });
-        await recomputeInvItemStockStrict(conn, line.itemId);
+        // v7.1 — ACTUALLY deduct from the warehouse stock (was missing → waste
+        // never reduced physical stock). Allow negative so shortages stay visible:
+        // an atomic upsert-deduct records the true deficit rather than a silent
+        // 0-rows loss when the item has no row in this warehouse.
+        // v4 — no longer swallowed: a failed deduction used to leave the entry
+        // standing while the stock never moved, which is the whole point of it.
+        await deductWarehouseStock(conn || db, warehouseId, it.itemId, _qty);
+        await recomputeInvItemStock(conn || db, it.itemId);
 
-        await conn.query(
+        // Movement in the STANDARD shape the warehouse ledger reads
+        // (type/qty/reason/warehouse_id/reference_*).
+        await q(
           `INSERT INTO inventory_movements (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id, reference_type, reference_id)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [genId('IM'), new Date(), line.itemId, line.itemName, 'out', line.quantity, 'هدر',
+          [genId('IM'), _wasteNow, it.itemId, nameById.get(it.itemId) || '', 'out', _qty, 'هدر',
            actor, wasteNumber || id, warehouseId, 'waste', id]);
       }
-
-      const trackedIds = [...new Set(normalized.filter((l) => l.trackingMode === 'lot' || l.trackingMode === 'expiry').map((l) => l.itemId))];
-      if (trackedIds.length) {
-        const lotLedger = require('../lib/lotLedger');
-        for (const itemId of trackedIds) await lotLedger.assertInvariant(conn, warehouseId, itemId);
-      }
-
-      let post = null;
-      if (total > 0) {
-        post = await gl.postJournal(conn, {
-          journalDate: acctDate.toAccountingDate(effectiveDate),
-          description: 'Waste — ' + (reason || 'other'),
-          referenceType: 'WasteEntry', referenceId: id, postedBy: actor,
-          entries: [
-            {
-              accountCode: wasteAccountCode, debit: total, credit: 0,
-              description: 'Waste cost — ' + (reason || 'other'),
-              branchId: branchId || null, brandId: brandId || null,
-              costCenterId: costCenterId || null,
-            },
-            {
-              accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: total,
-              description: 'Inventory reduction (waste)',
-              branchId: branchId || null, brandId: brandId || null,
-              warehouseId,
-            },
-          ],
-        });
-        if (!post || !post.success) throw new Error((post && post.error) || 'Waste GL posting failed');
-      }
-      return {
-        total, journalId: post ? post.journalId : null,
-        journalNumber: post ? post.journalNumber : null,
-      };
     };
 
     try {
-      const written = await db.withTransaction(writeAll);
-      return res.json({
-        success: true, id, totalCost: written.total, wasteNumber: wasteNumber || null,
-        journalId: written.journalId, journalNumber: written.journalNumber,
-        wasteAccountCode,
-      });
+      if (typeof db.withTransaction === 'function') await db.withTransaction(writeAll);
+      else await writeAll(null);
     } catch (txErr) {
       // ER_DUP_ENTRY on idempotency_key = a concurrent double-POST lost the race.
       // The winner's entry stands; return it rather than a scary error.
@@ -2068,6 +1922,55 @@ router.post('/waste-entries', requireCapability('waste.create'), async (req, res
       console.error('[erp/waste-entries] create rolled back:', txErr && (txErr.code || txErr.message));
       return res.status(500).json({ success: false, error: 'تعذّر تسجيل الهدر — لم يُحفظ شيء' });
     }
+
+    // ═══ AUTO GL POSTING (v5.10.39 — granular by reason) ═══
+    // Dr Waste sub-account (5121-5125 by reason) / Cr Inventory (warehouse)
+    // Falls back to 5200 (generic waste expense) for unmapped reasons.
+    const WASTE_ACCOUNT_BY_REASON = {
+      prep_loss:        '5121',   // هدر المواد الخام
+      damaged:          '5122',   // هدر المنتجات الجاهزة
+      expired:          '5123',   // تالف منتهي الصلاحية
+      spill:            '5124',   // هدر التشغيل (انسكاب)
+      customer_return:  '5125',   // مرتجعات العملاء
+      other:            '5200'    // مصروف الهدر العام (fallback)
+    };
+    const wasteAccountCode = WASTE_ACCOUNT_BY_REASON[reason] || '5200';
+
+    if (total > 0) {
+      const post = await gl.postJournal(db, {
+        journalDate: acctDate.toAccountingDate(wasteDate || undefined),
+        description: 'Waste — ' + (reason || 'other'),
+        referenceType: 'WasteEntry',
+        referenceId: id,
+        entries: [
+          {
+            accountCode: wasteAccountCode,   // sub-account based on reason
+            debit: total, credit: 0,
+            description: 'Waste cost — ' + (reason || 'other'),
+            branchId: branchId || null,
+            brandId: brandId || null,
+            costCenterId: costCenterId || null
+          },
+          {
+            accountCode: '1200',       // Inventory (reduction)
+            debit: 0, credit: total,
+            description: 'Inventory reduction (waste)',
+            branchId: branchId || null,
+            brandId: brandId || null,
+            warehouseId: warehouseId
+          }
+        ],
+        postedBy: actor
+      });
+      return res.json({
+        success: true, id, totalCost: total, wasteNumber: wasteNumber || null,
+        journalId: post.journalId || null,
+        journalNumber: post.journalNumber || null,
+        wasteAccountCode: wasteAccountCode,
+        postingWarning: post.success ? null : post.error
+      });
+    }
+    res.json({ success: true, id, totalCost: total, wasteNumber: wasteNumber || null });
   } catch (e) {
     console.error('[erp/waste-entries] create failed:', e && (e.code || e.message));
     res.json({ success: false, error: 'تعذّر تسجيل الهدر' });
@@ -2118,262 +2021,108 @@ router.get('/purchase-receipts', async (req, res) => {
 
 router.post('/purchase-receipts', requireCapability('purchases.create'), async (req, res) => {
   try {
-    const body = req.body || {};
-    const { poId, supplierId, warehouseId, receiptDate, lines, brandId, branchId, costCenterId } = body;
-    const actor = (req.user && req.user.username) || '';
+    const { poId, supplierId, warehouseId, receiptDate, createdBy, lines, brandId, branchId } = req.body;
     if (!warehouseId || !Array.isArray(lines) || !lines.length)
       return res.json({ success: false, error: 'المستودع والأسطر مطلوبة' });
-    if (typeof req.guardWh === 'function' && !req.guardWh(res, warehouseId)) return;
-    for (const line of lines) {
-      const qty = Number(line && line.quantity);
-      const unitCost = Number(line && line.unitCost);
-      const vatRate = line && line.vatRate != null && line.vatRate !== '' ? Number(line.vatRate) : 0;
-      if (!line || !line.itemId) return res.json({ success: false, error: 'كل سطر يحتاج صنفًا' });
-      if (!Number.isFinite(qty) || qty <= 0) return res.json({ success: false, error: 'كمية الاستلام يجب أن تكون أكبر من صفر' });
-      if (!Number.isFinite(unitCost) || unitCost < 0) return res.json({ success: false, error: 'تكلفة الاستلام غير صالحة' });
-      if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 100) return res.json({ success: false, error: 'نسبة الضريبة غير صالحة' });
-    }
-    const effectiveDate = receiptDate || new Date().toISOString().slice(0, 10);
-    if (await isPeriodClosed(effectiveDate)) {
-      return res.status(409).json({ success: false, error: 'الفترة المحاسبية مقفلة لهذا التاريخ' });
-    }
-    const idemKey = req.get('X-Idempotency-Key') || req.get('Idempotency-Key') || body.idempotencyKey || '';
-    if (idemKey) {
-      const [prior] = await db.query('SELECT id, receipt_number, total, gl_journal_id FROM purchase_receipts WHERE idempotency_key=? LIMIT 1', [idemKey]);
-      if (prior.length) return res.json({
-        success: true, id: prior[0].id, receiptNumber: prior[0].receipt_number,
-        total: Number(prior[0].total) || 0, journalId: prior[0].gl_journal_id || null, replayed: true,
-      });
-    }
+
     const id = genId('PR');
-    let rcpNumber = '';
-    try { rcpNumber = await nextDocNumber(db, 'GRN'); } catch (_) { rcpNumber = genId('GRN'); }
+    let subtotal = 0, vat = 0;
+    lines.forEach(l => {
+      const amt = (Number(l.quantity)||0) * (Number(l.unitCost)||0);
+      subtotal += amt;
+      vat += amt * (Number(l.vatRate)||0) / 100;
+    });
+    const total = subtotal + vat;
 
-    try {
-      const written = await db.withTransaction(async (conn) => {
-        const normalized = [];
-        let subtotal = 0;
-        let vat = 0;
-        for (const raw of lines) {
-          const qty = roundCost(raw.quantity);
-          const unitCost = roundCost(raw.unitCost);
-          const vatRate = raw.vatRate != null && raw.vatRate !== '' ? roundCost(raw.vatRate) : 0;
-          const [itemsFound] = await conn.query(
-            "SELECT id, name, unit, stock, cost, COALESCE(tracking_mode,'none') AS tracking_mode FROM inv_items WHERE id=? FOR UPDATE",
-            [raw.itemId]
-          );
-          if (!itemsFound.length) throw Object.assign(new Error('Unknown inventory item: ' + raw.itemId), { code: 'ITEM_NOT_FOUND' });
-          const item = itemsFound[0];
-
-          let poLine = null;
-          if (raw.poLineId) {
-            const [poLines] = await conn.query(
-              'SELECT id, po_id, item_id, qty, received_qty, base_qty, base_received_qty FROM po_lines WHERE id=? FOR UPDATE',
-              [raw.poLineId]
-            );
-            if (!poLines.length) throw Object.assign(new Error('Purchase-order line not found'), { code: 'PO_LINE_NOT_FOUND' });
-            poLine = poLines[0];
-            if (poId && String(poLine.po_id) !== String(poId)) throw new Error('Receipt line belongs to another purchase order');
-            if (poLine.item_id && String(poLine.item_id) !== String(raw.itemId)) throw new Error('Receipt item does not match purchase-order line');
-            const hasBase = poLine.base_qty != null && Number(poLine.base_qty) > 0;
-            const ordered = Number(hasBase ? poLine.base_qty : poLine.qty) || 0;
-            const received = Number(hasBase ? poLine.base_received_qty : poLine.received_qty) || 0;
-            if (ordered > 0 && received + qty - ordered > 0.000001) {
-              throw Object.assign(new Error('Received quantity exceeds the open purchase-order quantity'), { code: 'OVER_RECEIPT' });
-            }
-          }
-
-          const lineNet = roundMoney(qty * unitCost);
-          const lineVat = roundMoney(lineNet * vatRate / 100);
-          subtotal = roundMoney(subtotal + lineNet);
-          vat = roundMoney(vat + lineVat);
-          normalized.push({
-            raw, item, poLine, qty, unitCost, vatRate, lineNet, lineVat,
-            lineId: genId('PRL'), itemName: item.name || '', unit: item.unit || raw.unit || 'PCS',
-          });
-        }
-        const total = roundMoney(subtotal + vat);
-
-        await conn.query(
-          `INSERT INTO purchase_receipts
-             (id, po_id, supplier_id, receipt_number, receipt_date, warehouse_id,
-              brand_id, branch_id, cost_center_id, subtotal, vat_amount, total,
-              status, version, created_by, posted_by, posted_at, idempotency_key)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'posted',1,?,?,NOW(),?)`,
-          [id, poId || null, supplierId || null, rcpNumber, effectiveDate, warehouseId,
-           brandId || null, branchId || null, costCenterId || null,
-           subtotal, vat, total, actor, actor, idemKey || null]
-        );
-
-        const affectedItems = [];
-        for (const line of normalized) {
-          await conn.query(
-            `INSERT INTO purchase_receipt_lines
-               (id, receipt_id, po_line_id, item_id, item_name, quantity, unit, unit_cost,
-                vat_rate, line_total, entered_qty, entered_unit_code,
-                conversion_factor_snapshot, base_qty, base_unit_cost, warehouse_id,
-                lot_no, expiry_date)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
-            [line.lineId, id, line.raw.poLineId || null, line.raw.itemId, line.itemName,
-             line.qty, line.unit, line.unitCost, line.vatRate, line.lineNet,
-             line.qty, line.unit, line.qty, line.unitCost, warehouseId,
-             line.raw.lotNo || line.raw.lot_no || null,
-             line.raw.expiryDate || line.raw.expiry_date || null]
-          );
-
-          await conn.query(
-            `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated)
-             VALUES (?,?,?,0,0,0,NOW()) ON DUPLICATE KEY UPDATE item_id=VALUES(item_id)`,
-            [genId('WS'), warehouseId, line.raw.itemId]
-          );
-          const [stockRows] = await conn.query(
-            'SELECT id, qty, avg_cost FROM warehouse_stock WHERE warehouse_id=? AND item_id=? FOR UPDATE',
-            [warehouseId, line.raw.itemId]
-          );
-          // A receipt can contain the same item more than once. Re-read its
-          // current locked roll-up so each line builds on the prior line's WAC.
-          const [currentItems] = await conn.query(
-            "SELECT stock, cost, COALESCE(tracking_mode,'none') AS tracking_mode FROM inv_items WHERE id=? FOR UPDATE",
-            [line.raw.itemId]
-          );
-          const currentItem = currentItems[0];
-          const stock = stockRows[0];
-          const oldWhQty = Number(stock.qty) || 0;
-          const oldWhCost = Number(stock.avg_cost) > 0 ? Number(stock.avg_cost) : (Number(currentItem.cost) || line.unitCost);
-          const whValue = Math.max(0, oldWhQty) * oldWhCost;
-          const newWhQty = roundCost(oldWhQty + line.qty);
-          const newWhCost = roundCost((whValue + line.qty * line.unitCost) / (Math.max(0, oldWhQty) + line.qty));
-
-          const oldGlobalQty = Number(currentItem.stock) || 0;
-          const oldGlobalCost = Number(currentItem.cost) || line.unitCost;
-          const globalValue = Math.max(0, oldGlobalQty) * oldGlobalCost;
-          const newGlobalCost = roundCost((globalValue + line.qty * line.unitCost) / (Math.max(0, oldGlobalQty) + line.qty));
-          await conn.query(
-            'UPDATE warehouse_stock SET qty=?, avg_cost=?, last_cost=?, last_updated=NOW() WHERE id=?',
-            [newWhQty, newWhCost, line.unitCost, stock.id]
-          );
-
-          const mode = String(currentItem.tracking_mode || 'none');
-          if (mode === 'lot' || mode === 'expiry') {
-            const lotLedger = require('../lib/lotLedger');
-            await lotLedger.receiveInbound(conn, {
-              warehouseId, itemId: line.raw.itemId, qty: line.qty, trackingMode: mode,
-              movementSeq: null, movementId: null, referenceType: 'PurchaseReceipt', referenceId: id,
-              reason: 'Purchase receipt', actor, occurredAt: new Date(), now: new Date(),
-              lot: {
-                lotNumber: line.raw.lotNo || line.raw.lot_no || null,
-                expiryDate: line.raw.expiryDate || line.raw.expiry_date || null,
-                manufactureDate: line.raw.manufactureDate || line.raw.manufacture_date || null,
-                unitCost: line.unitCost, sourceType: 'PurchaseReceipt', sourceId: id,
-              },
-            });
-            await lotLedger.assertInvariant(conn, warehouseId, line.raw.itemId);
-          }
-
-          await recomputeInvItemStockStrict(conn, line.raw.itemId);
-          await conn.query('UPDATE inv_items SET cost=? WHERE id=?', [newGlobalCost, line.raw.itemId]);
-          await conn.query(
-            `INSERT INTO inventory_movements
-               (id, movement_date, item_id, item_name, type, qty, reason, username,
-                notes, warehouse_id, reference_type, reference_id)
-             VALUES (?,NOW(),?,?,?,?,?,?,?,?,?,?)`,
-            [genId('IM'), line.raw.itemId, line.itemName, 'in', line.qty, 'Purchase receipt',
-             actor, rcpNumber, warehouseId, 'PurchaseReceipt', id]
-          );
-
-          const [lot] = await conn.query(
-            `INSERT INTO purchase_lots
-               (inv_item_id, purchase_id, received_date, qty_received, qty_remaining,
-                unit_cost, batch_number, expiry_date, warehouse_id, received_at)
-             VALUES (?,?,NOW(),?,?,?,?,?,?,NOW())`,
-            [line.raw.itemId, poId || id, line.qty, line.qty, line.unitCost,
-             line.raw.lotNo || line.raw.lot_no || null,
-             line.raw.expiryDate || line.raw.expiry_date || null, warehouseId]
-          );
-          await conn.query('UPDATE purchase_receipt_lines SET purchase_lot_id=? WHERE id=?', [lot.insertId, line.lineId]);
-
-          if (line.poLine) {
-            await conn.query(
-              `UPDATE po_lines
-                  SET received_qty=COALESCE(received_qty,0)+?,
-                      base_received_qty=COALESCE(base_received_qty,0)+?,
-                      line_status=CASE WHEN COALESCE(base_received_qty,0)+? >= COALESCE(base_qty,qty)
-                                       THEN 'received' ELSE 'partially_received' END
-                WHERE id=?`,
-              [line.qty, line.qty, line.qty, line.poLine.id]
-            );
-          }
-          affectedItems.push({ itemId: line.raw.itemId, qty: line.qty, unitCost: line.unitCost, newQty: newWhQty, avgCost: newWhCost });
-        }
-
-        if (poId) {
-          const [remaining] = await conn.query(
-            'SELECT COUNT(*) AS c FROM po_lines WHERE po_id=? AND COALESCE(base_received_qty,received_qty,0) < COALESCE(base_qty,qty,0)',
-            [poId]
-          );
-          await conn.query(
-            "UPDATE purchase_orders SET status=? WHERE id=? AND status NOT IN ('closed','cancelled')",
-            [Number(remaining[0].c) === 0 ? 'fully_received' : 'partially_received', poId]
-          );
-        }
-
-        let post = null;
-        if (total > 0) {
-          const entries = [{
-            accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: subtotal, credit: 0,
-            description: 'Goods received — ' + rcpNumber,
-            branchId: branchId || null, brandId: brandId || null,
-            costCenterId: costCenterId || null, warehouseId,
-          }];
-          if (vat > 0) entries.push({
-            accountCode: gl.CORE_ACCOUNTS.INPUT_VAT.code, debit: vat, credit: 0,
-            description: 'Input VAT — ' + rcpNumber,
-            branchId: branchId || null, brandId: brandId || null,
-            costCenterId: costCenterId || null,
-          });
-          entries.push({
-            accountCode: gl.CORE_ACCOUNTS.AP.code, debit: 0, credit: total,
-            description: 'Supplier liability — ' + rcpNumber,
-            branchId: branchId || null, brandId: brandId || null,
-            costCenterId: costCenterId || null,
-            partyType: supplierId ? 'supplier' : null, partyId: supplierId || null,
-          });
-          post = await gl.postJournal(conn, {
-            journalDate: acctDate.toAccountingDate(effectiveDate),
-            description: 'Purchase receipt ' + rcpNumber,
-            referenceType: 'PurchaseReceipt', referenceId: id, entries, postedBy: actor,
-          });
-          if (!post || !post.success) throw new Error((post && post.error) || 'Purchase receipt GL posting failed');
-          await conn.query('UPDATE purchase_receipts SET gl_journal_id=? WHERE id=?', [post.journalId, id]);
-        }
-        return {
-          subtotal, vat, total, affectedItems,
-          journalId: post ? post.journalId : null,
-          journalNumber: post ? post.journalNumber : null,
-        };
-      });
-
-      return res.json({
-        success: true, id, receiptNumber: rcpNumber, total: written.total,
-        subtotal: written.subtotal, vatAmount: written.vat,
-        affectedItems: written.affectedItems,
-        journalId: written.journalId, journalNumber: written.journalNumber,
-      });
-    } catch (txErr) {
-      if (txErr && txErr.code === 'ER_DUP_ENTRY' && idemKey) {
-        const [won] = await db.query('SELECT id, receipt_number, total, gl_journal_id FROM purchase_receipts WHERE idempotency_key=? LIMIT 1', [idemKey]);
-        if (won.length) return res.json({
-          success: true, id: won[0].id, receiptNumber: won[0].receipt_number,
-          total: Number(won[0].total) || 0, journalId: won[0].gl_journal_id || null, replayed: true,
-        });
-      }
-      console.error('[erp/purchase-receipts] create rolled back:', txErr && (txErr.code || txErr.message));
-      return res.status(422).json({ success: false, error: txErr.message || 'تعذّر تسجيل الاستلام — لم يُحفظ شيء', code: txErr.code || undefined });
+    // Generate receipt number
+    const [last] = await db.query(`SELECT receipt_number FROM purchase_receipts ORDER BY created_at DESC LIMIT 1`);
+    let num = 1;
+    if (last.length && last[0].receipt_number) {
+      const m = last[0].receipt_number.match(/(\d+)/);
+      if (m) num = parseInt(m[1]) + 1;
     }
-  } catch(e) {
-    console.error('[erp/purchase-receipts] create failed:', e && (e.code || e.message));
-    res.status(500).json({ success: false, error: e.message });
-  }
+    const rcpNumber = 'GRN-' + String(num).padStart(5, '0');
+
+    await db.query(
+      `INSERT INTO purchase_receipts (id, po_id, supplier_id, receipt_number, receipt_date, warehouse_id, subtotal, vat_amount, total, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,'posted',?)`,
+      [id, poId||null, supplierId||null, rcpNumber,
+       receiptDate || new Date().toISOString().slice(0,10),
+       warehouseId, Math.round(subtotal*100)/100, Math.round(vat*100)/100, Math.round(total*100)/100, createdBy||'']);
+
+    for (const l of lines) {
+      const lineTotal = (Number(l.quantity)||0) * (Number(l.unitCost)||0);
+      await db.query(
+        `INSERT INTO purchase_receipt_lines (id, receipt_id, po_line_id, item_id, quantity, unit, unit_cost, vat_rate, line_total)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [genId('PRL'), id, l.poLineId||null, l.itemId, Number(l.quantity)||0,
+         l.unit||'PCS', Number(l.unitCost)||0, Number(l.vatRate)||15, Math.round(lineTotal*100)/100]);
+
+      // Trigger inventory movement (purchase) + avg cost recompute
+      try {
+        await db.query(
+          `INSERT INTO inventory_movements (id, item_id, warehouse_id, txn_type, quantity, unit_cost, total_cost, reference_type, reference_id, created_by, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
+          [genId('IM'), l.itemId, warehouseId, 'purchase',
+           Number(l.quantity)||0, Number(l.unitCost)||0, Math.round(lineTotal*100)/100,
+           'PurchaseReceipt', id, createdBy||'']);
+      } catch(e) { /* inventory_movements may be on an older schema */ }
+    }
+
+    // Update PO received_quantity / status (best-effort)
+    if (poId) {
+      try {
+        await db.query(
+          `UPDATE po_lines pl SET received_quantity = received_quantity + ?
+           WHERE pl.id IN (SELECT po_line_id FROM purchase_receipt_lines WHERE receipt_id = ? AND po_line_id IS NOT NULL LIMIT 1)`,
+          [0, id]);
+      } catch(e) {}
+    }
+
+    // ═══ AUTO GL POSTING ═══
+    // Dr Inventory (subtotal, by warehouse) + Dr Input VAT / Cr Accounts Payable
+    const entries = [];
+    entries.push({
+      accountCode: '1200',              // Inventory
+      debit: Math.round(subtotal * 100) / 100,
+      credit: 0,
+      description: 'Goods received — ' + rcpNumber,
+      branchId: branchId || null,
+      brandId: brandId || null,
+      warehouseId: warehouseId
+    });
+    if (vat > 0) {
+      entries.push({
+        accountCode: '1290',            // Input VAT
+        debit: Math.round(vat * 100) / 100,
+        credit: 0,
+        description: 'Input VAT — ' + rcpNumber,
+        branchId: branchId || null, brandId: brandId || null
+      });
+    }
+    entries.push({
+      accountCode: '2100',              // Accounts Payable
+      debit: 0,
+      credit: Math.round((subtotal + vat) * 100) / 100,
+      description: 'Supplier liability — ' + rcpNumber,
+      brandId: brandId || null
+    });
+    const post = await gl.postJournal(db, {
+      journalDate: acctDate.toAccountingDate(receiptDate || undefined),
+      description: 'Purchase receipt ' + rcpNumber,
+      referenceType: 'PurchaseReceipt',
+      referenceId: id,
+      entries,
+      postedBy: createdBy || ''
+    });
+
+    res.json({
+      success: true, id, receiptNumber: rcpNumber, total,
+      journalId: post.journalId || null,
+      journalNumber: post.journalNumber || null,
+      postingWarning: post.success ? null : post.error
+    });
+  } catch(e) { res.json({ success: false, error: e.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════

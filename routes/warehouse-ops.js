@@ -715,11 +715,27 @@ router.post('/stock-issues/:id/issue', BACKOFFICE, async (req, res) => {
         }
       }
 
-      // Internal transfer inside the same legal entity changes warehouse
-      // quantities only. Value remains in the single Inventory Control
-      // account, so a GL debit/credit would be noise and is intentionally not
-      // created. The immutable stock movements preserve full detail.
-      const glId = null;
+      // GL: Dr Branch Inventory / Cr Main Inventory — fatal when there's value.
+      let glId = null;
+      if (totalCost > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'stock_issue',
+          referenceId: id,
+          description: `إذن صرف ${hdr.issue_number}: من ${hdr.from_warehouse_id} إلى ${hdr.to_warehouse_id}`,
+          postedBy: issuedBy,
+          entries: [
+            { accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code, debit: totalCost, credit: 0,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.to_warehouse_id },
+            { accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: totalCost,
+              brandId: hdr.brand_id, warehouseId: hdr.from_warehouse_id }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إذن الصرف: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
 
       // Phase 0 — state-guarded flip: a concurrent double-issue (both racing
       // past the read above) loses here with affectedRows=0 and rolls its own
@@ -1022,8 +1038,41 @@ router.post('/stock-issues/:id/reverse', MGR, async (req, res) => {
         }
       }
 
-      // Reversing an internal transfer is also subledger-only.
-      const reverseGlId = null;
+      // Post a reversing GL journal — debit Main Inventory, credit Branch
+      // Inventory (mirror of the original /issue endpoint above).
+      let reverseGlId = null;
+      if (totalCost > 0.005) {
+        const result = await gl.postJournal(conn, {
+          referenceType: 'stock_issue_reverse',
+          referenceId: id,
+          description: `إرجاع إذن صرف ${hdr.issue_number}: ` + reasonText,
+          postedBy: reversedBy,
+          entries: [
+            {
+              accountCode: gl.CORE_ACCOUNTS.INVENTORY.code,
+              debit: totalCost, credit: 0,
+              brandId: hdr.brand_id,
+              warehouseId: hdr.from_warehouse_id
+            },
+            {
+              accountCode: gl.CORE_ACCOUNTS.BRANCH_INVENTORY.code,
+              debit: 0, credit: totalCost,
+              brandId: hdr.brand_id, branchId: hdr.branch_id,
+              warehouseId: hdr.to_warehouse_id
+            }
+          ]
+        });
+        if (!result || !result.success) {
+          const perr = (result && result.error) || 'unknown';
+          if (/doesn't exist|ER_NO_SUCH_TABLE/i.test(perr)) {
+            console.warn('[stock-issue reverse ' + id + '] GL skipped — gl tables absent:', perr);
+          } else {
+            const e = new Error('GL_POSTING_FAILED: ' + perr); e.status = 400; throw e;
+          }
+        } else {
+          reverseGlId = result.journalId;
+        }
+      }
 
       // State-guarded flip — a concurrent double-reverse rolls everything back.
       const fromStatus = hdr.status;
@@ -1492,18 +1541,20 @@ router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
           }
           await L.assertInvariant(conn, c.warehouse_id, c.item_id);
         }
-        // Raw material to production is an internal inventory conversion;
-        // movements and consumption rows retain the detail without a GL pair.
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: lineTotal, credit: 0,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: lineTotal,
+                       brandId: hdr.brand_id, warehouseId: c.warehouse_id });
       }
 
       if (labor > 0) {
-        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: labor, credit: 0,
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: labor, credit: 0,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.LABOR_APPLIED.code, debit: 0, credit: labor,
                        brandId: hdr.brand_id });
       }
       if (overhead > 0) {
-        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: overhead, credit: 0,
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: overhead, credit: 0,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.OVERHEAD_APPLIED.code, debit: 0, credit: overhead,
                        brandId: hdr.brand_id });
@@ -1514,7 +1565,7 @@ router.post('/production-orders/:id/release', BACKOFFICE, async (req, res) => {
       // journal and is allowed, preserving prior behavior.
       let glId = null;
       const totalCost = materialsCost + labor + overhead;
-      if (glLines.length) {
+      if (totalCost > 0.005) {
         const glRes = await gl.postJournal(conn, {
           referenceType: 'production_release',
           referenceId: id,
@@ -1624,9 +1675,27 @@ router.post('/production-orders/:id/complete', BACKOFFICE, async (req, res) => {
         await L.assertInvariant(conn, outputWh, hdr.product_id);
       }
 
-      // Finished output is another internal inventory conversion. Its value,
-      // source components and destination warehouse are fully recorded above.
-      const glId = null;
+      // GL: Dr Finished Goods / Cr WIP — fatal only when there is value to move.
+      let glId = null;
+      if (wipTotal > 0.005) {
+        const glRes = await gl.postJournal(conn, {
+          referenceType: 'production_complete',
+          referenceId: id,
+          description: `إكمال إنتاج ${hdr.order_number} — كمية ${qtyOut}`,
+          postedBy: completedBy || '',
+          entries: [
+            { accountCode: gl.CORE_ACCOUNTS.FINISHED_GOODS.code, debit: wipTotal, credit: 0,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: outputWh },
+            { accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: wipTotal,
+              brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id }
+          ]
+        });
+        if (!glRes || !glRes.success) {
+          const e = new Error('فشل ترحيل قيد إكمال الإنتاج: ' + ((glRes && glRes.error) || 'خطأ غير معروف'));
+          e.status = 400; throw e;
+        }
+        glId = glRes.journalId;
+      }
 
       // v7.4 (G2) — yield % = produced / planned (informational; never blocks).
       const _plannedQ = Number(hdr.qty_planned) || 0;
@@ -1714,7 +1783,10 @@ router.post('/production-orders/:id/reverse', MGR, async (req, res) => {
             [movId, reverseNow, c.item_id, '', 'in', qty, 'إرجاع إنتاج', reversedBy || '',
              'REVERSE PRODUCTION: ' + (hdr.order_number || id), c.warehouse_id]);
         }
-        // Restoring material reverses the inventory subledger movement only.
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: lineTotal, credit: 0,
+                       brandId: hdr.brand_id, warehouseId: c.warehouse_id });
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: lineTotal,
+                       brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: c.warehouse_id });
       }
       // Phase 4B — restore the EXACT consumed component lots (once for the order),
       // then re-check the invariant for every tracked component+warehouse.
@@ -1730,17 +1802,17 @@ router.post('/production-orders/:id/reverse', MGR, async (req, res) => {
       const overhead = Number(hdr.overhead_cost) || 0;
       if (labor > 0) {
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.LABOR_APPLIED.code, debit: labor, credit: 0, brandId: hdr.brand_id });
-        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: labor,
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: labor,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
       }
       if (overhead > 0) {
         glLines.push({ accountCode: gl.CORE_ACCOUNTS.OVERHEAD_APPLIED.code, debit: overhead, credit: 0, brandId: hdr.brand_id });
-        glLines.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: overhead,
+        glLines.push({ accountCode: gl.CORE_ACCOUNTS.WIP.code, debit: 0, credit: overhead,
                        brandId: hdr.brand_id, branchId: hdr.branch_id, warehouseId: hdr.warehouse_id });
       }
 
       let glId = null;
-      if (glLines.length) {
+      if ((materialsCost + labor + overhead) > 0.005) {
         const glRes = await gl.postJournal(conn, {
           referenceType: 'production_reverse',
           referenceId: id,

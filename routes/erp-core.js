@@ -2145,6 +2145,8 @@ async function _dimCols() {
  * GET /erp/reports/trial-balance?from=&to=&branch=&brand=&costCenter=&warehouse=&includeZero=
  *   Returns every account with opening balance, period movement (debit/credit),
  *   and closing balance. Filters by dimensions if provided.
+ *   Ledger ownership is fixed to CO-MAIN. companyId is accepted only so an
+ *   explicit non-CO-MAIN attempt can fail visibly; it is not a selector.
  *
  * Tier A (COA/Trial Balance overhaul) — delegates to the canonical engine in
  * lib/reports/trialBalance.js instead of the inline logic that used to live
@@ -2158,7 +2160,7 @@ async function _dimCols() {
  */
 router.get('/reports/trial-balance', requireCapability('finance.reports.view'), async (req, res) => {
   try {
-    const { from, to, branch, brand, costCenter, warehouse, includeZero } = req.query;
+    const { from, to, branch, brand, costCenter, warehouse, includeZero, companyId } = req.query;
     // Tier A.3 Release Gate item 7 — req.guardWh() shadow-logs instead of
     // blocking when WAREHOUSE_SCOPE_ENFORCE is off, a deliberate rollout
     // mechanism for the BROADER warehouse-ops routes (stock movements,
@@ -2174,7 +2176,7 @@ router.get('/reports/trial-balance', requireCapability('finance.reports.view'), 
       return res.status(403).json({ success: false, code: 'WAREHOUSE_ACCESS_DENIED', error: warehouseScopeLib.ACCESS_DENIED_MSG });
     }
     const result = await trialBalanceEngine.computeTrialBalance(db, {
-      from, to, branch, brand, costCenter, warehouse,
+      from, to, branch, brand, costCenter, warehouse, companyId,
       includeZero: includeZero === '1' || includeZero === 'true',
     });
     res.json(result);

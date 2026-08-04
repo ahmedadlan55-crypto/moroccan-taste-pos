@@ -55,6 +55,16 @@ function finding(section, id, where, msg, extra) {
 // ═══════════════════════════════════════════════════════════════════════════
 const ALLOWLIST = [
   {
+    file: 'db/migrations/0028_coa_metadata.sql',
+    rule: 'drop_index',
+    contains: 'DROP INDEX code',
+    reason:
+      'The company-scoped replacement uq_gl_accounts_company_code (company_id, code) is ' +
+      'created and verified before this guarded DROP. The old global code index prevented ' +
+      'separate companies from using the same canonical account number; removing it drops no ' +
+      'rows and the stricter per-company uniqueness remains active.',
+  },
+  {
     file: 'db/migrations/0019_account_role_registry_scope_fix.sql',
     rule: 'drop_index',
     contains: 'DROP INDEX uq_role_key',

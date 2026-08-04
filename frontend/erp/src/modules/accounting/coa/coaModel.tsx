@@ -22,7 +22,7 @@
 //     `isAbnormalBalance`, never the raw sign.
 
 import { cn } from "@/shared/lib";
-import { GL_TYPE_NATURE, type GlAccount } from "../api";
+import { GL_TYPE_NATURE, type GlAccount, type StatementSection } from "../api";
 
 /**
  * Legacy top-level account codes (الأصول/الالتزامات/حقوق الملكية/الإيرادات/
@@ -259,7 +259,21 @@ export function accountName(account: GlAccount, lang: string): string {
 
 // ── Structural + classification diagnostics ────────────────────────────────
 
-export type CoaIssueKind = "strayRoot" | "orphan" | "unmapped" | "abnormal" | "cycle";
+export type CoaIssueKind =
+  | "strayRoot"
+  | "orphan"
+  | "unmapped"
+  | "abnormal"
+  | "cycle"
+  | "missingEnglish"
+  | "invalidCode"
+  | "nonCanonicalCode"
+  | "codeClassMismatch"
+  | "levelMismatch"
+  | "folderFlagMismatch"
+  | "typeMismatch"
+  | "statementSectionInvalid"
+  | "statementSectionTypeMismatch";
 
 export interface CoaHealth {
   /** Parentless accounts that are not system roots. */
@@ -272,6 +286,24 @@ export interface CoaHealth {
   abnormal: GlAccount[];
   /** Accounts that are their own ancestor. */
   cycles: GlAccount[];
+  /** Accounts that cannot be presented bilingually. */
+  missingEnglish: GlAccount[];
+  /** Codes outside the governed numeric 1..5 class namespace. */
+  invalidCodes: GlAccount[];
+  /** Historical numeric codes that remain valid but are not the six-digit house format. */
+  nonCanonicalCodes: GlAccount[];
+  /** Code prefix disagrees with the account's structural root. */
+  codeClassMismatches: GlAccount[];
+  /** Stored level disagrees with the parent chain. */
+  levelMismatches: GlAccount[];
+  /** A row has children but is not explicitly marked as a folder/control. */
+  folderFlagMismatches: GlAccount[];
+  /** Account type disagrees with its structural root/parent class. */
+  typeMismatches: GlAccount[];
+  /** Stored report_section is absent from the authoritative catalog. */
+  invalidStatementSections: GlAccount[];
+  /** Stored report_section belongs to another account type. */
+  statementSectionTypeMismatches: GlAccount[];
   /** accountId → the issues it has (drives the tree/table badges). */
   byAccount: Map<string, CoaIssueKind[]>;
   /** Distinct accounts carrying at least one issue. */
@@ -286,6 +318,7 @@ export function computeHealth(
   accounts: GlAccount[],
   byParent: Map<string, GlAccount[]>,
   rollups: Map<string, number>,
+  statementSections: StatementSection[] = [],
 ): CoaHealth {
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const systemIds = new Set(getRoots(accounts).map((a) => a.id));
@@ -295,6 +328,15 @@ export function computeHealth(
   const unmapped: GlAccount[] = [];
   const abnormal: GlAccount[] = [];
   const cycles: GlAccount[] = [];
+  const missingEnglish: GlAccount[] = [];
+  const invalidCodes: GlAccount[] = [];
+  const nonCanonicalCodes: GlAccount[] = [];
+  const codeClassMismatches: GlAccount[] = [];
+  const levelMismatches: GlAccount[] = [];
+  const folderFlagMismatches: GlAccount[] = [];
+  const typeMismatches: GlAccount[] = [];
+  const invalidStatementSections: GlAccount[] = [];
+  const statementSectionTypeMismatches: GlAccount[] = [];
   const byAccount = new Map<string, CoaIssueKind[]>();
 
   const flag = (a: GlAccount, kind: CoaIssueKind) => {
@@ -306,6 +348,25 @@ export function computeHealth(
 
   for (const a of accounts) {
     const hasChildren = (byParent.get(a.id) ?? []).length > 0;
+
+    if (!a.nameEn.trim()) {
+      missingEnglish.push(a);
+      flag(a, "missingEnglish");
+    }
+    if (!/^[1-5][0-9]{0,19}$/.test(a.code)) {
+      invalidCodes.push(a);
+      flag(a, "invalidCode");
+    } else if (!/^[1-5][0-9]{5}$/.test(a.code)) {
+      // Existing short/long codes remain readable and postable until a
+      // governed migration manifest is approved; this is a warning, not an
+      // invalid-account verdict and never triggers automatic renumbering.
+      nonCanonicalCodes.push(a);
+      flag(a, "nonCanonicalCode");
+    }
+    if (hasChildren && !a.isFolder) {
+      folderFlagMismatches.push(a);
+      flag(a, "folderFlagMismatch");
+    }
 
     if (a.parentId == null) {
       if (!systemIds.has(a.id)) {
@@ -321,6 +382,8 @@ export function computeHealth(
     let cursor: string | null | undefined = a.parentId;
     const seen = new Set<string>([a.id]);
     let hops = 0;
+    let computedLevel = 1;
+    let structuralRoot = a;
     while (cursor && hops < 64) {
       if (cursor === a.id || seen.has(cursor)) {
         cycles.push(a);
@@ -328,13 +391,67 @@ export function computeHealth(
         break;
       }
       seen.add(cursor);
-      cursor = byId.get(cursor)?.parentId ?? null;
+      const parent = byId.get(cursor);
+      if (!parent) break;
+      computedLevel += 1;
+      structuralRoot = parent;
+      cursor = parent.parentId ?? null;
       hops += 1;
+    }
+
+    if (!byAccount.get(a.id)?.includes("cycle") && Number(a.level) !== computedLevel) {
+      levelMismatches.push(a);
+      flag(a, "levelMismatch");
+    }
+
+    if (!byAccount.get(a.id)?.includes("cycle") && structuralRoot) {
+      const expectedClass =
+        structuralRoot.classCode ||
+        ({ asset: "1", liability: "2", equity: "3", revenue: "4", expense: "5" } as const)[
+          structuralRoot.type
+        ];
+      if (expectedClass && a.code[0] !== expectedClass) {
+        codeClassMismatches.push(a);
+        flag(a, "codeClassMismatch");
+      }
+      if (a.type !== structuralRoot.type) {
+        typeMismatches.push(a);
+        flag(a, "typeMismatch");
+      }
     }
 
     if (isPostingAccount(a, hasChildren) && !a.reportSection) {
       unmapped.push(a);
       flag(a, "unmapped");
+    }
+
+    if (a.reportSection && statementSections.length > 0) {
+      const aliases: Record<string, string> = {
+        vat_input: "input_vat",
+        vat_output: "output_vat",
+        prepaid: "prepayments",
+        customer_deposits: "customer_advances",
+        retained: "retained_earnings",
+      };
+      const sectionId = aliases[a.reportSection] || a.reportSection;
+      const section = statementSections.find((item) => item.id === sectionId);
+      if (!section) {
+        invalidStatementSections.push(a);
+        flag(a, "statementSectionInvalid");
+      } else {
+        let expectedType: GlAccount["type"] | null = null;
+        if (section.statement === "income_statement") {
+          expectedType = section.group === "revenue" ? "revenue" : "expense";
+        } else if (section.statement === "balance_sheet") {
+          if (/Assets$/i.test(section.group)) expectedType = "asset";
+          else if (/Liabilities$/i.test(section.group)) expectedType = "liability";
+          else if (section.group === "equity") expectedType = "equity";
+        }
+        if (expectedType && a.type !== expectedType) {
+          statementSectionTypeMismatches.push(a);
+          flag(a, "statementSectionTypeMismatch");
+        }
+      }
     }
 
     const shown = nodeDisplayBalance(a, a.level - 1, hasChildren, rollups);
@@ -350,6 +467,15 @@ export function computeHealth(
     unmapped,
     abnormal,
     cycles,
+    missingEnglish,
+    invalidCodes,
+    nonCanonicalCodes,
+    codeClassMismatches,
+    levelMismatches,
+    folderFlagMismatches,
+    typeMismatches,
+    invalidStatementSections,
+    statementSectionTypeMismatches,
     byAccount,
     totalIssues: byAccount.size,
   };

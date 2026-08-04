@@ -3,11 +3,8 @@
 //
 // TWO THINGS THIS PAGE REFUSES TO DO QUIETLY
 //
-//  1. `mode=replace` DELETES every account absent from the file (all but the
-//     system roots and anything carrying posted entries). That is the single
-//     most destructive button in the accounting module, so it is opt-in, it
-//     says exactly how many rows would be deleted, and it needs the word typed
-//     to arm it.
+//  1. Replacement/deletion is retired. This screen can only create accounts
+//     or update bilingual names; structural work uses governed routes.
 //  2. It shows the parsed rows BEFORE sending them. A silent header mismatch
 //     would otherwise arrive at the server as "every row is new" and clone the
 //     entire chart.
@@ -24,20 +21,15 @@ import {
   CardBody,
   CardHeader,
   CardTitle,
-  Input,
   PageHeader,
-  SegmentedControl,
   useToast,
 } from "@/shared/ui";
-import { Field } from "@/shared/forms";
 import { useCan } from "@/app/providers";
 import { todayISO } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useImportGlAccounts, type CoaImportResult, type CoaImportRow } from "../api";
 import { COA_BASE, MANAGE_CAP } from "./routes";
 import { useCoaData } from "./useCoaData";
-
-type Mode = "update" | "replace";
 
 /** Header → CoaImportRow field. The server also accepts the Arabic headers of
  *  its own Excel export; those are passed through untouched by `rest`. */
@@ -127,23 +119,10 @@ export function CoaImportPage() {
 
   const [text, setText] = useState("");
   const [fileName, setFileName] = useState("");
-  const [mode, setMode] = useState<Mode>("update");
-  const [confirmWord, setConfirmWord] = useState("");
   const [result, setResult] = useState<CoaImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const parsed = useMemo(() => (text ? parseCsv(text) : null), [text]);
-
-  // How many existing accounts the file does NOT mention — i.e. what
-  // `replace` would try to delete. Stated before the click, not after.
-  const wouldDelete = useMemo(() => {
-    if (!parsed || mode !== "replace") return 0;
-    const seenIds = new Set(parsed.rows.map((r) => String(r.id ?? "")).filter(Boolean));
-    const seenCodes = new Set(parsed.rows.map((r) => String(r.code ?? "")).filter(Boolean));
-    return data.accounts.filter((a) => !seenIds.has(a.id) && !seenCodes.has(a.code)).length;
-  }, [parsed, mode, data.accounts]);
-
-  const armed = mode !== "replace" || confirmWord.trim().toUpperCase() === "REPLACE";
 
   function onFile(file: File | undefined) {
     if (!file) return;
@@ -157,7 +136,7 @@ export function CoaImportPage() {
   }
 
   function exportTemplate() {
-    const header = "id,code,nameAr,nameEn,type,parentCode,level,kind,displayOrder";
+    const header = "id,code,nameAr,nameEn,type,parentCode,kind";
     const body = data.accounts
       .slice()
       .sort((a, b) => a.code.localeCompare(b.code))
@@ -174,9 +153,7 @@ export function CoaImportPage() {
           cell(a.nameEn),
           cell(a.type),
           cell(parent),
-          cell(a.level),
           cell(a.isFolder ? "folder" : "leaf"),
-          cell(a.displayOrder ?? ""),
         ].join(",");
       });
     const csv = "﻿" + [header, ...body].join("\r\n");
@@ -196,7 +173,7 @@ export function CoaImportPage() {
     setError(null);
     setResult(null);
     importer.mutate(
-      { rows: parsed.rows, mode },
+      { rows: parsed.rows, mode: "update" },
       {
         onSuccess: (res) => {
           setResult(res);
@@ -206,8 +183,9 @@ export function CoaImportPage() {
           }
           toast({ tone: "success", title: t("accounting.coa.import.done") });
         },
-        onError: (e) =>
-          setError(e instanceof Error && e.message ? e.message : t("accounting.coa.import.failed")),
+        // Server-side validation is Arabic today; never leak it into English
+        // mode. Structured row diagnostics can be localized separately.
+        onError: () => setError(t("accounting.coa.import.failed")),
       },
     );
   }
@@ -263,45 +241,15 @@ export function CoaImportPage() {
                 </p>
               )}
 
-              <Field label={t("accounting.coa.import.mode")} hint={t("accounting.coa.import.modeHint")}>
-                <SegmentedControl<Mode>
-                  value={mode}
-                  onChange={(m) => {
-                    setMode(m);
-                    setConfirmWord("");
-                  }}
-                  aria-label={t("accounting.coa.import.mode")}
-                  options={[
-                    { value: "update", label: t("accounting.coa.import.modeUpdate") },
-                    { value: "replace", label: t("accounting.coa.import.modeReplace") },
-                  ]}
-                />
-              </Field>
-
-              {mode === "replace" && (
-                <div className="space-y-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
-                  <p className="text-xs font-bold leading-5 text-rose-800">
-                    {t("accounting.coa.import.replaceWarning", { count: wouldDelete })}
-                  </p>
-                  <Field label={t("accounting.coa.import.typeToConfirm")}>
-                    {({ id }) => (
-                      <Input
-                        id={id}
-                        value={confirmWord}
-                        dir="ltr"
-                        onChange={(e) => setConfirmWord(e.target.value)}
-                        placeholder="REPLACE"
-                      />
-                    )}
-                  </Field>
-                </div>
-              )}
+              <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold leading-5 text-sky-800">
+                {t("accounting.coa.import.safetyNote")}
+              </p>
 
               <Button
                 variant="primary"
                 onClick={submit}
                 loading={importer.isPending}
-                disabled={!parsed || parsed.rows.length === 0 || !armed}
+                disabled={!parsed || parsed.rows.length === 0}
               >
                 <Upload className="h-4 w-4" />{" "}
                 {t("accounting.coa.import.run", { count: parsed?.rows.length ?? 0 })}
@@ -343,7 +291,7 @@ export function CoaImportPage() {
                           <th className="px-3 py-2 text-start">{t("accounting.coa.col.code")}</th>
                           <th className="px-3 py-2 text-start">{t("accounting.coa.col.name")}</th>
                           <th className="px-3 py-2 text-start">{t("accounting.coa.form.parent")}</th>
-                          <th className="px-3 py-2 text-end">{t("accounting.coa.col.level")}</th>
+                          <th className="px-3 py-2 text-start">{t("accounting.coa.col.type")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -358,8 +306,8 @@ export function CoaImportPage() {
                             <td className="px-3 py-1.5 text-slate-500" dir="ltr">
                               {r.parentCode || "—"}
                             </td>
-                            <td className="px-3 py-1.5 text-end tabular-nums text-slate-600">
-                              {r.level ?? "—"}
+                            <td className="px-3 py-1.5 text-slate-600">
+                              {r.type || "—"}
                             </td>
                           </tr>
                         ))}
@@ -371,14 +319,7 @@ export function CoaImportPage() {
 
               {result && result.success !== false && (
                 <dl className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                  {(
-                    [
-                      ["inserted", result.inserted],
-                      ["updated", result.updated],
-                      ["skipped", result.skipped],
-                      ["deleted", result.deleted],
-                    ] as const
-                  ).map(([key, value]) => (
+                  {([ ["inserted", result.inserted], ["updated", result.updated], ["skipped", result.skipped] ] as const).map(([key, value]) => (
                     <div key={key} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <dt className="text-[11px] font-bold text-slate-400">
                         {t(`accounting.coa.import.result.${key}`)}

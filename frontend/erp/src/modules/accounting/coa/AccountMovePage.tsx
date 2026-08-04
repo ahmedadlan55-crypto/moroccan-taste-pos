@@ -17,16 +17,33 @@ import {
   FullPageFlow,
   LoadingState,
   Select,
-  Toggle,
   useToast,
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { useCan } from "@/app/providers";
 import { useLang, useT } from "@/i18n";
+import { ApiError } from "@/shared/api";
 import { useMoveGlAccount } from "../api";
 import { COA_BASE, MANAGE_CAP } from "./routes";
 import { useCoaData } from "./useCoaData";
-import { accountName, descendantIds, isSystemRoot } from "./coaModel";
+import { accountName, descendantIds, isFolderAccount, isSystemRoot } from "./coaModel";
+
+function moveError(t: ReturnType<typeof useT>, error: unknown, explicitCode?: string): string {
+  const apiError = error instanceof ApiError ? error : null;
+  const code = String(explicitCode || apiError?.code || "").toUpperCase();
+  if (["PARENT_NOT_FOLDER", "PARENT_HAS_ENTRIES"].includes(code)) {
+    return t("accounting.coa.move.errors.parentNotFolder");
+  }
+  if (code === "TYPE_MISMATCH") return t("accounting.coa.move.errors.typeMismatch");
+  if (["ACCOUNT_CYCLE", "SELF_PARENT"].includes(code)) return t("accounting.coa.move.errors.cycle");
+  if (code === "MAX_DEPTH_EXCEEDED") return t("accounting.coa.move.errors.maxDepth");
+  if (code === "VERSION_CONFLICT") return t("accounting.coa.move.errors.changed");
+  if (["SYSTEM_ROOT_PROTECTED", "ROOT_MOVE_FORBIDDEN"].includes(code)) {
+    return t("accounting.coa.move.rootBlocked");
+  }
+  if (code === "COMPANY_SCOPE_MISMATCH") return t("accounting.coa.move.errors.companyScope");
+  return t("accounting.coa.move.errors.generic");
+}
 
 export function AccountMovePage({ id }: { id: string }) {
   const t = useT();
@@ -39,7 +56,6 @@ export function AccountMovePage({ id }: { id: string }) {
 
   const account = data.byId.get(id) ?? null;
   const [parentId, setParentId] = useState<string | null | undefined>(undefined);
-  const [autoRenumber, setAutoRenumber] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Never offer self or a descendant: the server rejects that as a cycle, and
@@ -48,7 +64,11 @@ export function AccountMovePage({ id }: { id: string }) {
     if (!account) return [];
     const blocked = new Set<string>([account.id, ...descendantIds(account.id, data.byParent)]);
     return data.accounts
-      .filter((a) => !blocked.has(a.id))
+      .filter((a) => {
+        if (blocked.has(a.id) || !a.isActive || a.type !== account.type) return false;
+        const hasChildren = (data.byParent.get(a.id) ?? []).length > 0;
+        return isFolderAccount(a, hasChildren);
+      })
       .sort((a, b) => a.code.localeCompare(b.code));
   }, [account, data.accounts, data.byParent]);
 
@@ -61,11 +81,11 @@ export function AccountMovePage({ id }: { id: string }) {
     if (!account) return;
     setError(null);
     move.mutate(
-      { id: account.id, parentId: target, autoRenumber },
+      { id: account.id, parentId: target, autoRenumber: false, expectedVersion: account.version ?? undefined },
       {
         onSuccess: (res) => {
           if (res && res.success === false) {
-            setError(res.error || t("accounting.coa.move.errors.generic"));
+            setError(moveError(t, res.error, res.code));
             return;
           }
           toast({
@@ -76,11 +96,7 @@ export function AccountMovePage({ id }: { id: string }) {
           });
           navigate(`${COA_BASE}/${encodeURIComponent(account.id)}`, { replace: true });
         },
-        // This route answers HTTP 400 with { error } for a cycle, a code clash
-        // or a root move — the message is already localized Arabic from the
-        // server, so it is shown as-is rather than flattened into "failed".
-        onError: (e) =>
-          setError(e instanceof Error && e.message ? e.message : t("accounting.coa.move.errors.generic")),
+        onError: (e) => setError(moveError(t, e)),
       },
     );
   }
@@ -143,7 +159,7 @@ export function AccountMovePage({ id }: { id: string }) {
               value={target ?? ""}
               onChange={(e) => setParentId(e.target.value || null)}
             >
-              <option value="">{t("accounting.coa.form.root")}</option>
+              <option value="" disabled>{t("accounting.coa.form.root")}</option>
               {options.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.code} — {accountName(p, lang)}
@@ -153,27 +169,9 @@ export function AccountMovePage({ id }: { id: string }) {
           )}
         </Field>
 
-        <label className="flex min-h-11 items-start gap-3">
-          <Toggle
-            checked={autoRenumber}
-            onChange={setAutoRenumber}
-            aria-label={t("accounting.coa.move.renumber")}
-          />
-          <span>
-            <span className="block text-sm font-bold text-slate-700">
-              {t("accounting.coa.move.renumber")}
-            </span>
-            <span className="block text-xs font-medium text-slate-500">
-              {t("accounting.coa.move.renumberHint")}
-            </span>
-          </span>
-        </label>
-
-        {autoRenumber && (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-            {t("accounting.coa.move.renumberWarning", { count: descendantCount })}
-          </p>
-        )}
+        <p className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-bold leading-5 text-sky-800">
+          {t("accounting.coa.move.stableCodeNote")}
+        </p>
 
         {error && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
@@ -184,7 +182,8 @@ export function AccountMovePage({ id }: { id: string }) {
     );
   };
 
-  const movable = !!account && canManage && !isSystemRoot(account, data.accounts);
+  const movable = !!account && canManage && !isSystemRoot(account, data.accounts) &&
+    !!target && target !== (account.parentId ?? null);
 
   return (
     <FullPageFlow

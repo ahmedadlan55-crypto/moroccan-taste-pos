@@ -294,14 +294,16 @@ const acc = (id, code, parent_id, extra = {}) => ({ id, code, parent_id, ...extr
       !/NOT EXISTS \(SELECT 1 FROM gl_accounts c WHERE c\.parent_id\s*=\s*a\.id\)/.test(src));
   }
 
-  // (d) The gl-ledger's JS leaf test is AND-based too.
-  const ledger = read('routes/erp/reports/gl-ledger.js');
+  // (d) The canonical gl-ledger engine's JS leaf test is AND-based too.  The
+  // HTTP route is intentionally a thin adapter; accounting logic belongs in
+  // lib/reports/glLedger.js where it is executable without Express.
+  const ledger = read('lib/reports/glLedger.js');
   check('gl-ledger isLeaf checks is_folder as well as children',
     /const isLeaf = \(a\) => !Number\(a\.is_folder\)/.test(ledger));
 
   // (e) The display ORDER BY is shared, not re-typed.
   for (const f of ['lib/reports/trialBalance.js', 'routes/accounting.js',
-                   'routes/erp/reports/gl-ledger.js']) {
+                   'lib/reports/glLedger.js']) {
     check(`${f} orders accounts via the shared ORDER_BY`,
       /ORDER_BY\(['"]a['"]\)/.test(read(f)), f);
   }

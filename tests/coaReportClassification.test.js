@@ -332,8 +332,10 @@ const acc = (over) => Object.assign({
   check('an active account always reports', c.isReportable(acc({}), false) === true);
   check("a 'blocked' account still reports (it is refused new postings, not closed)",
     c.isReportable(acc({ status: 'blocked' }), false) === true);
-  check('the SQL predicate keeps archived rows in the result set',
-    /status/.test(c.REPORTABLE_ACCOUNT_SQL('a')) && /archived/.test(c.REPORTABLE_ACCOUNT_SQL('a')),
+  check('the SQL predicate keeps both blocked and archived rows in the candidate set',
+    /status/.test(c.REPORTABLE_ACCOUNT_SQL('a')) &&
+      /blocked/.test(c.REPORTABLE_ACCOUNT_SQL('a')) &&
+      /archived/.test(c.REPORTABLE_ACCOUNT_SQL('a')),
     c.REPORTABLE_ACCOUNT_SQL('a'));
 }
 
@@ -342,7 +344,8 @@ const acc = (over) => Object.assign({
 // ═════════════════════════════════════════════════════════════════════════
 {
   const seeded = c.SECTION_CATALOG.filter((s) => s.inCatalogTable);
-  check('the catalog carries all 29 statement_sections rows', seeded.length === 29, seeded.length);
+  check('the catalog carries all 43 canonical statement_sections rows after migration 0030',
+    seeded.length === 43, seeded.length);
   const statements = new Set(c.SECTION_CATALOG.map((s) => s.statement));
   check('every catalog row names a real statement',
     [...statements].every((s) => ['balance_sheet', 'income_statement', 'cash_flow', 'equity'].includes(s)),
@@ -351,8 +354,15 @@ const acc = (over) => Object.assign({
     c.SECTION_CATALOG.filter((s) => s.statement === 'balance_sheet').every((s) => Array.isArray(s.bsGroup)));
   check('every income-statement section has a bucket the report can render',
     c.SECTION_CATALOG.filter((s) => s.statement === 'income_statement').every((s) => !!s.incomeBucket));
-  check('the gaps between the live vocabulary and the table are NAMED, not hidden',
-    c.catalogGaps().length > 0 && c.catalogGaps().includes('eosb'), c.catalogGaps());
+  check('migration 0030 closes every canonical classifier/catalog gap',
+    c.catalogGaps().length === 0, c.catalogGaps());
+  check('zakat payable is a current liability, never an equity reserve',
+    c.SECTIONS.zakat.group === 'currentLiabilities' &&
+    c.SECTIONS.zakat.bsGroup[0] === 'currentLiab', c.SECTIONS.zakat);
+  check('the broad live revenue section resolves without a legacy guess',
+    c.sectionOf(acc({ type: 'revenue', report_section: 'revenue' })).unmapped === false);
+  check('the broad live opex section resolves without a legacy guess',
+    c.sectionOf(acc({ type: 'expense', report_section: 'opex' })).unmapped === false);
   // Contra flags in the catalog match the migration's seed.
   check('acc_dep is contra in the catalog', c.SECTIONS.acc_dep.isContra === true);
   check('drawings is contra in the catalog', c.SECTIONS.drawings.isContra === true);
@@ -411,7 +421,8 @@ const acc = (over) => Object.assign({
     /expectsDebit \? closeCredit > 0\.01 : closeDebit > 0\.01/.test(tbSrc));
   check('trialBalance.js returns an unmapped array', /^\s*unmapped,$/m.test(tbSrc));
   check('trialBalance.js still includes every account regardless of is_active',
-    /FROM gl_accounts a ORDER BY/.test(tbSrc));
+    /FROM gl_accounts a\s+WHERE COALESCE\(a\.company_id/.test(tbSrc) &&
+      !/FROM gl_accounts a\s+WHERE[^;]*(?:a\.is_active|a\.status)/.test(tbSrc));
 
   const eqSrc = read('routes/erp/reports/equity-changes.js');
   check('equity-changes.js returns an unmapped array', /unmapped$/m.test(eqSrc));

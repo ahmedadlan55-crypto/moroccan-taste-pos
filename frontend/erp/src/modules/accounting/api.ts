@@ -45,6 +45,7 @@ export interface TrialBalanceRow {
   accountId: string;
   code: string;
   nameAr: string;
+  nameEn?: string;
   type: string;
   parentId: string | null;
   level: number;
@@ -255,6 +256,7 @@ export interface GlLine {
   journalId: string;
   journalNumber: string;
   date: string;
+  createdAt?: string;
   addedBy: string;
   description: string;
   referenceType: string;
@@ -262,13 +264,23 @@ export interface GlLine {
   debit: number;
   credit: number;
   runningBalance: number;
+  source?: { type: string | null; id: string | null };
+  drilldown?: { type: "journal"; id: string; number: string };
 }
 export interface GlSection {
   accountId: string;
   code: string;
   nameAr: string;
+  nameEn: string;
   type: string;
+  level: number;
   parentId: string | null;
+  reportSection: string | null;
+  normalBalance: "debit" | "credit" | null;
+  isContra: boolean;
+  cashFlowActivity: string | null;
+  accountStatus: string | null;
+  isActive: boolean;
   opening: number;
   openingDebit: number;
   openingCredit: number;
@@ -290,6 +302,16 @@ export interface GlLedgerResponse {
     accountCount: number;
     lineCount: number;
   };
+  filters?: {
+    from: string;
+    to: string;
+    status: "posted";
+    scope: string;
+    accType: GlAccountKind;
+    addedBy?: string | null;
+  };
+  pagination?: { bounded: boolean; maxAccounts: number; maxLines: number };
+  generatedAt?: string;
 }
 /** main = a ROOT account · sub = anything that has a parent · both = no filter. */
 export type GlAccountKind = "both" | "main" | "sub";
@@ -300,14 +322,37 @@ export type GlAccountKind = "both" | "main" | "sub";
  * and applies `isMain`) was unreachable from the UI. It is a real parameter
  * now, and it is part of the query key so switching category refetches.
  */
-export function useGlLedger(range: DateRange | null, scope: string, accType: GlAccountKind = "both") {
+export function useGlLedger(
+  range: DateRange | null,
+  scope: string,
+  accType: GlAccountKind = "both",
+  addedBy = "",
+  accountId = "",
+) {
+  const selectedAccount = accountId.trim();
   return useQuery({
-    queryKey: ["acc", "gl-ledger", range?.from, range?.to, scope, accType],
+    queryKey: [
+      "acc",
+      "gl-ledger",
+      range?.from,
+      range?.to,
+      scope,
+      accType,
+      addedBy.trim(),
+      selectedAccount,
+    ],
     enabled: !!range,
     queryFn: async () =>
       unwrap(
         await apiClient.get<GlLedgerResponse>("/erp/reports/gl-ledger-multi", {
-          params: { from: range!.from, to: range!.to, scope, accType },
+          params: {
+            from: range!.from,
+            to: range!.to,
+            scope,
+            accType,
+            ...(addedBy.trim() ? { addedBy: addedBy.trim() } : {}),
+            ...(selectedAccount ? { accounts: selectedAccount } : {}),
+          },
         }),
       ),
   });
@@ -610,9 +655,41 @@ export interface GlAccountInput {
   nameEn: string;
   type: GlAccountType;
   parentId: string | null;
-  level: number;
   isFolder: boolean;
   isActive?: boolean;
+  status?: "active" | "blocked" | "archived";
+  reportSection?: string | null;
+  cashFlowActivity?: "operating" | "investing" | "financing" | "non_cash" | null;
+  /** Optimistic concurrency token returned by GET /erp/gl/accounts. */
+  expectedVersion?: number;
+}
+
+export interface StatementSection {
+  id: string;
+  statement: "balance_sheet" | "income_statement" | "cash_flow" | "equity";
+  group: string;
+  nameAr: string;
+  nameEn: string;
+  normalBalance: "debit" | "credit";
+  isContra: boolean;
+  displayOrder: number;
+  cashFlowBucket: string | null;
+}
+
+/** The same section catalog the financial-statement classifier validates. */
+export function useStatementSections() {
+  return useQuery({
+    queryKey: ["acc", "statement-sections"],
+    staleTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const response = unwrap(
+        await apiClient.get<{ success?: boolean; error?: string; sections?: StatementSection[] }>(
+          "/erp/gl/statement-sections",
+        ),
+      );
+      return Array.isArray(response.sections) ? response.sections : [];
+    },
+  });
 }
 
 /** What GET /erp/gl/accounts returned, plus whether the as-of date was honored. */
@@ -668,7 +745,7 @@ export function useSaveGlAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: GlAccountInput) =>
-      apiClient.post<{ success: boolean; id: string; error?: string }>("/erp/gl/accounts", input),
+      apiClient.post<{ success: boolean; id: string; error?: string; code?: string }>("/erp/gl/accounts", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
   });
 }
@@ -686,9 +763,9 @@ export function useSetAccountActive() {
         nameEn: account.nameEn,
         type: account.type,
         parentId: account.parentId,
-        level: account.level,
         isFolder: account.isFolder,
         isActive,
+        expectedVersion: account.version ?? undefined,
       } satisfies GlAccountInput),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
   });
@@ -717,17 +794,20 @@ export function useToggleAccountFolder() {
   });
 }
 
-// POST /api/erp/gl/accounts/:id/move — reparent, optionally renumbering the
-// whole subtree. Answers 400 + { error } on a cycle / code clash / root move,
+// POST /api/erp/gl/accounts/:id/move — audited reparenting with stable account
+// codes. Answers 4xx + { error } on a cycle / class mismatch / root move,
 // so this one CAN reject via HTTP rather than the 200-with-success:false shape.
 export interface MoveAccountInput {
   id: string;
   parentId: string | null;
-  autoRenumber: boolean;
+  /** Codes are stable business identifiers; normal UI moves never renumber. */
+  autoRenumber?: false;
+  expectedVersion?: number;
 }
 export interface MoveAccountResult {
   success: boolean;
   error?: string;
+  code?: string;
   oldCode?: string;
   newCode?: string;
   newParentId?: string | null;
@@ -737,10 +817,11 @@ export interface MoveAccountResult {
 export function useMoveGlAccount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, parentId, autoRenumber }: MoveAccountInput) =>
+    mutationFn: ({ id, parentId, expectedVersion }: MoveAccountInput) =>
       apiClient.post<MoveAccountResult>(`/erp/gl/accounts/${id}/move`, {
         parentId,
-        autoRenumber,
+        autoRenumber: false,
+        expectedVersion,
       }),
     // A move rewrites codes across the subtree AND gl_entries.account_code, so
     // every accounting query that keys off a code is stale — not just the tree.
@@ -748,9 +829,8 @@ export function useMoveGlAccount() {
   });
 }
 
-// POST /api/erp/gl/accounts/import — bulk upsert. `mode:'replace'` additionally
-// DELETES accounts absent from the file (except system roots and anything with
-// posted entries, which come back in skippedDeletes[]).
+// POST /api/erp/gl/accounts/import — additive bulk import. Replacement and
+// deletion are retired; structural changes use their audited routes.
 export interface CoaImportRow {
   id?: string;
   code: string;
@@ -777,7 +857,7 @@ export interface CoaImportResult {
 export function useImportGlAccounts() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ rows, mode }: { rows: CoaImportRow[]; mode: "update" | "replace" }) =>
+    mutationFn: ({ rows, mode }: { rows: CoaImportRow[]; mode: "update" }) =>
       apiClient.post<CoaImportResult>("/erp/gl/accounts/import", { rows, mode }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc"] }),
   });

@@ -21,11 +21,13 @@ import {
 import { useCan } from "@/app/providers";
 import { formatDate } from "@/shared/lib";
 import { useLang, useT, type TFunction } from "@/i18n";
+import { ApiError } from "@/shared/api";
 import {
   glTypeLabel,
   useAccountLedger,
   useDeleteGlAccount,
   useSetAccountActive,
+  useStatementSections,
   type GlAccount,
 } from "../api";
 import { MANAGE_CAP } from "./routes";
@@ -41,15 +43,28 @@ import {
   normalSide,
 } from "./coaModel";
 
-function mapError(t: TFunction, raw: string | undefined): string {
-  const s = raw ?? "";
+function mapError(t: TFunction, error: unknown): string {
+  const code = error instanceof ApiError ? String(error.code || "").toUpperCase() : "";
+  const s = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (code === "ACCOUNT_HAS_CHILDREN") return t("accounting.coa.detail.errors.hasChildren");
+  if (code === "ACCOUNT_HAS_ENTRIES") return t("accounting.coa.detail.errors.hasMovements");
+  if (code === "ACCOUNT_NOT_FOUND") return t("accounting.coa.detail.errors.notFound");
+  if (code.includes("PROTECTED")) return t("accounting.coa.detail.errors.protected");
   if (/has-children|children/i.test(s)) return t("accounting.coa.detail.errors.hasChildren");
   if (/has-(entries|movements|journals)|movement/i.test(s))
     return t("accounting.coa.detail.errors.hasMovements");
   if (/not-found/i.test(s)) return t("accounting.coa.detail.errors.notFound");
   if (/protected|reserved|system/i.test(s)) return t("accounting.coa.detail.errors.protected");
-  return s || t("accounting.coa.detail.errors.generic");
+  return t("accounting.coa.detail.errors.generic");
 }
+
+const SECTION_ALIASES: Record<string, string> = {
+  vat_input: "input_vat",
+  vat_output: "output_vat",
+  prepaid: "prepayments",
+  customer_deposits: "customer_advances",
+  retained: "retained_earnings",
+};
 
 export interface AccountDetailProps {
   account: GlAccount;
@@ -78,6 +93,7 @@ export function AccountDetail({
   const { toast } = useToast();
   const setActive = useSetAccountActive();
   const del = useDeleteGlAccount();
+  const sectionCatalog = useStatementSections();
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -97,6 +113,39 @@ export function AccountDetail({
 
   const parent = account.parentId ? accounts.find((a) => a.id === account.parentId) : null;
   const dangling = !!account.parentId && !parent;
+  const sectionId = SECTION_ALIASES[account.reportSection || ""] || account.reportSection || "";
+  const section = sectionCatalog.data?.find((item) => item.id === sectionId);
+  const sectionName = section
+    ? (lang === "en" ? section.nameEn : section.nameAr)
+    : account.reportSection
+      ? t("accounting.coa.detail.unknownClassification")
+      : t("accounting.coa.detail.notClassified");
+  const cashFlowKey = ({
+    operating: "operating",
+    investing: "investing",
+    financing: "financing",
+    non_cash: "nonCash",
+  } as Record<string, string>)[account.cashFlowActivity || ""];
+  const cashFlowName = account.cashFlowActivity
+    ? cashFlowKey
+      ? t(`accounting.coa.form.cashFlow.${cashFlowKey}`)
+      : t("accounting.coa.detail.unknownClassification")
+    : t("accounting.coa.detail.notClassified");
+  const taxNatureKey = ({
+    none: "none",
+    vat_input: "vatInput",
+    vat_output: "vatOutput",
+    zakat: "zakat",
+    gosi: "gosi",
+  } as Record<string, string>)[account.taxNature];
+  const taxNatureName = taxNatureKey
+    ? t(`accounting.coa.detail.taxNatureValues.${taxNatureKey}`)
+    : t("accounting.coa.detail.unknownClassification");
+  const lifecycle = account.status || (account.isActive ? "active" : "archived");
+  const lifecycleKey = ({ active: "active", blocked: "blocked", archived: "archived" } as Record<string, string>)[lifecycle];
+  const lifecycleName = lifecycleKey
+    ? t(`accounting.coa.detail.lifecycleValues.${lifecycleKey}`)
+    : t("accounting.coa.detail.unknownClassification");
 
   const ledgerId = folder ? null : account.id;
   const ledger = useAccountLedger(ledgerId);
@@ -117,8 +166,7 @@ export function AccountDetail({
             title: next ? t("accounting.coa.detail.activated") : t("accounting.coa.detail.deactivated"),
           });
         },
-        onError: (e) =>
-          toast({ tone: "error", title: mapError(t, e instanceof Error ? e.message : "") }),
+        onError: (e) => toast({ tone: "error", title: mapError(t, e) }),
       },
     );
   }
@@ -135,7 +183,7 @@ export function AccountDetail({
         toast({ tone: "success", title: t("accounting.coa.detail.deleted") });
         onDeleted?.();
       },
-      onError: (e) => setDeleteError(mapError(t, e instanceof Error ? e.message : "")),
+      onError: (e) => setDeleteError(mapError(t, e)),
     });
   }
 
@@ -191,10 +239,37 @@ export function AccountDetail({
               <div>
                 <dt className="inline text-slate-400">{t("accounting.coa.col.section")}: </dt>
                 <dd className="inline">
-                  {account.reportSection || t("accounting.coa.filter.sectionNone")}
+                  {sectionName}
                 </dd>
               </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.detail.postingPolicy")}: </dt>
+                <dd className="inline">
+                  {folder || account.isPostable === false
+                    ? t("accounting.coa.detail.postingBlocked")
+                    : t("accounting.coa.detail.postingAllowed")}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.detail.cashFlowClass")}: </dt>
+                <dd className="inline">
+                  {cashFlowName}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.detail.taxNature")}: </dt>
+                <dd className="inline">{taxNatureName}</dd>
+              </div>
+              <div>
+                <dt className="inline text-slate-400">{t("accounting.coa.detail.lifecycle")}: </dt>
+                <dd className="inline">{lifecycleName}</dd>
+              </div>
             </dl>
+            {(!account.nameEn.trim() || (!folder && !account.reportSection)) && (
+              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+                {t("accounting.coa.detail.classificationWarning")}
+              </p>
+            )}
           </div>
           <div className="text-end">
             <div className="text-[11px] font-bold text-slate-400">

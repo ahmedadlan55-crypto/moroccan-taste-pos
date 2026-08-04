@@ -10,11 +10,16 @@
 // Nothing here is hidden behind a toggle and nothing is "fixed" automatically:
 // each row links to the account so a human decides.
 
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  FolderTree,
+  GitBranch,
+  Hash,
+  Languages,
   RefreshCw,
   Repeat,
   Scale,
@@ -33,19 +38,23 @@ import {
   PageHeader,
 } from "@/shared/ui";
 import { useLang, useT } from "@/i18n";
-import type { GlAccount } from "../api";
+import { useStatementSections, type GlAccount } from "../api";
 import { COA_BASE } from "./routes";
 import { useCoaData } from "./useCoaData";
-import { BalanceAmount, accountName, nodeDisplayBalance } from "./coaModel";
+import { BalanceAmount, accountName, computeHealth, nodeDisplayBalance } from "./coaModel";
 
 export function CoaHealthPage() {
   const t = useT();
   const lang = useLang();
   const navigate = useNavigate();
   const data = useCoaData();
-  const { health } = data;
+  const sectionCatalog = useStatementSections();
+  const health = useMemo(
+    () => computeHealth(data.accounts, data.byParent, data.rollups, sectionCatalog.data ?? []),
+    [data.accounts, data.byParent, data.rollups, sectionCatalog.data],
+  );
 
-  if (data.isLoading) return <LoadingState />;
+  if (data.isLoading || sectionCatalog.isLoading) return <LoadingState />;
   if (data.error) return <ErrorState error={data.error} onRetry={data.refetch} />;
 
   const back = (
@@ -137,6 +146,12 @@ export function CoaHealthPage() {
         action={back}
       />
 
+      {sectionCatalog.error && (
+        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          {t("accounting.coa.health.catalogUnavailable")}
+        </p>
+      )}
+
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <MetricCard
           icon={AlertTriangle}
@@ -167,6 +182,54 @@ export function CoaHealthPage() {
           label={t("accounting.coa.health.cycles")}
           value={String(health.cycles.length)}
           tone={health.cycles.length > 0 ? "rose" : "teal"}
+        />
+        <MetricCard
+          icon={Languages}
+          label={t("accounting.coa.health.missingEnglish")}
+          value={String(health.missingEnglish.length)}
+          tone={health.missingEnglish.length > 0 ? "amber" : "teal"}
+        />
+        <MetricCard
+          icon={Hash}
+          label={t("accounting.coa.health.invalidCodes")}
+          value={String(health.invalidCodes.length + health.codeClassMismatches.length)}
+          tone={health.invalidCodes.length + health.codeClassMismatches.length > 0 ? "rose" : "teal"}
+        />
+        <MetricCard
+          icon={Hash}
+          label={t("accounting.coa.health.nonCanonicalCodes")}
+          value={String(health.nonCanonicalCodes.length)}
+          tone={health.nonCanonicalCodes.length > 0 ? "amber" : "teal"}
+        />
+        <MetricCard
+          icon={GitBranch}
+          label={t("accounting.coa.health.levelMismatches")}
+          value={String(health.levelMismatches.length)}
+          tone={health.levelMismatches.length > 0 ? "rose" : "teal"}
+        />
+        <MetricCard
+          icon={FolderTree}
+          label={t("accounting.coa.health.folderFlagMismatches")}
+          value={String(health.folderFlagMismatches.length)}
+          tone={health.folderFlagMismatches.length > 0 ? "amber" : "teal"}
+        />
+        <MetricCard
+          icon={Scale}
+          label={t("accounting.coa.health.typeMismatches")}
+          value={String(health.typeMismatches.length)}
+          tone={health.typeMismatches.length > 0 ? "rose" : "teal"}
+        />
+        <MetricCard
+          icon={Scale}
+          label={t("accounting.coa.health.invalidStatementSections")}
+          value={String(health.invalidStatementSections.length)}
+          tone={health.invalidStatementSections.length > 0 ? "rose" : "teal"}
+        />
+        <MetricCard
+          icon={Scale}
+          label={t("accounting.coa.health.statementSectionTypeMismatches")}
+          value={String(health.statementSectionTypeMismatches.length)}
+          tone={health.statementSectionTypeMismatches.length > 0 ? "rose" : "teal"}
         />
       </div>
 
@@ -204,6 +267,56 @@ export function CoaHealthPage() {
             icon={<Repeat className="h-4 w-4 text-rose-600" />}
           />
         )}
+        <Section
+          title={t("accounting.coa.health.missingEnglish")}
+          body={t("accounting.coa.health.missingEnglishBody")}
+          rows={health.missingEnglish}
+          icon={<Languages className="h-4 w-4 text-amber-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.invalidCodes")}
+          body={t("accounting.coa.health.invalidCodesBody")}
+          rows={[...health.invalidCodes, ...health.codeClassMismatches].filter(
+            (a, index, rows) => rows.findIndex((x) => x.id === a.id) === index,
+          )}
+          icon={<Hash className="h-4 w-4 text-rose-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.nonCanonicalCodes")}
+          body={t("accounting.coa.health.nonCanonicalCodesBody")}
+          rows={health.nonCanonicalCodes}
+          icon={<Hash className="h-4 w-4 text-amber-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.levelMismatches")}
+          body={t("accounting.coa.health.levelMismatchesBody")}
+          rows={health.levelMismatches}
+          icon={<GitBranch className="h-4 w-4 text-rose-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.folderFlagMismatches")}
+          body={t("accounting.coa.health.folderFlagMismatchesBody")}
+          rows={health.folderFlagMismatches}
+          icon={<FolderTree className="h-4 w-4 text-amber-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.typeMismatches")}
+          body={t("accounting.coa.health.typeMismatchesBody")}
+          rows={health.typeMismatches}
+          icon={<Scale className="h-4 w-4 text-rose-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.invalidStatementSections")}
+          body={t("accounting.coa.health.invalidStatementSectionsBody")}
+          rows={health.invalidStatementSections}
+          icon={<Scale className="h-4 w-4 text-rose-600" />}
+        />
+        <Section
+          title={t("accounting.coa.health.statementSectionTypeMismatches")}
+          body={t("accounting.coa.health.statementSectionTypeMismatchesBody")}
+          rows={health.statementSectionTypeMismatches}
+          icon={<Scale className="h-4 w-4 text-rose-600" />}
+        />
       </div>
     </div>
   );

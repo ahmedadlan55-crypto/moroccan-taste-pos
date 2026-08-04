@@ -55,7 +55,9 @@
   { "code": "100402", "nameAr": "تأمين مدفوع مقدماً",     "nameEn": "Prepaid Insurance",     "type": "asset", "parentCode": "100400", "level": 3, "kind": "leaf", "order": 50 },
   { "code": "100403", "nameAr": "اشتراكات مدفوعة مقدماً", "nameEn": "Prepaid Subscriptions", "type": "asset", "parentCode": "100400", "level": 3, "kind": "leaf", "order": 51 },
   { "code": "100404", "nameAr": "مصاريف مدفوعة مقدماً أخرى","nameEn": "Other Prepaid Expenses","type": "asset", "parentCode": "100400", "level": 3, "kind": "leaf", "order": 52 },
-  { "code": "100405", "nameAr": "ضريبة المدخلات (Input VAT)","nameEn": "Input VAT",          "type": "asset", "parentCode": "100400", "level": 3, "kind": "leaf", "order": 53 },
+  { "code": "100451", "nameAr": "ضريبة القيمة المضافة — مدخلات قابلة للاسترداد","nameEn": "Recoverable Input VAT", "type": "asset", "parentCode": "100450", "level": 3, "kind": "leaf", "order": 53, "reportSection": "input_vat", "cashFlowActivity": "operating", "taxNature": "vat_input" },
+
+  { "code": "100450", "nameAr": "الضرائب والأرصدة الحكومية المدينة", "nameEn": "Tax and Government Receivables", "type": "asset", "parentCode": "100000", "level": 2, "kind": "folder", "order": 53 },
 
   { "code": "100500", "nameAr": "الأصول الثابتة", "nameEn": "Fixed Assets", "type": "asset", "parentCode": "100000", "level": 2, "kind": "folder", "order": 54 },
   { "code": "100501", "nameAr": "أثاث وتجهيزات",         "nameEn": "Furniture & Fixtures",  "type": "asset", "parentCode": "100500", "level": 3, "kind": "leaf", "order": 55 },
@@ -75,7 +77,11 @@
   { "code": "100606", "nameAr": "مجمع إهلاك المباني",      "nameEn": "Acc. Dep. - Buildings",       "type": "asset", "parentCode": "100600", "level": 3, "kind": "leaf", "order": 68 },
   { "code": "100607", "nameAr": "مجمع إهلاك الديكور",       "nameEn": "Acc. Dep. - Decoration",      "type": "asset", "parentCode": "100600", "level": 3, "kind": "leaf", "order": 69 },
 
-  { "code": "200000", "nameAr": "الخصوم", "nameEn": "Liabilities", "type": "liability", "parentCode": "", "level": 1, "kind": "folder", "order": 70 },
+  { "code": "100700", "nameAr": "أصول حق الاستخدام (IFRS 16)", "nameEn": "Right-of-Use Assets (IFRS 16)", "type": "asset", "parentCode": "100000", "level": 2, "kind": "folder", "order": 69 },
+  { "code": "100701", "nameAr": "أصول حق استخدام العقارات", "nameEn": "Property Right-of-Use Assets", "type": "asset", "parentCode": "100700", "level": 3, "kind": "leaf", "order": 215, "reportSection": "rou", "cashFlowActivity": "non_cash" },
+  { "code": "100702", "nameAr": "مجمع إهلاك أصول حق الاستخدام", "nameEn": "Accumulated Depreciation — ROU Assets", "type": "asset", "parentCode": "100700", "level": 3, "kind": "leaf", "order": 216, "isContra": true, "reportSection": "acc_dep", "cashFlowActivity": "non_cash" },
+
+  { "code": "200000", "nameAr": "الالتزامات", "nameEn": "Liabilities", "type": "liability", "parentCode": "", "level": 1, "kind": "folder", "order": 70 },
 
   { "code": "200100", "nameAr": "الموردين والذمم الدائنة", "nameEn": "Suppliers & Payables", "type": "liability", "parentCode": "200000", "level": 2, "kind": "folder", "order": 71 },
   { "code": "200101", "nameAr": "موردون تجاريون عامون",     "nameEn": "General Trade Suppliers",     "type": "liability", "parentCode": "200100", "level": 3, "kind": "leaf", "order": 72 },
@@ -101,13 +107,18 @@
   { "code": "200400", "nameAr": "القروض والتسهيلات", "nameEn": "Loans & Facilities", "type": "liability", "parentCode": "200000", "level": 2, "kind": "folder", "order": 89 },
   { "code": "200401", "nameAr": "قروض بنكية قصيرة الأجل",   "nameEn": "Short-Term Bank Loans",     "type": "liability", "parentCode": "200400", "level": 3, "kind": "leaf", "order": 90 },
   { "code": "200402", "nameAr": "قروض بنكية طويلة الأجل",   "nameEn": "Long-Term Bank Loans",      "type": "liability", "parentCode": "200400", "level": 3, "kind": "leaf", "order": 91 },
-  { "code": "200403", "nameAr": "التزام إيجار (IFRS 16)",   "nameEn": "Lease Obligation (IFRS 16)","type": "liability", "parentCode": "200400", "level": 3, "kind": "leaf", "order": 92 },
+  { "code": "200430", "nameAr": "التزامات عقود الإيجار (IFRS 16)", "nameEn": "Lease Liabilities (IFRS 16)", "type": "liability", "parentCode": "200400", "level": 3, "kind": "folder", "order": 92 },
+  { "code": "200431", "nameAr": "الجزء المتداول من التزامات الإيجار", "nameEn": "Current Lease Liabilities", "type": "liability", "parentCode": "200430", "level": 4, "kind": "leaf", "order": 215, "reportSection": "short_term_debt", "cashFlowActivity": "financing" },
+  { "code": "200432", "nameAr": "الجزء غير المتداول من التزامات الإيجار", "nameEn": "Non-current Lease Liabilities", "type": "liability", "parentCode": "200430", "level": 4, "kind": "leaf", "order": 216, "reportSection": "lease_obligation", "cashFlowActivity": "financing" },
 
   { "code": "200500", "nameAr": "مكافأة نهاية الخدمة (IAS 19)", "nameEn": "End-of-Service Benefits (IAS 19)", "type": "liability", "parentCode": "200000", "level": 2, "kind": "folder", "order": 93 },
   { "code": "200501", "nameAr": "مخصص مكافأة نهاية الخدمة", "nameEn": "EOSB Provision",          "type": "liability", "parentCode": "200500", "level": 3, "kind": "leaf", "order": 94 },
 
   { "code": "200600", "nameAr": "دفعات مقدمة من العملاء", "nameEn": "Customer Deposits", "type": "liability", "parentCode": "200000", "level": 2, "kind": "folder", "order": 95 },
   { "code": "200601", "nameAr": "دفعات مقدمة عملاء",       "nameEn": "Customer Advance Payments","type": "liability", "parentCode": "200600", "level": 3, "kind": "leaf", "order": 96 },
+
+  { "code": "200700", "nameAr": "توزيعات أرباح مستحقة", "nameEn": "Dividends Payable", "type": "liability", "parentCode": "200000", "level": 2, "kind": "folder", "order": 97 },
+  { "code": "200701", "nameAr": "توزيعات أرباح معلنة غير مدفوعة", "nameEn": "Declared Dividends Payable", "type": "liability", "parentCode": "200700", "level": 3, "kind": "leaf", "order": 217 },
 
   { "code": "300000", "nameAr": "حقوق الملكية", "nameEn": "Equity", "type": "equity", "parentCode": "", "level": 1, "kind": "folder", "order": 97 },
 
@@ -124,10 +135,13 @@
   { "code": "300400", "nameAr": "الاحتياطيات", "nameEn": "Reserves", "type": "equity", "parentCode": "300000", "level": 2, "kind": "folder", "order": 105 },
   { "code": "300401", "nameAr": "احتياطي نظامي",            "nameEn": "Statutory Reserve",        "type": "equity", "parentCode": "300400", "level": 3, "kind": "leaf", "order": 106 },
   { "code": "300402", "nameAr": "احتياطي عام",              "nameEn": "General Reserve",          "type": "equity", "parentCode": "300400", "level": 3, "kind": "leaf", "order": 107 },
-  { "code": "300403", "nameAr": "مخصص الزكاة الشرعية",      "nameEn": "Zakat Reserve",            "type": "equity", "parentCode": "300400", "level": 3, "kind": "leaf", "order": 108 },
+  { "code": "300403", "nameAr": "احتياطيات أخرى معتمدة",    "nameEn": "Other Approved Reserves",  "type": "equity", "parentCode": "300400", "level": 3, "kind": "leaf", "order": 108 },
 
   { "code": "300500", "nameAr": "المسحوبات", "nameEn": "Drawings", "type": "equity", "parentCode": "300000", "level": 2, "kind": "folder", "order": 109 },
   { "code": "300501", "nameAr": "مسحوبات المالك",           "nameEn": "Owner Drawings",          "type": "equity", "parentCode": "300500", "level": 3, "kind": "leaf", "order": 110 },
+
+  { "code": "300600", "nameAr": "توزيعات الأرباح", "nameEn": "Profit Distributions", "type": "equity", "parentCode": "300000", "level": 2, "kind": "folder", "order": 110 },
+  { "code": "300601", "nameAr": "توزيعات أرباح معلنة", "nameEn": "Declared Profit Distributions", "type": "equity", "parentCode": "300600", "level": 3, "kind": "leaf", "order": 218, "isContra": true, "reportSection": "drawings", "cashFlowActivity": "financing" },
 
   { "code": "400000", "nameAr": "الإيرادات", "nameEn": "Revenue", "type": "revenue", "parentCode": "", "level": 1, "kind": "folder", "order": 111 },
 
@@ -213,7 +227,7 @@
   { "code": "500901", "nameAr": "رسوم البلدية",              "nameEn": "Municipality Fees",          "type": "expense", "parentCode": "500900", "level": 3, "kind": "leaf", "order": 178 },
   { "code": "500902", "nameAr": "السجل التجاري والتراخيص",   "nameEn": "Commercial Registration",     "type": "expense", "parentCode": "500900", "level": 3, "kind": "leaf", "order": 179 },
   { "code": "500903", "nameAr": "رسوم السعودة",               "nameEn": "Saudization Fees",            "type": "expense", "parentCode": "500900", "level": 3, "kind": "leaf", "order": 180 },
-  { "code": "500904", "nameAr": "الزكاة الفعلية المسدَّدة",   "nameEn": "Zakat Paid",                  "type": "expense", "parentCode": "500900", "level": 3, "kind": "leaf", "order": 181 },
+  { "code": "500904", "nameAr": "مصروف الزكاة المستحق",       "nameEn": "Zakat Expense",               "type": "expense", "parentCode": "500900", "level": 3, "kind": "leaf", "order": 181 },
 
   { "code": "501000", "nameAr": "الرسوم البنكية ورسوم الدفع", "nameEn": "Bank & Payment Fees", "type": "expense", "parentCode": "500000", "level": 2, "kind": "folder", "order": 182 },
   { "code": "501001", "nameAr": "مصاريف بنكية",              "nameEn": "Bank Fees",                  "type": "expense", "parentCode": "501000", "level": 3, "kind": "leaf", "order": 183 },

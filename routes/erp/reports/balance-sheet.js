@@ -52,9 +52,9 @@ const IFRS_SUBGROUP_ORDER = {
   // depreciation → intangibles. Matches Big-4 BS layout.
   currentAssets:    ['cash', 'receivables', 'allowanceDoubtful', 'inventory', 'vatInput', 'prepaid', 'otherCA'],
   nonCurrentAssets: ['ppe', 'rou', 'accDep', 'intangibles'],
-  currentLiab:      ['payables', 'accrued', 'vatOutput', 'netVat', 'gosi', 'withholding', 'customerDeposits', 'shortTermDebt', 'otherCL'],
+  currentLiab:      ['payables', 'accrued', 'vatOutput', 'netVat', 'gosi', 'withholding', 'zakat', 'customerDeposits', 'shortTermDebt', 'otherCL'],
   nonCurrentLiab:   ['longTermDebt', 'leaseObligation', 'eosb'],
-  equity:           ['capital', 'retained', 'drawings', 'reserves', 'zakat']
+  equity:           ['capital', 'retained', 'drawings', 'reserves']
 };
 
 // Helper — returns groups as an ORDERED ARRAY of {key, label, total,
@@ -620,6 +620,7 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         netVat:           makeGroup('صافي ضريبة القيمة المضافة'),    // v5.10.78
         gosi:             makeGroup('التأمينات الاجتماعية (GOSI)'),  // v5.10.78
         withholding:      makeGroup('ضريبة الاستقطاع'),              // v5.10.78
+        zakat:            makeGroup('الزكاة المستحقة'),
         customerDeposits: makeGroup('دفعات مقدمة من العملاء'),
         shortTermDebt:    makeGroup('قروض وإيجارات قصيرة الأجل'),
         otherCL:          makeGroup('التزامات متداولة أخرى')
@@ -633,8 +634,7 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         capital:    makeGroup('رأس المال'),
         retained:   makeGroup('الأرباح المحتجزة'),
         drawings:   makeGroup('المسحوبات', true),
-        reserves:   makeGroup('الاحتياطيات'),
-        zakat:      makeGroup('مخصص الزكاة الشرعية')                  // v5.10.78
+        reserves:   makeGroup('الاحتياطيات')
       }
     };
 
@@ -709,11 +709,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
 
       if (a.type === 'asset') {
         const magnitude = net;
-        if (bucket && groups[bucket[0]] && groups[bucket[0]][bucket[1]]) {
-          const targetGroup = groups[bucket[0]][bucket[1]];
+        const assetBucket = bucket && ['currentAssets', 'nonCurrentAssets'].includes(bucket[0]) ? bucket : null;
+        if (assetBucket && groups[assetBucket[0]] && groups[assetBucket[0]][assetBucket[1]]) {
+          const targetGroup = groups[assetBucket[0]][assetBucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
-          if (bucket[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
+          if (assetBucket[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
           else                                   { currentAssets.push(flatItem);    totCA  += signed; }
         } else {
           flatItem.balance = magnitude;
@@ -723,11 +724,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         }
       } else if (a.type === 'liability') {
         const magnitude = -net;
-        if (bucket && groups[bucket[0]] && groups[bucket[0]][bucket[1]]) {
-          const targetGroup = groups[bucket[0]][bucket[1]];
+        const liabilityBucket = bucket && ['currentLiab', 'nonCurrentLiab'].includes(bucket[0]) ? bucket : null;
+        if (liabilityBucket && groups[liabilityBucket[0]] && groups[liabilityBucket[0]][liabilityBucket[1]]) {
+          const targetGroup = groups[liabilityBucket[0]][liabilityBucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
-          if (bucket[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
+          if (liabilityBucket[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
           else                                 { currentLiab.push(flatItem);    totCL  += signed; }
         } else {
           flatItem.balance = magnitude;
@@ -739,7 +741,7 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
         const magnitude = -net;
         // Equity never falls through: classifyEquity's legacy default is
         // 'capital', so totEq keeps every row even on an un-coded chart.
-        const cls2 = bucket || classifyEquity(a.code);
+        const cls2 = bucket && bucket[0] === 'equity' ? bucket : classifyEquity(a.code);
         if (cls2 && groups[cls2[0]] && groups[cls2[0]][cls2[1]]) {
           const targetGroup = groups[cls2[0]][cls2[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);

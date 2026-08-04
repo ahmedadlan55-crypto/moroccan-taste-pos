@@ -32,7 +32,7 @@ vi.mock("@/app/providers", async (importOriginal) => {
   return { ...actual, useCan: () => true };
 });
 
-import { apiClient } from "@/shared/api";
+import { ApiError, apiClient } from "@/shared/api";
 import {
   accountMatches,
   buildChildrenMap,
@@ -53,6 +53,7 @@ import {
   useDeleteGlAccount,
   useToggleAccountFolder,
   useMoveGlAccount,
+  useStatementSections,
   normalizeGlAccount,
   type GlAccount,
 } from "../api";
@@ -114,12 +115,24 @@ function acc(p: Partial<GlAccount> & { id: string; code: string }): GlAccount {
     status: p.status,
     normalBalance: p.normalBalance,
     systemManaged: p.systemManaged,
+    cashFlowActivity: p.cashFlowActivity,
+    version: p.version,
   };
 }
 
 /** Route every GET the CoA pages make: the list, plus the per-account ledger. */
 function mockChart(accounts: GlAccount[]) {
   get.mockImplementation((path: string) => {
+    if (String(path).includes("/erp/gl/statement-sections")) {
+      return Promise.resolve({
+        success: true,
+        sections: [
+          { id: "cash", statement: "balance_sheet", group: "currentAssets", nameAr: "النقدية", nameEn: "Cash", normalBalance: "debit", isContra: false, displayOrder: 10, cashFlowBucket: "cash" },
+          { id: "ppe", statement: "balance_sheet", group: "nonCurrentAssets", nameAr: "الأصول الثابتة", nameEn: "PPE", normalBalance: "debit", isContra: false, displayOrder: 20, cashFlowBucket: "fixedAssets" },
+          { id: "zakat", statement: "balance_sheet", group: "currentLiabilities", nameAr: "الزكاة المستحقة", nameEn: "Zakat payable", normalBalance: "credit", isContra: false, displayOrder: 30, cashFlowBucket: "otherCurrentLiabilities" },
+        ],
+      });
+    }
     if (String(path).includes("/erp/gl/account-ledger/")) {
       return Promise.resolve({ success: true, ledger: [] });
     }
@@ -262,6 +275,77 @@ describe("coaModel — a stray root is REPORTED, never hidden", () => {
     const health = computeHealth(cyclic, byParent, computeRollups(cyclic, byParent));
     expect(health.cycles.length).toBe(2);
   });
+
+  it("audits bilingual names, derived levels, folder flags, root type and code class", () => {
+    const governed = [
+      acc({
+        id: "root",
+        code: "100000",
+        nameAr: "الأصول",
+        nameEn: "Assets",
+        type: "asset",
+        level: 1,
+        isSystemRoot: true,
+        isFolder: true,
+        classCode: "1",
+      }),
+      acc({
+        id: "bad-parent",
+        code: "110000",
+        nameAr: "أصول متداولة",
+        nameEn: "Current assets",
+        type: "asset",
+        parentId: "root",
+        level: 4,
+        isFolder: false,
+      }),
+      acc({
+        id: "bad-child",
+        code: "210100",
+        nameAr: "صندوق",
+        nameEn: "",
+        type: "liability",
+        parentId: "bad-parent",
+        level: 3,
+        reportSection: "cash",
+      }),
+    ];
+    const byParent = buildChildrenMap(governed);
+    const health = computeHealth(governed, byParent, computeRollups(governed, byParent));
+
+    expect(health.missingEnglish.map((a) => a.id)).toEqual(["bad-child"]);
+    expect(health.levelMismatches.map((a) => a.id)).toEqual(["bad-parent"]);
+    expect(health.folderFlagMismatches.map((a) => a.id)).toEqual(["bad-parent"]);
+    expect(health.codeClassMismatches.map((a) => a.id)).toEqual(["bad-child"]);
+    expect(health.typeMismatches.map((a) => a.id)).toEqual(["bad-child"]);
+    expect(health.byAccount.get("bad-child")).toEqual(
+      expect.arrayContaining(["missingEnglish", "codeClassMismatch", "typeMismatch"]),
+    );
+  });
+
+  it("separates legacy code-length warnings and catches zakat classified under equity", () => {
+    const accounts = [
+      acc({ id: "eq", code: "3", nameAr: "حقوق الملكية", nameEn: "Equity", type: "equity", isFolder: true }),
+      acc({ id: "z", code: "310100", nameAr: "زكاة", nameEn: "Zakat", type: "equity", parentId: "eq", level: 2, reportSection: "zakat" }),
+    ];
+    const byParent = buildChildrenMap(accounts);
+    const health = computeHealth(accounts, byParent, computeRollups(accounts, byParent), [{
+      id: "zakat",
+      statement: "balance_sheet",
+      group: "currentLiabilities",
+      nameAr: "الزكاة المستحقة",
+      nameEn: "Zakat payable",
+      normalBalance: "credit",
+      isContra: false,
+      displayOrder: 10,
+      cashFlowBucket: null,
+    }]);
+
+    expect(health.nonCanonicalCodes.map((a) => a.id)).toEqual(["eq"]);
+    expect(health.invalidCodes).toEqual([]);
+    expect(health.statementSectionTypeMismatches.map((a) => a.id)).toEqual(["z"]);
+    expect(health.byAccount.get("z")).toContain("statementSectionTypeMismatch");
+  });
 });
 
 describe("coaModel — rollups at EVERY depth, and abnormal is not the raw sign", () => {
@@ -346,6 +430,20 @@ describe("api — the list row normalizer reads BOTH spellings", () => {
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("COA hooks hit the exact legacy endpoints", () => {
+  it("loads the financial-statement catalog from the server authority", async () => {
+    get.mockResolvedValue({
+      success: true,
+      sections: [{
+        id: "cash", statement: "balance_sheet", group: "currentAssets",
+        nameAr: "النقدية", nameEn: "Cash", normalBalance: "debit",
+        isContra: false, displayOrder: 10, cashFlowBucket: "cash",
+      }],
+    });
+    const { result } = renderHook(() => useStatementSections(), { wrapper: qcWrapper() });
+    await waitFor(() => expect(result.current.data?.[0]?.id).toBe("cash"));
+    expect(get).toHaveBeenCalledWith("/erp/gl/statement-sections");
+  });
+
   it("activate/deactivate posts is_active to /erp/gl/accounts", async () => {
     post.mockResolvedValue({ success: true, id: "1101" });
     const account = acc({ id: "1101", code: "1101", nameAr: "الصندوق", parentId: "11", level: 3 });
@@ -375,14 +473,15 @@ describe("COA hooks hit the exact legacy endpoints", () => {
     );
   });
 
-  it("move hits POST /erp/gl/accounts/:id/move with parentId + autoRenumber", async () => {
+  it("move keeps the account code stable and sends the optimistic version", async () => {
     post.mockResolvedValue({ success: true, oldCode: "1102", newCode: "1202" });
     const { result } = renderHook(() => useMoveGlAccount(), { wrapper: qcWrapper() });
-    result.current.mutate({ id: "1102", parentId: "12", autoRenumber: true });
+    result.current.mutate({ id: "1102", parentId: "12", autoRenumber: false, expectedVersion: 7 });
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/erp/gl/accounts/1102/move", {
         parentId: "12",
-        autoRenumber: true,
+        autoRenumber: false,
+        expectedVersion: 7,
       }),
     );
   });
@@ -605,11 +704,50 @@ describe("routed create / edit / move / detail pages", () => {
     await waitFor(() => expect(parent.value).toBe("a1"));
   });
 
+  it("clears stale statement and cash-flow inheritance when the new parent is unclassified", async () => {
+    const chart = [
+      ...CHART,
+      acc({ id: "classified", code: "120000", nameAr: "مصنف", nameEn: "Classified", parentId: "a", level: 2, isFolder: true, reportSection: "cash", cashFlowActivity: "non_cash" }),
+      acc({ id: "unclassified", code: "130000", nameAr: "غير مصنف", nameEn: "Unclassified", parentId: "a", level: 2, isFolder: true }),
+    ];
+    mockChart(chart);
+    wrap(<ChartOfAccountsPage />, `${COA}/new?parent=classified`);
+    await screen.findByRole("heading", { name: "حساب جديد" });
+
+    const section = await screen.findByLabelText(/تصنيف القوائم المالية/) as HTMLSelectElement;
+    const cashFlow = screen.getByLabelText(/نشاط التدفق النقدي/) as HTMLSelectElement;
+    await waitFor(() => expect(section.value).toBe("cash"));
+    expect(cashFlow.value).toBe("non_cash");
+
+    fireEvent.change(screen.getByLabelText("الحساب الرئيسي"), { target: { value: "unclassified" } });
+    expect(section.value).toBe("");
+    expect(cashFlow.value).toBe("");
+  });
+
   it("/:id renders the routed detail page for that account", async () => {
     mockChart(CHART);
     wrap(<ChartOfAccountsPage />, `${COA}/a11`);
     expect(await screen.findByRole("heading", { name: "الصندوق", level: 1 })).toBeInTheDocument();
     expect(screen.getAllByText("110100").length).toBeGreaterThan(0);
+  });
+
+  it("renders classification, cash-flow, tax and lifecycle values as localized labels, never raw enums", async () => {
+    window.localStorage.setItem("erp_lang", "en");
+    mockChart(CHART.map((item) => item.id === "a11" ? {
+      ...item,
+      reportSection: "cash",
+      cashFlowActivity: "non_cash",
+      taxNature: "vat_input",
+      status: "archived" as const,
+      isActive: false,
+    } : item));
+    wrap(<ChartOfAccountsPage />, `${COA}/a11`);
+
+    expect(await screen.findByText("Non-cash adjustment")).toBeInTheDocument();
+    expect(screen.getByText("Input VAT")).toBeInTheDocument();
+    expect(screen.getAllByText("Archived").length).toBeGreaterThan(0);
+    expect(screen.queryByText("non_cash")).not.toBeInTheDocument();
+    expect(screen.queryByText("vat_input")).not.toBeInTheDocument();
   });
 
   it("/:id/edit pre-fills the account and locks its code", async () => {
@@ -623,8 +761,24 @@ describe("routed create / edit / move / detail pages", () => {
     expect(nameAr.value).toBe("الصندوق");
   });
 
-  it("/:id/move renders the move workspace and offers no descendant as a target", async () => {
+  it("allows a system root's bilingual name to be saved without inventing a parent", async () => {
     mockChart(CHART);
+    post.mockResolvedValue({ success: true, id: "a" });
+    wrap(<ChartOfAccountsPage />, `${COA}/a/edit`);
+    await screen.findByRole("heading", { name: "تعديل الحساب" });
+    fireEvent.change(screen.getByLabelText(/الاسم بالإنجليزية/), { target: { value: "Assets updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "حفظ" }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/erp/gl/accounts", expect.objectContaining({
+      id: "a",
+      parentId: null,
+      nameEn: "Assets updated",
+    })));
+  });
+
+  it("/:id/move renders the move workspace and offers no descendant as a target", async () => {
+    const chart = [...CHART, acc({ id: "a2", code: "120000", nameAr: "مجموعة بديلة", parentId: "a", level: 2, isFolder: true })];
+    mockChart(chart);
     wrap(<ChartOfAccountsPage />, `${COA}/a1/move`);
     expect(await screen.findByRole("heading", { name: "نقل حساب" })).toBeInTheDocument();
 
@@ -632,24 +786,54 @@ describe("routed create / edit / move / detail pages", () => {
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).not.toContain("a1"); // itself
     expect(values).not.toContain("a11"); // its descendant → would be a cycle
+    expect(values).not.toContain("s"); // posting leaf → server would reject it
     expect(values).toContain("a");
+    expect(values).toContain("a2");
+    expect(screen.getByRole("button", { name: "تنفيذ النقل" })).toBeDisabled();
   });
 
   it("the move page POSTs to /erp/gl/accounts/:id/move", async () => {
-    mockChart(CHART);
+    const chart = [
+      ...CHART.map((item) => item.id === "a1" ? { ...item, version: 7 } : item),
+      acc({ id: "a2", code: "120000", nameAr: "مجموعة بديلة", parentId: "a", level: 2, isFolder: true }),
+    ];
+    mockChart(chart);
     post.mockResolvedValue({ success: true, oldCode: "110000", newCode: "990100" });
     wrap(<ChartOfAccountsPage />, `${COA}/a1/move`);
     await screen.findByRole("heading", { name: "نقل حساب" });
 
-    fireEvent.change(await screen.findByLabelText("الأب الجديد"), { target: { value: "s" } });
+    fireEvent.change(await screen.findByLabelText("الأب الجديد"), { target: { value: "a2" } });
     fireEvent.click(screen.getByRole("button", { name: "تنفيذ النقل" }));
 
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/erp/gl/accounts/a1/move", {
-        parentId: "s",
+        parentId: "a2",
         autoRenumber: false,
+        expectedVersion: 7,
       }),
     );
+  });
+
+  it("maps structured move failures to the active language instead of leaking Arabic server text", async () => {
+    window.localStorage.setItem("erp_lang", "en");
+    const chart = [
+      ...CHART,
+      acc({ id: "a2", code: "120000", nameAr: "مجموعة بديلة", nameEn: "Alternative group", parentId: "a", level: 2, isFolder: true }),
+    ];
+    mockChart(chart);
+    post.mockRejectedValue(new ApiError({
+      kind: "validation",
+      status: 422,
+      code: "PARENT_NOT_FOLDER",
+      message: "الحساب الأب يجب أن يكون حسابًا تجميعيًا",
+    }));
+    wrap(<ChartOfAccountsPage />, `${COA}/a1/move`);
+    await screen.findByRole("heading", { name: "Move account" });
+    fireEvent.change(await screen.findByLabelText("New parent"), { target: { value: "a2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move account" }));
+
+    expect(await screen.findByText("Choose an active group/control account as the new parent.")).toBeInTheDocument();
+    expect(screen.queryByText(/الحساب الأب/)).not.toBeInTheDocument();
   });
 
   it("/:id for an unknown id says so instead of rendering an empty shell", async () => {

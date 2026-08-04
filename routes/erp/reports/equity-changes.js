@@ -62,8 +62,7 @@ const EQUITY_BUCKETS = [
   { key: 'capital',  label: 'رأس المال',              isContra: false },
   { key: 'retained', label: 'الأرباح المحتجزة',        isContra: false },
   { key: 'drawings', label: 'المسحوبات',               isContra: true  },
-  { key: 'reserves', label: 'الاحتياطيات',             isContra: false },
-  { key: 'zakat',    label: 'مخصص الزكاة الشرعية',     isContra: false }
+  { key: 'reserves', label: 'الاحتياطيات',             isContra: false }
 ];
 
 // Dispatch the REAL /reports/balance-sheet-ifrs handler in-process and

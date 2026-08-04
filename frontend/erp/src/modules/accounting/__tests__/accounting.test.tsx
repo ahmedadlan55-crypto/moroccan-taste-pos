@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
 
 // Mock the shared API client while keeping the real ApiError (states.tsx needs it).
@@ -15,15 +16,21 @@ vi.mock("@/shared/api", async (importOriginal) => {
 import { apiClient } from "@/shared/api";
 import { I18nProvider } from "@/i18n";
 import { TrialBalancePage } from "../pages/TrialBalance";
+import { GeneralLedgerPage } from "../pages/GeneralLedger";
 import { CostCentersPage } from "../pages/CostCenters";
 
 const get = apiClient.get as Mock;
 
-function wrap(ui: ReactNode) {
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}{location.search}</output>;
+}
+
+function wrap(ui: ReactNode, route = "/") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <I18nProvider>{ui}</I18nProvider>
+      <I18nProvider><MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter></I18nProvider>
     </QueryClientProvider>,
   );
 }
@@ -80,7 +87,7 @@ describe("TrialBalance", () => {
     });
 
     wrap(<TrialBalancePage />);
-    expect(await screen.findByText("الصندوق")).toBeInTheDocument();
+    expect((await screen.findAllByText("الصندوق"))[0]).toBeInTheDocument();
     // The trial-balance endpoint was hit with the exact legacy path.
     expect(get).toHaveBeenCalledWith("/erp/reports/trial-balance", expect.anything());
   });
@@ -127,7 +134,7 @@ describe("TrialBalance", () => {
     });
 
     wrap(<TrialBalancePage />);
-    await screen.findByText("الصندوق");
+    await screen.findAllByText("الصندوق");
 
     // The FOOTER (Grand Total row) must show the server's improbable total
     // (987654) — individual line rows legitimately still show 300 each
@@ -148,6 +155,67 @@ describe("TrialBalance", () => {
     // Copy moved to i18n (accounting.trialBalance.status.notClean): "غير Clean"
     // → proper-Arabic "غير سليم". Same alert, same intent.
     expect(await screen.findByText(/تنبيه: التقرير غير سليم/)).toBeInTheDocument();
+  });
+
+  it("labels full-scope totals after filtering, preserves mobile level context, and drills into the account ledger", async () => {
+    get.mockResolvedValue({
+      success: true,
+      isClean: true,
+      rows: [
+        baseTrialBalanceRow({ accountId: "a1", nameAr: "الصندوق", nameEn: "Cash", level: 2 }),
+        baseTrialBalanceRow({ accountId: "a2", code: "1201", nameAr: "البنك", nameEn: "Bank", level: 2 }),
+      ],
+      totals: baseTrialBalanceTotals({ periodDebit: 777 }),
+    });
+
+    wrap(<><TrialBalancePage /><LocationProbe /></>);
+    await screen.findAllByText("الصندوق");
+    fireEvent.change(screen.getByLabelText(/ابحث باسم الحساب/), { target: { value: "الصندوق" } });
+
+    expect(await screen.findByText(/تذييل التقرير هو الإجمالي المعتمد من الخادم/)).toBeInTheDocument();
+    expect(screen.getByText("إجمالي النطاق الكامل")).toBeInTheDocument();
+    expect(screen.getByLabelText("الصندوق، المستوى الهرمي 2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "فتح دفتر الأستاذ للحساب الصندوق" })[0]);
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toContain(
+      "/accounting/general-ledger?accountId=a1&from=",
+    ));
+  });
+});
+
+describe("GeneralLedger drill-down", () => {
+  it("reads accountId and period from the URL and keeps internal links basename-relative", async () => {
+    get.mockImplementation((path: string, config?: { params?: Record<string, string> }) => {
+      if (path === "/erp/gl/statement-sections") {
+        return Promise.resolve({ success: true, sections: [] });
+      }
+      expect(path).toBe("/erp/reports/gl-ledger-multi");
+      expect(config?.params).toEqual(expect.objectContaining({
+        from: "2026-01-01",
+        to: "2026-01-31",
+        accounts: "a1",
+      }));
+      return Promise.resolve({
+        success: true,
+        sections: [{
+          accountId: "a1", code: "110100", nameAr: "الصندوق", nameEn: "Cash",
+          type: "asset", level: 3, parentId: "a", reportSection: "cash",
+          normalBalance: "debit", isContra: false, cashFlowActivity: "operating",
+          accountStatus: "active", isActive: true, opening: 0, openingDebit: 0,
+          openingCredit: 0, totalDebit: 10, totalCredit: 0, closingBalance: 10,
+          lineCount: 0, lines: [],
+        }],
+        grandTotals: { debit: 10, credit: 0, opening: 0, closing: 10, accountCount: 1, lineCount: 0 },
+      });
+    });
+
+    wrap(
+      <GeneralLedgerPage />,
+      "/accounting/general-ledger?accountId=a1&from=2026-01-01&to=2026-01-31",
+    );
+    const accountLink = await screen.findByRole("link", { name: "الصندوق" });
+    expect(accountLink).toHaveAttribute("href", "/accounting/chart-of-accounts/a1");
+    expect(screen.getByText("عرض تفصيلي: حساب واحد")).toBeInTheDocument();
   });
 });
 

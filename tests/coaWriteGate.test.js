@@ -84,13 +84,14 @@ async function expectCode(name, fn, code, status) {
 /** A gl_accounts row with every column the service reads. */
 function acc(id, code, parent_id, extra) {
   return Object.assign({
-    id, code, name_ar: 'حساب ' + code, name_en: '', type: 'asset',
+    id, code, name_ar: 'حساب ' + code, name_en: 'Account ' + code, type: 'asset',
     parent_id: parent_id || null, level: 1, is_folder: 0, is_active: 1,
     display_order: null, company_id: 'CO-MAIN', normal_balance: 'debit',
     is_contra: 0, contra_of_account_id: null, is_postable: 1, is_control: 0,
     cash_flow_activity: null, status: 'active', version: 1,
     is_system_root: 0, system_managed: 0, class_code: null,
     source_entity_type: null, source_entity_id: null,
+    report_section: null, cash_flow_activity: null, tax_nature: 'none',
   }, extra || {});
 }
 
@@ -104,7 +105,8 @@ function makeConn(accounts, opts) {
   const entries = o.entries || {};
   const log = [];
   const byId = new Map(accounts.map((a) => [a.id, a]));
-  const kidsOf = (pid) => accounts.filter((a) => String(a.parent_id) === String(pid));
+  const isMain = (a) => !a.company_id || String(a.company_id) === 'CO-MAIN';
+  const kidsOf = (pid) => accounts.filter((a) => String(a.parent_id) === String(pid) && isMain(a));
 
   return {
     log,
@@ -132,17 +134,18 @@ function makeConn(accounts, opts) {
       // single row by id (with or without FOR UPDATE)
       if (/FROM gl_accounts WHERE id = \?/.test(s)) {
         const a = byId.get(p[0]);
-        return [a ? [a] : [], []];
+        const scoped = /COALESCE\(company_id/.test(s);
+        return [a && (!scoped || isMain(a)) ? [a] : [], []];
       }
       // subtree BFS
       if (/FROM gl_accounts WHERE parent_id IN \(/.test(s)) {
         const out = [];
-        for (const pid of p) for (const k of kidsOf(pid)) out.push(k);
+        for (const pid of p.slice(0, -1)) for (const k of kidsOf(pid)) out.push(k);
         return [out, []];
       }
       // code uniqueness
       if (/FROM gl_accounts WHERE code = \?/.test(s)) {
-        const hit = accounts.filter((a) => String(a.code) === String(p[0]) && a.id !== p[3]);
+        const hit = accounts.filter((a) => isMain(a) && String(a.code) === String(p[0]) && a.id !== p[3]);
         return [hit.slice(0, 1), []];
       }
       // renumber: siblings ordered by code
@@ -155,8 +158,8 @@ function makeConn(accounts, opts) {
         return [accounts.filter((a) => String(a.code).startsWith(prefix) && a.id !== p[1]), []];
       }
       // coaTree.recomputeLevels reads the whole table
-      if (/FROM gl_accounts$/.test(s) || /FROM gl_accounts WHERE 1/.test(s)) {
-        return [accounts, []];
+      if (/FROM gl_accounts$/.test(s) || /FROM gl_accounts WHERE 1/.test(s) || /FROM gl_accounts WHERE COALESCE\(company_id/.test(s)) {
+        return [/COALESCE\(company_id/.test(s) ? accounts.filter(isMain) : accounts, []];
       }
       return [[], []];
     },
@@ -172,7 +175,7 @@ function chart() {
   ];
 }
 
-const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', parentId: 'A' };
+const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', nameEn: 'New account', type: 'asset', parentId: 'A' };
 
 (async function run() {
 
@@ -198,6 +201,44 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
              catch (x) { return x.code === 'LEVEL_NOT_ACCEPTED'; } })());
 }
 
+// ── 1b. Stored statement classification is validated at the write gate ─────
+{
+  await expectCode('an unknown report section is rejected before database I/O',
+    () => svc.createAccountTx(makeConn(chart()),
+      Object.assign({}, OK_INPUT, { reportSection: 'invented_bucket' }), {}),
+    'REPORT_SECTION_INVALID', 400);
+
+  await expectCode('a balance-sheet section cannot be assigned to the wrong account class',
+    () => svc.createAccountTx(makeConn(chart()),
+      Object.assign({}, OK_INPUT, { code: '110299', reportSection: 'sales_revenue' }), {}),
+    'REPORT_SECTION_TYPE_MISMATCH', 422);
+
+  await expectCode('cash-flow activity is a closed vocabulary',
+    () => svc.createAccountTx(makeConn(chart()),
+      Object.assign({}, OK_INPUT, { cashFlowActivity: 'treasury-magic' }), {}),
+    'CASH_FLOW_ACTIVITY_INVALID', 400);
+
+  const normalized = svc.normalizeInput(Object.assign({}, OK_INPUT, {
+    reportSection: 'vat_input', cashFlowActivity: 'operating',
+  }));
+  check('legacy section aliases normalize to the canonical catalog id',
+    normalized.reportSection === 'input_vat', normalized.reportSection);
+  const nonCash = svc.normalizeInput(Object.assign({}, OK_INPUT, { cashFlowActivity: 'non_cash' }));
+  check('service accepts the DB-supported non_cash cash-flow classification',
+    nonCash.cashFlowActivity === 'non_cash', nonCash);
+
+  const classifiedChart = chart();
+  Object.assign(classifiedChart.find((a) => a.id === 'A'), {
+    report_section: 'allowance_doubtful', cash_flow_activity: 'operating', tax_nature: 'none',
+  });
+  const classifiedConn = makeConn(classifiedChart);
+  await svc.createAccountTx(classifiedConn, OK_INPUT, { actor: 'ahmed' });
+  const insert = classifiedConn.log.find((q) => /^INSERT INTO gl_accounts/.test(q.sql));
+  check('a new child inherits its parent statement section', insert && insert.params[13] === 'allowance_doubtful', insert && insert.params);
+  check('contra treatment is derived from the canonical section, not a free boolean', insert && insert.params[12] === 1, insert && insert.params);
+  check('cash-flow classification is inherited when the caller omits it', insert && insert.params[14] === 'operating', insert && insert.params);
+}
+
 // ── 2. Cycles — the check the upsert never had ────────────────────────────
 {
   // A is B's parent. Moving A under B would put A below itself.
@@ -205,12 +246,13 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
     () => svc.moveAccountTx(makeConn(chart()), 'A', { parentId: 'B' }, {}),
     'ACCOUNT_CYCLE', 422);
 
-  // The SAME cycle, attempted through the upsert's update branch — the path
-  // that had no cycle check at all.
-  await expectCode('upsert: the update branch is cycle-checked too',
+  // Generic edit is deliberately not a second move endpoint.  The audited
+  // move path below owns cycle checks and locking; an edit that changes the
+  // parent is refused before it can mutate the tree.
+  await expectCode('upsert: reparenting must use the audited move endpoint',
     () => svc.upsertAccountTx(makeConn(chart()),
       { id: 'A', code: '110000', nameAr: 'A', type: 'asset', parentId: 'B' }, {}),
-    'ACCOUNT_CYCLE', 422);
+    'MOVE_ENDPOINT_REQUIRED', 409);
 
   // A chart that is ALREADY cyclic must terminate, not hang. X↔Y.
   const cyclic = [acc('X', '1', 'Y'), acc('Y', '2', 'X')];
@@ -230,17 +272,17 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
     () => svc.moveAccountTx(makeConn(chart()), 'B', { parentId: 'B' }, {}),
     'SELF_PARENT', 422);
 
-  await expectCode('upsert: an account cannot be its own parent',
+  await expectCode('upsert: self-parenting is routed away from generic edit',
     () => svc.upsertAccountTx(makeConn(chart()),
       { id: 'B', code: '110100', nameAr: 'B', type: 'asset', parentId: 'B' }, {}),
-    'SELF_PARENT', 422);
+    'MOVE_ENDPOINT_REQUIRED', 409);
 }
 
 // ── 4. Missing parent — the orphan the upsert used to create happily ──────
 {
   await expectCode('create: a non-existent parent is a 404, not an orphan',
     () => svc.createAccountTx(makeConn(chart()),
-      { code: '990000', nameAr: 'يتيم', type: 'asset', parentId: 'GHOST' }, {}),
+      { code: '190000', nameAr: 'يتيم', nameEn: 'Orphan', type: 'asset', parentId: 'GHOST' }, {}),
     'PARENT_NOT_FOUND', 404);
 
   await expectCode('move: a non-existent parent is a 404',
@@ -252,6 +294,41 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
     'ACCOUNT_NOT_FOUND', 404);
 }
 
+// ── 4b. A move cannot manufacture a root or cross the fixed ledger ─────────
+{
+  const nullMove = makeConn(chart());
+  await expectCode('move: parentId=null cannot create a sixth root',
+    () => svc.moveAccountTx(nullMove, 'B', { parentId: null }, {}),
+    'ROOT_MOVE_FORBIDDEN', 422);
+  check('root-move refusal performs zero writes', nullMove.writes().length === 0, nullMove.writes());
+
+  const nullPreview = await svc.previewMoveTx(makeConn(chart()), 'B', null, {});
+  check('preview and execution agree on ROOT_MOVE_FORBIDDEN',
+    nullPreview.blockers.filter((b) => b.code === 'ROOT_MOVE_FORBIDDEN').length === 1,
+    nullPreview.blockers);
+  check('root preview is not reported as safe', nullPreview.ok === false, nullPreview);
+
+  const foreignParent = acc('FOREIGN-P', '110900', null, {
+    company_id: 'CO-OTHER', is_folder: 1, is_postable: 0,
+  });
+  const cross = makeConn(chart().concat([foreignParent]));
+  await expectCode('move: a CO-MAIN account cannot move under another company',
+    () => svc.moveAccountTx(cross, 'B', { parentId: 'FOREIGN-P' }, {}),
+    'COMPANY_SCOPE_MISMATCH', 422);
+  check('cross-company move performs zero writes', cross.writes().length === 0, cross.writes());
+
+  const crossPreview = await svc.previewMoveTx(makeConn(chart().concat([foreignParent])), 'B', 'FOREIGN-P', {});
+  check('cross-company preview carries the same blocker as execution',
+    crossPreview.blockers.some((b) => b.code === 'COMPANY_SCOPE_MISMATCH') && crossPreview.ok === false,
+    crossPreview.blockers);
+
+  const foreignSubject = makeConn([acc('FOREIGN', '110901', null, { company_id: 'CO-OTHER' })]);
+  await expectCode('mutations cannot address an account outside CO-MAIN',
+    () => svc.archiveAccountTx(foreignSubject, 'FOREIGN', {}),
+    'ACCOUNT_NOT_FOUND', 404);
+  check('foreign-account mutation performs zero writes', foreignSubject.writes().length === 0, foreignSubject.writes());
+}
+
 // ── 5. A posting leaf may not become a parent while it holds entries ──────
 {
   // L is a childless non-folder WITH postings. Hanging a child under it would
@@ -260,14 +337,16 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
   const rows = chart().concat([acc('L', '110200', 'A', { level: 3 })]);
   await expectCode('create: a posting leaf that HAS entries cannot become a parent',
     () => svc.createAccountTx(makeConn(rows, { entries: { L: 7 } }),
-      { code: '110201', nameAr: 'ابن', type: 'asset', parentId: 'L' }, {}),
+      { code: '110201', nameAr: 'ابن', nameEn: 'Child', type: 'asset', parentId: 'L' }, {}),
     'PARENT_HAS_ENTRIES', 422);
 
-  // The same leaf with no postings is promotable — refusing that would make
-  // the chart unextendable, which is a different bug, not a safer one.
-  const ctx = await svc.resolveParentContext(makeConn(rows, { entries: {} }),
-    { parentId: 'L', movingId: null, type: 'asset', height: 1 });
-  check('an EMPTY posting leaf is promotable to a folder', ctx.needsPromotion === true, ctx);
+  // A posting leaf is never silently promoted.  The accountant must make an
+  // explicit structural decision, so journal/report semantics cannot change
+  // as a side effect of creating another account.
+  await expectCode('an EMPTY posting leaf is not silently promoted',
+    () => svc.resolveParentContext(makeConn(rows, { entries: {} }),
+      { parentId: 'L', movingId: null, type: 'asset', height: 1 }),
+    'PARENT_NOT_FOLDER', 422);
 
   // A row already flagged is_folder needs no promotion.
   const ctx2 = await svc.resolveParentContext(makeConn(rows), { parentId: 'A', movingId: null, type: 'asset', height: 1 });
@@ -278,7 +357,7 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
 {
   await expectCode('create: a revenue account cannot live under the asset root',
     () => svc.createAccountTx(makeConn(chart()),
-      { code: '110200', nameAr: 'إيراد', type: 'revenue', parentId: 'A' }, {}),
+      { code: '110200', nameAr: 'إيراد', nameEn: 'Revenue', type: 'revenue', parentId: 'A' }, {}),
     'TYPE_MISMATCH', 422);
 
   await expectCode('move: a retyped subtree cannot be moved into a foreign root',
@@ -290,7 +369,7 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
 
   // The error must name the ROOT that disagrees, not just say "no".
   const e = await thrown(() => svc.createAccountTx(makeConn(chart()),
-    { code: '110200', nameAr: 'إيراد', type: 'revenue', parentId: 'A' }, {}));
+    { code: '110200', nameAr: 'إيراد', nameEn: 'Revenue', type: 'revenue', parentId: 'A' }, {}));
   check('TYPE_MISMATCH names the offending root', e && e.details && e.details.rootId === 'R', e && e.details);
 }
 
@@ -306,7 +385,7 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
   check('MAX_DEPTH is 5', svc.MAX_DEPTH === 5, svc.MAX_DEPTH);
 
   await expectCode('create: a 6th level is refused',
-    () => svc.createAccountTx(makeConn(deep), { code: '111111', nameAr: 'عميق', type: 'asset', parentId: 'd5' }, {}),
+    () => svc.createAccountTx(makeConn(deep), { code: '111111', nameAr: 'عميق', nameEn: 'Deep account', type: 'asset', parentId: 'd5' }, {}),
     'MAX_DEPTH_EXCEEDED', 422);
 
   // Depth is measured against the moving node's SUBTREE HEIGHT, not the node
@@ -518,7 +597,7 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
   // A duplicate code is a 409 (a collision), not a 400 (a malformed request).
   await expectCode('a duplicate code is CODE_CONFLICT',
     () => svc.createAccountTx(makeConn(chart()),
-      { code: '110100', nameAr: 'مكرر', type: 'asset', parentId: 'A' }, {}),
+      { code: '110100', nameAr: 'مكرر', nameEn: 'Duplicate', type: 'asset', parentId: 'A' }, {}),
     'CODE_CONFLICT', 409);
 }
 
@@ -569,6 +648,16 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
   check('create returns the new id', !!out.id, out);
   check('create writes an audit row', /INSERT INTO audit_logs/.test(created.sqlText()));
   check('create inserts version = 1', /INSERT INTO gl_accounts/.test(created.sqlText()));
+
+  const idA = await svc.createAccountTx(makeConn(chart()),
+    Object.assign({}, OK_INPUT, { code: '110201' }), { actor: 'ahmed' });
+  const idB = await svc.createAccountTx(makeConn(chart()),
+    Object.assign({}, OK_INPUT, { code: '110202' }), { actor: 'ahmed' });
+  check('generated account ids remain unique even inside the same millisecond',
+    idA.id !== idB.id && /^GL-[0-9a-f-]{36}$/i.test(idA.id) && /^GL-[0-9a-f-]{36}$/i.test(idB.id),
+    [idA.id, idB.id]);
+  check('the account-id generator no longer depends on Date.now',
+    !/['"]GL-['"]\s*\+\s*Date\.now\(\)/.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'coa', 'service.js'), 'utf8')));
 
   // A move must re-derive levels for the whole subtree, in the same txn.
   const moved = makeConn([
@@ -677,6 +766,23 @@ const OK_INPUT = { code: '110200', nameAr: 'حساب جديد', type: 'asset', p
   check('_coaFail takes its status from the typed error, not a string match',
     /coaService\.toHttpError\(e\)/.test(erp) && /res\.status\(mapped\.httpStatus\)/.test(erp));
   check('_coaFail emits a machine-readable code', /code:\s*mapped\.code/.test(erp));
+
+  const dedupeStart = erp.indexOf("router.post('/gl/accounts/dedupe'");
+  const dedupeEnd = erp.indexOf('\nrouter.', dedupeStart + 1);
+  const dedupeBody = stripComments(erp.slice(dedupeStart, dedupeEnd));
+  check('the legacy dedupe writer is retired with a stable machine code',
+    /COA_DEDUPE_RETIRED/.test(dedupeBody) && /_coaFail\(/.test(dedupeBody), dedupeBody);
+  check('the retired dedupe endpoint contains no account writer',
+    !/(UPDATE|INSERT INTO|DELETE FROM)\s+gl_accounts/i.test(dedupeBody), dedupeBody);
+  check('COA_DEDUPE_RETIRED maps to HTTP 410',
+    svc.toHttpError(new svc.CoaError('COA_DEDUPE_RETIRED', 'x')).httpStatus === 410);
+
+  const listStart = erp.indexOf("router.get('/gl/accounts'");
+  const listEnd = erp.indexOf('\nrouter.', listStart + 1);
+  const listBody = stripComments(erp.slice(listStart, listEnd));
+  check('GET /gl/accounts is explicitly fixed to CO-MAIN',
+    /COALESCE\(a\.company_id,\s*['"]CO-MAIN['"]\)\s*=\s*\?/.test(listBody) &&
+      /coaService\.LEDGER_COMPANY_ID/.test(listBody), listBody.slice(0, 800));
 
   // (f) The actor comes from the JWT. Taking identity from the body is how
   //     `?username=admin` authenticated with no token once already.

@@ -11,12 +11,16 @@ const { guardDeveloper, guardBreakGlass } = require('../lib/transactionGuards');
 // FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
 const requireCapability = require('../middleware/requireCapability');
 const coaTree = require('../lib/coa/tree');
+const coaClassify = require('../lib/coa/classify');
 // Package D — the ONE write gate for the chart of accounts. Every mutation of
 // gl_accounts that used to live inline in this file (the upsert, /move,
 // /:id/folder, DELETE) now runs its guards, its version check and its audit
 // row inside lib/coa/service.js, so the four writers can no longer know four
 // different subsets of the rules.
 const coaService = require('../lib/coa/service');
+// Additive-only importer. Every request returns through this module before the
+// quarantined historical implementation later in the handler can execute.
+const coaImport = require('../lib/coa/import');
 // Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
@@ -182,7 +186,8 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
                 JOIN gl_journals j ON j.id = e.journal_id
                WHERE e.account_id = a.id AND j.status = 'posted') AS computed_balance
         FROM gl_accounts a
-       ORDER BY COALESCE(a.display_order, 99999), a.code`);
+       WHERE COALESCE(a.company_id, 'CO-MAIN') = ?
+       ORDER BY COALESCE(a.display_order, 99999), a.code`, [coaService.LEDGER_COMPANY_ID]);
     res.json(rows.map(a => ({
       id: a.id, code: a.code, nameAr: a.name_ar, nameEn: a.name_en,
       type: a.type, parentId: a.parent_id, level: a.level,
@@ -204,7 +209,7 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
       // roots are 100000..500000, and a contra account reads as abnormal
       // because its normal side had to be derived from `type`. The client
       // normalizer tolerates their absence; only sending them makes it exact.
-      companyId:         a.company_id || null,
+      companyId:         coaService.LEDGER_COMPANY_ID,
       normalBalance:     a.normal_balance || null,
       isContra:          !!a.is_contra,
       contraOfAccountId: a.contra_of_account_id || null,
@@ -252,21 +257,25 @@ router.post('/gl/accounts/:id/folder', requireCapability('finance.accounts.manag
   }
 });
 
-// v5.10.48 — bulk import COA from an Excel file. Match priority:
-//   (1) by internal `id` (column "المعرف (لا تحذف)" in the export) —
-//       this is THE way to avoid duplicates when codes change in Excel,
-//       and the way structural edits (rename/reparent) actually take
-//       effect on the existing row instead of creating a sibling.
-//   (2) by `code` if id is missing (legacy / hand-built files).
-//   (3) otherwise INSERT new.
-//
-// Side effects we keep consistent in the same transaction:
-//   - When a row's code changes, gl_entries.account_code gets the new
-//     code so reports and ledger views don't go stale.
-//   - codeMap is updated as we go, so children reparented to a renamed
-//     parent resolve to the right id within the same batch.
+// Additive-only bulk import. Existing accounts match by immutable id (or by
+// an unambiguous code when id is absent), and may update bilingual names only.
+// New rows require a real parent and are inserted topologically. Renumbering,
+// reparenting, retyping, folder conversion and replacement/deletion are
+// explicitly rejected and the whole file is atomic.
 router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'), async (req, res) => {
   const { rows } = req.body || {};
+  const requestedMode = String((req.body && req.body.mode) || 'update').toLowerCase();
+  try {
+    const result = await coaImport.importAccounts(rows, _coaCtx(req), requestedMode);
+    return res.json({ success: true, mode: 'update', ...result });
+  } catch (e) {
+    return _coaFail(res, e, 'import');
+  }
+
+  /* RETIRED AND UNREACHABLE: both paths above return. The historical block
+   * below remains temporarily for blame/history, but its FK-disable, delete,
+   * reparent and renumber statements cannot receive an HTTP request. */
+  async function retiredUnsafeImporter() { // never called; scheduled for mechanical deletion
   // v5.10.55 — mode controls destructive semantics:
   //   'update'  (default): upsert only. Accounts in DB but not in the
   //                        file are left alone. Safe.
@@ -761,54 +770,39 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
     console.error('[gl/accounts/import] FAILED:', e.message);
     res.status(500).json({ success: false, error: e.message });
   }
+  }
 });
 
-// v5.10.50 — atomic dedupe: for each group {keepId, deleteIds[]} re-parent
-// any children of the deletees to the keeper, refuse to delete any account
-// that has gl_entries rows (would orphan the journal), then DELETE the
-// rest. Reports counts so the UI can tell the user exactly what happened.
+// Central statement-section catalog for the account form.  The browser must
+// not carry a private copy: a value accepted by the UI and rejected by the
+// report engine (or vice versa) is how accounts become silently unmapped.
+router.get('/gl/statement-sections', requireCapability('finance.gl.view'), async (req, res) => {
+  res.json({
+    success: true,
+    sections: coaClassify.SECTION_CATALOG.map((section) => ({
+      id: section.id,
+      statement: section.statement,
+      group: section.group,
+      nameAr: section.nameAr,
+      nameEn: section.nameEn,
+      normalBalance: section.normalBalance,
+      isContra: section.isContra,
+      displayOrder: section.displayOrder,
+      cashFlowBucket: section.cfBucket,
+    })),
+  });
+});
+
+// Retired: this legacy endpoint bypassed the governed CoA write gate and could
+// reparent/delete across companies without cycle, depth, root, version or
+// audit checks. Duplicate remediation now requires an explicit migration
+// manifest reviewed as a data migration; a public HTTP dedupe writer is not a
+// safe accounting primitive.
 router.post('/gl/accounts/dedupe', requireCapability('finance.accounts.manage'), async (req, res) => {
-  const { groups } = req.body || {};
-  if (!Array.isArray(groups) || !groups.length) {
-    return res.status(400).json({ success: false, error: 'لا توجد مجموعات للحذف' });
-  }
-  let deleted = 0, reparented = 0;
-  const skipped = [];
-  try {
-    await db.withTransaction(async (conn) => {
-      for (const g of groups) {
-        const keepId = String(g.keepId || '').trim();
-        const delIds = Array.isArray(g.deleteIds) ? g.deleteIds.map(String) : [];
-        if (!keepId || !delIds.length) continue;
-        // Ensure keepId actually exists
-        const [keepRows] = await conn.query('SELECT id FROM gl_accounts WHERE id = ?', [keepId]);
-        if (!keepRows.length) { skipped.push({ id: keepId, reason: 'keep-not-found' }); continue; }
-        for (const did of delIds) {
-          if (did === keepId) continue;
-          // Refuse to delete if account has any gl_entries (would orphan
-          // posted journal lines). User must merge entries manually.
-          const [entries] = await conn.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [did]);
-          if (entries.length) { skipped.push({ id: did, reason: 'has-journal-entries' }); continue; }
-          // Re-parent any children of the deletee to the keeper.
-          const [kids] = await conn.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [did]);
-          if (kids.length) {
-            await conn.query('UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?', [keepId, did]);
-            reparented += kids.length;
-          }
-          // Refuse if a journal HEADER references it as account_id (rare,
-          // but defensive) — none of our journals reference accounts at
-          // header level so this is a no-op in practice.
-          await conn.query('DELETE FROM gl_accounts WHERE id = ?', [did]);
-          deleted++;
-          console.log('[gl/accounts/dedupe] deleted ' + did + ' (kept ' + keepId + ', reparented ' + kids.length + ' children)');
-        }
-      }
-    });
-    res.json({ success: true, deleted, reparented, skipped });
-  } catch (e) {
-    console.error('[gl/accounts/dedupe] FAILED:', e.message);
-    res.status(500).json({ success: false, error: e.message });
-  }
+  return _coaFail(res, new coaService.CoaError(
+    'COA_DEDUPE_RETIRED',
+    'تم إيقاف الدمج المباشر للحسابات؛ استخدم manifest ترحيل محاسبي معتمد',
+  ), 'dedupe');
 });
 
 // v5.10.45 — move an account under a new parent and (optionally) renumber
@@ -925,10 +919,11 @@ router.post('/gl/accounts/:id/archive', requireCapability('finance.accounts.mana
 });
 
 // v5.11.1 — expose the official template as a static resource so the
-// frontend can fetch it once and feed it through the existing import
-// flow (preview modal + replace-mode + cascade rename). 150 accounts,
-// 6 IFRS-aligned roots: Assets / Liabilities / Equity / Revenue /
-// COGS / Operating & Admin Expenses.
+// frontend can fetch it once and feed it through the safe additive/update
+// import flow.  The canonical policy currently contains 224 bilingual rows
+// below five presentation-class roots.  IFRS/SOCPA govern recognition and
+// presentation; the six-digit numbering is this product's governance policy,
+// not a claim that Saudi regulation prescribes a universal account code set.
 router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), async (req, res) => {
   res.json({ success: true, accounts: COA_TEMPLATE });
 });
@@ -1018,6 +1013,20 @@ router.post('/gl/coa/wipe-and-seed',
         //   40 → IS Revenue, 50 → IS Expense (incl. COGS).
         // The MM digit (positions 3-4) maps to the report_section bucket.
         if (/^\d{6}$/.test(c)) {
+          // Leaf-level exceptions where one control group contains multiple
+          // statement/tax concepts. These must outrank the broad MM mapping.
+          if (c === '100250') return 'allowance_doubtful';
+          if (c === '100451') return 'input_vat';
+          if (c === '100700' || c === '100701') return 'rou';
+          if (c === '100702') return 'acc_dep';
+          if (c === '200301') return 'output_vat';
+          if (c === '200302') return 'net_vat';
+          if (c === '200303') return 'gosi';
+          if (c === '200304') return 'withholding';
+          if (c === '200305') return 'zakat';
+          if (c === '200401' || c === '200431') return 'short_term_debt';
+          if (c === '200402') return 'long_term_debt';
+          if (c === '200430' || c === '200432') return 'lease_obligation';
           const gg = c.substr(0, 2);
           const mm = c.substr(2, 2);
           if (gg === '10') {
@@ -1086,7 +1095,7 @@ router.post('/gl/coa/wipe-and-seed',
         if (c.startsWith('31'))                   return 'capital';
         if (c.startsWith('32'))                   return 'retained';
         if (c.startsWith('33'))                   return 'drawings';
-        if (c === '343' || c.startsWith('343'))   return 'zakat';
+        if (c === '343' || c.startsWith('343'))   return 'reserves';
         if (c.startsWith('34'))                   return 'reserves';
         if (c === '6244')                         return 'zakat_paid';
         if (c.startsWith('624'))                  return 'gov_fees';
@@ -1098,10 +1107,15 @@ router.post('/gl/coa/wipe-and-seed',
       function _deriveTaxNature(code) {
         const c = String(code || '');
         // v5.10.84 — Saudi/International standard: VAT lives under 2003xx
-        // (Output VAT Payable). The simplified CoA doesn't carry separate
-        // input-VAT / GOSI / Withholding / EOSB / Zakat accounts — those
-        // can be added by extending MM under group 20 / 50 as needed.
-        if (/^\d{6}$/.test(c) && c.startsWith('2003')) return 'vat_output';
+        // but the control group also carries GOSI, withholding and Zakat;
+        // classify the leaf, never the whole group as output VAT.
+        if (c === '100451') return 'vat_input';
+        if (c === '200301') return 'vat_output';
+        if (c === '200302') return 'vat_output';
+        if (c === '200303') return 'gosi';
+        if (c === '200304') return 'withholding';
+        if (c === '200305') return 'zakat';
+        if (c === '200500' || c === '200501') return 'eosb';
         // ── Legacy fallback (pre-v5.10.84) ──
         if (c.startsWith('116'))                return 'vat_input';
         if (c.startsWith('2131') || c === '213') return 'vat_output';

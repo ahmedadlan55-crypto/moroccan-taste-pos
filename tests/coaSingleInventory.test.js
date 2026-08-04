@@ -46,6 +46,7 @@ const server = read('server.js');
 const glPosting = read('lib/glPosting.js');
 const { CORE_ACCOUNTS } = require('../lib/glPosting');
 const cutover = read('db/migrations/0034_coa_inventory_sales_cutover.sql');
+const inputVatRecovery = read('db/migrations/0035_restore_input_vat_control.sql');
 const salesRoute = read('routes/sales.js');
 
 // ── 1. One posting leaf under the governed inventory folder ────────────────
@@ -144,6 +145,13 @@ const salesRoute = read('routes/sales.js');
     !/inventory_account\.company_id|gl_accounts[^\n]*company_id/.test(cutover));
   check('checkout no longer posts one Sale journal per invoice',
     !/referenceType:\s*'Sale'/.test(salesRoute.slice(0, salesRoute.indexOf("router.post('/:id/void'"))));
+  check('partial-cutover recovery reactivates only the confirmed input VAT control leaf',
+    /WHERE code = '1290'/.test(inputVatRecovery) &&
+    /status = 'active'/.test(inputVatRecovery) &&
+    /is_postable = 1/.test(inputVatRecovery) &&
+    /is_folder = 0/.test(inputVatRecovery));
+  check('input VAT recovery never rewrites ledger history or balances',
+    !/gl_entries|SET\s+balance|DELETE\s+FROM/i.test(inputVatRecovery));
 }
 
 // ── 4. The cleanup merge, and its never-automate boundary ────────────────

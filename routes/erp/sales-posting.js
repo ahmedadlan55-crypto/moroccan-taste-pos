@@ -40,9 +40,9 @@ const filtersOf = (q) => ({
 });
 
 // ── The pending queue, sliced ────────────────────────────────────────────
-// The granularity selector reslices THIS SAME list. There are not three
+// The granularity selector reslices THIS SAME list. There are not two
 // queues, and every bucket carries its own `sources` so the screen can expand
-// any row to its invoices in all three modes — the owner's stated requirement.
+// any row to its invoices in both modes — the owner's stated requirement.
 router.get('/pending', requireCapability('finance.reports.view'), async (req, res) => {
   try {
     const granularity = String(req.query.granularity || 'daily');
@@ -231,18 +231,18 @@ router.get('/health', requireCapability('finance.reports.view'), async (req, res
 async function assertNoUnpostedSales(conn, { from, to, brandId, branchId } = {}) {
   const where = ["status IN ('pending', 'failed', 'posting')"];
   const args = [];
-  if (from) { where.push('business_day >= ?'); args.push(from); }
-  if (to) { where.push('business_day <= ?'); args.push(to); }
+  if (from) { where.push('calendar_date >= ?'); args.push(from); }
+  if (to) { where.push('calendar_date <= ?'); args.push(to); }
   if (brandId) { where.push('(brand_id = ? OR brand_id IS NULL)'); args.push(brandId); }
   if (branchId) { where.push('(branch_id = ? OR branch_id IS NULL)'); args.push(branchId); }
   let rows;
   try {
     [rows] = await conn.query(
-      `SELECT COUNT(*) AS n, MIN(business_day) AS first_day, MAX(business_day) AS last_day
+      `SELECT COUNT(*) AS n, MIN(calendar_date) AS first_day, MAX(calendar_date) AS last_day
          FROM sales_posting_queue WHERE ${where.join(' AND ')}`, args);
   } catch (e) {
-    // The table not existing yet (mid-rollout) must not block a close.
-    if (e && e.code === 'ER_NO_SUCH_TABLE') return;
+    // Missing/broken accounting source must block the close. The release chain
+    // creates this schema before the app accepts traffic.
     throw e;
   }
   const n = Number(rows[0] && rows[0].n) || 0;
@@ -258,16 +258,32 @@ async function assertNoUnpostedSales(conn, { from, to, brandId, branchId } = {})
 }
 
 /** Mark what a forced close left behind, so it stays visible instead of vanishing. */
-async function strandUnposted(conn, { from, to } = {}) {
+async function strandUnposted(conn, { from, to, brandId, branchId } = {}) {
   const where = ["status IN ('pending', 'failed')"];
   const args = [];
-  if (from) { where.push('business_day >= ?'); args.push(from); }
-  if (to) { where.push('business_day <= ?'); args.push(to); }
+  if (from) { where.push('calendar_date >= ?'); args.push(from); }
+  if (to) { where.push('calendar_date <= ?'); args.push(to); }
+  if (brandId) { where.push('(brand_id = ? OR brand_id IS NULL)'); args.push(brandId); }
+  if (branchId) { where.push('(branch_id = ? OR branch_id IS NULL)'); args.push(branchId); }
   const [r] = await conn.query(
     `UPDATE sales_posting_queue SET status = 'stranded' WHERE ${where.join(' AND ')}`, args);
+  return r.affectedRows;
+}
+
+/** Re-open makes forced-close rows postable again, in the exact same scope. */
+async function recoverStranded(conn, { from, to, brandId, branchId } = {}) {
+  const where = ["status = 'stranded'"];
+  const args = [];
+  if (from) { where.push('calendar_date >= ?'); args.push(from); }
+  if (to) { where.push('calendar_date <= ?'); args.push(to); }
+  if (brandId) { where.push('(brand_id = ? OR brand_id IS NULL)'); args.push(brandId); }
+  if (branchId) { where.push('(branch_id = ? OR branch_id IS NULL)'); args.push(branchId); }
+  const [r] = await conn.query(
+    `UPDATE sales_posting_queue SET status = 'pending' WHERE ${where.join(' AND ')}`, args);
   return r.affectedRows;
 }
 
 module.exports = router;
 module.exports.assertNoUnpostedSales = assertNoUnpostedSales;
 module.exports.strandUnposted = strandUnposted;
+module.exports.recoverStranded = recoverStranded;

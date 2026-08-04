@@ -9,9 +9,8 @@ import { computeRatios, extractInputs, type Ratio, type RatioGroup } from "../li
 import { todayISO } from "../api";
 
 // /accounting/financial-ratios — converted from the legacy-only `erpLoadFinRatios`.
-// Pure client-side math over the SAME two endpoints the React balance sheet and
-// income statement already use; no new backend. The math lives in lib/ratios.ts
-// so it is unit-tested rather than trusted.
+// Pure client-side math over the governed IFRS balance sheet and income
+// statement. Classification comes from report_section, never code prefixes.
 
 function fmt(r: Ratio): string {
   if (r.value === null) return "—";
@@ -25,11 +24,11 @@ export function FinancialRatiosPage() {
 
   const bs = useQuery({
     queryKey: ["acc", "ratios", "bs", asOf],
-    queryFn: ({ signal }) => apiClient.get<never>(`/erp/reports/balance-sheet`, { params: { asOf }, signal }),
+    queryFn: ({ signal }) => apiClient.get<never>(`/erp/reports/balance-sheet-ifrs`, { params: { asOfDate: asOf }, signal }),
   });
   const pnl = useQuery({
     queryKey: ["acc", "ratios", "pnl", year, asOf],
-    queryFn: ({ signal }) => apiClient.get<never>(`/erp/reports/pnl`, { params: { from: `${year}-01-01`, to: asOf }, signal }),
+    queryFn: ({ signal }) => apiClient.get<never>(`/erp/reports/income`, { params: { startDate: `${year}-01-01`, endDate: asOf }, signal }),
   });
 
   const ratios = useMemo(() => computeRatios(extractInputs(bs.data, pnl.data)), [bs.data, pnl.data]);

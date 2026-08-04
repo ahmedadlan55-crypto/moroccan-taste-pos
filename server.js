@@ -3668,7 +3668,7 @@ async function runMigrations() {
 
   // v5.10.5 — Self-heal inventory misclassification once at boot. Any
   // user-created "مخزون / منتجات تامة / WIP" account whose ancestry leads
-  // to code 12 (الأصول الثابتة) instead of 112 (المخزون) is re-parented.
+  // to a legacy fixed-assets branch instead of 100300 (المخزون) is re-parented.
   // Idempotent + safe on cold start (silently skips when COA isn't seeded).
   //
   // COA_BOOT_REPAIR guard. `_repairInventoryClassification` UPDATEs parent_id
@@ -3682,9 +3682,9 @@ async function runMigrations() {
   // count it reports is the count the repair would move.
   try {
     if (!coaBootRepairEnabled()) {
-      const [grp] = await db.query("SELECT id FROM gl_accounts WHERE code = '113' LIMIT 1");
+      const [grp] = await db.query("SELECT id FROM gl_accounts WHERE code = '100300' LIMIT 1");
       if (!grp.length) {
-        coaDrift('inventory-classification', 'no inventory group 113 in the chart — nothing to classify');
+        coaDrift('inventory-classification', 'no inventory group 100300 in the chart — nothing to classify');
       } else {
         const [assets] = await db.query(
           "SELECT id, code, name_ar, parent_id FROM gl_accounts WHERE type = 'asset'");
@@ -3693,18 +3693,18 @@ async function runMigrations() {
           if (depth > 10) return null;
           const a = byId[id]; if (!a) return null;
           if (a.code === '12') return '12';
-          if (a.code === '113') return '113';
+          if (a.code === '100300') return '100300';
           if (!a.parent_id) return a.code;
           return ancestorCode(a.parent_id, depth + 1);
         };
         const inventoryRegex = /(مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material)/i;
         const would = assets.filter((a) =>
           inventoryRegex.test(a.name_ar || '') &&
-          a.code !== '113' && !String(a.code).startsWith('113') &&
+          a.code !== '100300' && !String(a.code).startsWith('100300') &&
           ancestorCode(a.parent_id) === '12');
         if (would.length) {
           coaDrift('inventory-classification',
-            'would re-parent ' + would.length + ' inventory-named account(s) from under 12 to 113 · ' + coaSample(would));
+            'would re-parent ' + would.length + ' inventory-named account(s) from a legacy fixed-assets branch to 100300 · ' + coaSample(would));
         }
       }
     } else {
@@ -5182,85 +5182,29 @@ async function runMigrations() {
   await addColumnIfMissing('audit_log', 'device_model', 'VARCHAR(120)');
   await addColumnIfMissing('audit_log', 'device_os',    'VARCHAR(80)');
 
-  // v5.11.14 — One-time relocation of legacy auto-created accounts whose
-  // parent_id points to the WRONG branch in the v5.11.8 IFRS template.
-  // Earlier versions of CORE_ACCOUNTS (lib/glPosting.js) and
-  // /gl/sync-inventory put inventory accounts under code 112 (which is
-  // "الذمم المدينة" / AR in the new chart) and AR under 113 (Inventory) —
-  // exactly the swap the user reported as "ذمم تطبيقات تحت المخزون".
-  // Idempotent: only relocates rows whose parent is currently wrong.
-  //
-  // COA_BOOT_REPAIR guard. "Idempotent" was true and beside the point: this
-  // ran on EVERY boot, so any parent an accountant corrected by hand was
-  // reverted by the next restart, and the renumbering pass below rewrites
-  // `code` — the one column gl_entries denormalises across all posted
-  // history. Detection stays on; the writes need to be asked for.
+  // Keep the single operational Inventory Control account under the governed
+  // 100300 folder. Obsolete 1210/1220/1230/category accounts are retired by
+  // numbered migration 0034; boot must never re-parent or renumber them.
   try {
-    const [r112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112' LIMIT 1");
-    const [r113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113' LIMIT 1");
-    const [r116] = await db.query("SELECT id FROM gl_accounts WHERE code = '116' LIMIT 1");
-    if (r112.length && r113.length && r116.length) {
-      const id112 = r112[0].id, id113 = r113[0].id, id116 = r116[0].id;
-      // One lane, two modes. The SAME predicate either moves the rows or
-      // counts them — sharing the WHERE clause is what keeps the diagnostic
-      // honest, because a drifted copy would report a drift the repair does
-      // not actually fix.
-      const relocate = async (label, where, parentId) => {
-        if (!coaBootRepairEnabled()) {
-          const [rows] = await db.query(
-            'SELECT id, code, name_ar FROM gl_accounts WHERE ' + where, [parentId]);
-          if (rows.length) coaDrift('v5.11.14', 'would move ' + rows.length + ' ' + label + ' · ' + coaSample(rows));
-        } else {
-          const [u] = await db.query(
-            'UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE ' + where, [parentId, parentId]);
-          if (u.affectedRows) console.log('[v5.11.14] Moved', u.affectedRows, label);
-        }
-      };
-      // Inventory legacy codes (1200/1210/1220/1230) → parent 113 (Inventory)
-      await relocate('legacy inventory rows to parent 113',
-        "code IN ('1200','1210','1220','1230') AND (parent_id != ? OR parent_id IS NULL)", id113);
-      // AR legacy code (1150) → parent 112 (AR)
-      await relocate('legacy AR rows to parent 112',
-        "code = '1150' AND (parent_id != ? OR parent_id IS NULL)", id112);
-      // Input VAT legacy code (1290) → parent 116 (Input VAT)
-      await relocate('legacy input-VAT rows to parent 116',
-        "code = '1290' AND (parent_id != ? OR parent_id IS NULL)", id116);
-      // Auto-created inventory categories from /gl/sync-inventory: rows
-      // named "مخزون %" with codes like 11201, 11202... that should be
-      // under 113. Re-code them to 113NN AND reparent them.
-      const [stuck] = await db.query(
-        "SELECT id, code, name_ar FROM gl_accounts " +
-        "WHERE name_ar LIKE 'مخزون %' AND code REGEXP '^112[0-9]+$' AND parent_id != ?",
-        [id113]
-      );
+    const [folders] = await db.query(
+      "SELECT id, level FROM gl_accounts WHERE code = '100300' LIMIT 1");
+    if (folders.length) {
+      const [drift] = await db.query(
+        "SELECT id, code, name_ar FROM gl_accounts WHERE code = '1200' AND (parent_id != ? OR parent_id IS NULL)",
+        [folders[0].id]);
       if (!coaBootRepairEnabled()) {
-        // Reported separately and more loudly than the re-parenting lanes:
-        // this one RENUMBERS. `gl_entries.account_code` is a frozen snapshot
-        // and the account statement matches on `account_id OR account_code`,
-        // so a reused code drags foreign history into a report.
-        if (stuck.length) {
-          coaDrift('v5.11.14', 'would RENUMBER ' + stuck.length +
-            ' auto-created inventory account(s) 112NN → 113NN and re-parent them to 113 · ' + coaSample(stuck));
-        }
+        if (drift.length) coaDrift('inventory-control',
+          'Inventory Control 1200 belongs under governed folder 100300 · ' + coaSample(drift));
       } else {
-        for (const row of stuck) {
-          const [last] = await db.query(
-            "SELECT code FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code DESC LIMIT 1"
-          );
-          let n = 0;
-          if (last.length) n = parseInt(String(last[0].code).slice(3), 10) || 0;
-          const newCode = '113' + String(n + 1).padStart(2, '0');
-          try {
-            await db.query(
-              "UPDATE gl_accounts SET code = ?, parent_id = ?, level = 4 WHERE id = ?",
-              [newCode, id113, row.id]
-            );
-            console.log('[v5.11.14] Relocated "' + row.name_ar + '" from ' + row.code + ' → ' + newCode);
-          } catch(e) { /* code collision: leave as-is, won't break anything */ }
+        if (drift.length) {
+          await db.query(
+            "UPDATE gl_accounts SET parent_id = ?, level = ? WHERE code = '1200'",
+            [folders[0].id, Math.max(2, Number(folders[0].level || 1) + 1)]);
+          console.log('[inventory-control] moved 1200 under 100300');
         }
       }
     }
-  } catch (e) { console.log('[v5.11.14] Legacy CoA relocation skipped:', e.message.substring(0, 120)); }
+  } catch (e) { console.log('[inventory-control] placement check skipped:', e.message.substring(0, 120)); }
 
   // V5.7.18 — One-time backfill: gl_entries.account_name was being saved
   //   as empty string by glPosting.js (now fixed). For all existing rows
@@ -7915,7 +7859,12 @@ async function runMigrations() {
   try {
     const [done] = await db.query(
       "SELECT setting_value FROM settings WHERE setting_key = 'InventoryDuplicateMerge_v1' LIMIT 1");
-    if (!done.length) {
+    const [modernInventoryFolders] = await db.query(
+      "SELECT id FROM gl_accounts WHERE code = '100300' LIMIT 1");
+    // This repair belongs only to pre-template charts. Once the governed
+    // 100300 folder exists, migration 0034 owns retirement and mapping; the
+    // legacy 112→113 heuristic must never reshape the modern chart.
+    if (!done.length && !modernInventoryFolders.length) {
       const [a112] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '112' LIMIT 1");
       const [a113] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '113' LIMIT 1");
       if (a112.length && a113.length) {
@@ -7967,6 +7916,8 @@ async function runMigrations() {
           "INSERT INTO settings (setting_key, setting_value) VALUES ('InventoryDuplicateMerge_v1','1') " +
           "ON DUPLICATE KEY UPDATE setting_value = '1'");
       }
+    } else if (!done.length && modernInventoryFolders.length) {
+      coaDrift('inv-merge', 'legacy 112→113 repair retired because governed inventory folder 100300 exists');
     }
   } catch (e) { console.error('[inv-merge]', e.message); }
 

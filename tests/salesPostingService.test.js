@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const post = require('../lib/salesPosting/post');
+const glTransitions = require('../lib/glTransitions');
 
 let pass = 0;
 const failures = [];
@@ -82,9 +83,15 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   const src = code(read('lib', 'salesPosting', 'post.js'));
   const schema = read('db', 'migrations', 'sales-posting', 'schema.js');
   check('layer 1 — a unique idempotency key on the batch', /UNIQUE KEY uq_spb_idem/.test(schema));
-  check('…and postBatch always supplies one', /idempotencyKey = String\(opts\.idempotencyKey \|\|/.test(src));
+  check('…and postBatch always supplies one', /const idempotencyKey = baseKey\.slice/.test(src));
   check('…deterministic, so a double-click collapses even without a client key',
     /granularity \+ ':' \+ bucketKey/.test(src));
+  check('late arrivals and reversals advance one durable bucket counter',
+    /nextPostingCycle\(conn, granularity, bucketKey\)/.test(src) &&
+    /CREATE TABLE sales_posting_bucket_sequences/.test(schema));
+  check('the bucket counter increment is a row lock inside the transaction',
+    /ON DUPLICATE KEY UPDATE last_cycle = last_cycle \+ 1/.test(src) &&
+    /SELECT last_cycle[\s\S]{0,160}FOR UPDATE/.test(src));
   check('layer 2 — the conditional claim', /AND status IN \('pending', 'failed'\)/.test(src));
   check('layer 3 — one queue row per economic event', /UNIQUE KEY uq_spq_source/.test(schema));
 }
@@ -119,11 +126,23 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   check('…and still defaults to today from MySQL', /: riyadhToday;/.test(gt));
   check('reverse has a REAL require for accountingDate (not one in a comment)',
     /const acctDate = require\('\.\/accountingDate'\)/.test(gt));
+  check('reverse can join a caller-owned transaction without nesting one',
+    /opts\.conn[\s\S]{0,100}runOnConnection\(opts\.conn\)/.test(gt));
 
   check('the queue rows go back to pending so they can be re-posted',
     /SET status = 'pending', batch_id = NULL/.test(src));
+  check('reversal clears the invoice link only when it points at this batch journal',
+    /SET d\.gl_journal_id = NULL[\s\S]{0,180}d\.gl_journal_id = \?/.test(src));
   check('…but batch_items are NOT deleted (history stays answerable)',
     !/DELETE FROM sales_posting_batch_items/.test(src));
+  check('the batch row itself is locked before reversal',
+    /SELECT \* FROM sales_posting_batches[\s\S]{0,100}FOR UPDATE/.test(src));
+  check('the composite workflow passes its transaction connection to GL reverse',
+    /glTransitions\.reverse\([\s\S]{0,180}\bconn\b/.test(src));
+  check('a failed GL reverse aborts before state changes',
+    /if \(!rev \|\| !rev\.ok \|\| !rev\.newJournalId\)[\s\S]*?throw e/.test(src));
+  check('the persisted reversal id is the service result newJournalId',
+    /\[rev\.newJournalId, actor/.test(src));
 }
 
 // ── 6. The period-close guard is on BOTH implementations ─────────────────
@@ -133,13 +152,17 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   const periods = code(read('routes', 'erp', 'periods.js'));
   const erp = code(read('routes', 'erp.js'));
   for (const [label, src] of [['routes/erp/periods.js', periods], ['routes/erp.js', erp]]) {
-    check(label + ' calls the guard', /assertNoUnpostedSales\(db, \{/.test(src));
+    check(label + ' calls the guard on the transaction connection', /assertNoUnpostedSales\(conn, \{/.test(src));
     check(label + ' returns 409 UNPOSTED_SALES_IN_PERIOD',
-      /status\(409\)[\s\S]{0,200}UNPOSTED_SALES_IN_PERIOD/.test(src));
+      /UNPOSTED_SALES_IN_PERIOD[\s\S]{0,300}status\(409\)/.test(src));
     check(label + ' requires force AND capability AND a reason',
       /wantsForce \|\| !mayOverride \|\| reason\.length < 10/.test(src));
     check(label + ' strands rather than deletes on a forced close',
-      /strandUnposted\(db/.test(src));
+      /strandUnposted\(conn/.test(src));
+    check(label + ' recovers stranded rows on reopen using the transaction connection',
+      /recoverStranded\(conn/.test(src));
+    check(label + ' wraps period state and queue state in transactions',
+      /withTransaction\(async \(conn\)/.test(src));
     check(label + ' deep-links to what is blocking',
       /accounting\/sales-posting\?from=/.test(src));
   }
@@ -150,15 +173,18 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
     /if \(status === 'closed' && period\.status !== 'closed'\)/.test(erp));
 }
 
-// ── 7. The guard degrades safely mid-rollout ─────────────────────────────
+// ── 7. The accounting source fails closed ────────────────────────────────
 {
   const src = code(read('routes', 'erp', 'sales-posting.js'));
-  check('a missing queue table does not block a close',
-    /ER_NO_SUCH_TABLE'\) return;/.test(src));
+  check('a missing queue table is not swallowed during close',
+    !/ER_NO_SUCH_TABLE'\) return;/.test(src));
   check('the guard counts pending, failed AND in-flight rows',
     /status IN \('pending', 'failed', 'posting'\)/.test(src));
-  check('it reports the day range so the screen can jump there',
-    /MIN\(business_day\) AS first_day, MAX\(business_day\) AS last_day/.test(src));
+  check('it reports the accounting-date range so the screen can jump there',
+    /MIN\(calendar_date\) AS first_day, MAX\(calendar_date\) AS last_day/.test(src));
+  check('strand and recovery preserve brand/branch scope',
+    /async function strandUnposted\(conn, \{ from, to, brandId, branchId \}/.test(src) &&
+    /async function recoverStranded\(conn, \{ from, to, brandId, branchId \}/.test(src));
 }
 
 // ── 8. Reading and writing the ledger are different permissions ──────────
@@ -188,6 +214,8 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   check('…and an empty one', /code = 'empty_batch'/.test(src));
   check('account resolution mirrors the sale path (settings, then core codes)',
     /GL_SALES_REVENUE_CODE/.test(src) && /GL_OUTPUT_VAT_CODE/.test(src));
+  check('the aggregated journal is linked back to every POS invoice',
+    /UPDATE ar_documents[\s\S]{0,160}SET gl_journal_id = \?/.test(src));
 }
 
 // ── 10. Errors never leak SQL to the browser ─────────────────────────────
@@ -201,7 +229,7 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
 
 // ── 11. The module surface ───────────────────────────────────────────────
 {
-  for (const fn of ['listPending', 'preview', 'postBatch', 'reverseBatch', 'resolveAccounts']) {
+  for (const fn of ['listPending', 'preview', 'postBatch', 'reverseBatch', 'resolveAccounts', 'nextPostingCycle']) {
     check('post.js exports ' + fn, typeof post[fn] === 'function');
   }
   check('the journal reference type is its own', post.REFERENCE_TYPE === 'SalesBatch');
@@ -212,9 +240,88 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
     /status IN \('pending', 'failed'\)/.test(f.sql), f.sql);
 }
 
-console.log(`\n${pass} passed, ${failures.length} failed`);
-if (failures.length) {
-  console.error('\nFAILED:\n  ' + failures.join('\n  '));
+(async () => {
+  // Mutation probe for late arrivals: if the increment or bucket scope is
+  // removed, the second generation is no longer 2 (the production lock is the
+  // PK row plus ON DUPLICATE UPDATE; this fake exercises the same contract).
+  const cycles = new Map();
+  const cycleConn = {
+    query: async (sql, args) => {
+      const key = String(args[0]) + '|' + String(args[1]);
+      if (/INSERT INTO sales_posting_bucket_sequences/.test(sql)) {
+        cycles.set(key, (cycles.get(key) || 0) + 1);
+        return [{ affectedRows: 1 }];
+      }
+      if (/SELECT last_cycle/.test(sql)) return [[{ last_cycle: cycles.get(key) }]];
+      throw new Error('unexpected cycle SQL: ' + sql);
+    },
+  };
+  const first = await post.nextPostingCycle(cycleConn, 'daily', 'daily|2026-08-04|BR-1');
+  const late = await post.nextPostingCycle(cycleConn, 'daily', 'daily|2026-08-04|BR-1');
+  const other = await post.nextPostingCycle(cycleConn, 'daily', 'daily|2026-08-04|BR-2');
+  check('late arrival advances the same bucket to generation 2', first === 1 && late === 2, { first, late });
+  check('a different bucket owns an independent generation', other === 1, other);
+
+  const originalReverse = glTransitions.reverse;
+  const makeReverseHarness = () => {
+    const calls = [];
+    const conn = {
+      query: async (sql, args = []) => {
+        calls.push({ sql, args });
+        if (/SELECT \* FROM sales_posting_batches/.test(sql)) {
+          return [[{ id: 'B-1', status: 'posted', journal_id: 'J-1', journal_date: '2026-07-31' }]];
+        }
+        if (/UPDATE sales_posting_batches/.test(sql)) return [{ affectedRows: 1 }];
+        if (/UPDATE sales_posting_queue/.test(sql)) return [{ affectedRows: 2 }];
+        if (/UPDATE ar_documents/.test(sql)) return [{ affectedRows: 2 }];
+        throw new Error('unexpected reversal SQL: ' + sql);
+      },
+    };
+    const pool = {
+      withTransaction: async (fn) => fn(conn),
+      query: async () => { throw new Error('reversal escaped its transaction connection'); },
+    };
+    return { pool, conn, calls };
+  };
+
+  try {
+    const failed = makeReverseHarness();
+    glTransitions.reverse = async () => ({ ok: false, code: 'mutated_reverse_failure', message: 'no GL reversal', status: 500 });
+    let reversalError = null;
+    try {
+      await post.reverseBatch(failed.pool, { batchId: 'B-1', actor: 'accountant', reason: 'test failure' });
+    } catch (e) { reversalError = e; }
+    check('a failed GL reversal aborts the batch workflow',
+      reversalError && reversalError.code === 'mutated_reverse_failure', reversalError && reversalError.code);
+    check('failure performs no batch/queue/AR state update',
+      failed.calls.every((c) => !/^\s*UPDATE /.test(c.sql)), failed.calls.map((c) => c.sql));
+
+    const succeeded = makeReverseHarness();
+    let reverseCall = null;
+    glTransitions.reverse = async (journalId, user, opts) => {
+      reverseCall = { journalId, user, opts };
+      return { ok: true, newJournalId: 'RJ-1', newJournalNumber: 'JV-REV-1' };
+    };
+    const out = await post.reverseBatch(succeeded.pool,
+      { batchId: 'B-1', actor: 'accountant', reason: 'governed correction' });
+    const batchUpdate = succeeded.calls.find((c) => /UPDATE sales_posting_batches/.test(c.sql));
+    check('GL reverse receives the SAME transaction connection and real actor',
+      reverseCall && reverseCall.opts.conn === succeeded.conn && reverseCall.user.username === 'accountant', reverseCall);
+    check('newJournalId is persisted as reversal_journal_id',
+      batchUpdate && batchUpdate.args[0] === 'RJ-1', batchUpdate && batchUpdate.args);
+    check('successful reversal requeues through the same transaction',
+      out.requeued === 2 && succeeded.calls.some((c) => /UPDATE sales_posting_queue/.test(c.sql)), out);
+  } finally {
+    glTransitions.reverse = originalReverse;
+  }
+
+  console.log(`\n${pass} passed, ${failures.length} failed`);
+  if (failures.length) {
+    console.error('\nFAILED:\n  ' + failures.join('\n  '));
+    process.exit(1);
+  }
+  console.log('✅ posting service: explicit claim, one transaction, guard on both close paths');
+})().catch((e) => {
+  console.error(e && e.stack || e);
   process.exit(1);
-}
-console.log('✅ posting service: explicit claim, one transaction, guard on both close paths');
+});

@@ -44,18 +44,20 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const erp = read('routes/erp.js');
 const server = read('server.js');
 const glPosting = read('lib/glPosting.js');
+const { CORE_ACCOUNTS } = require('../lib/glPosting');
+const cutover = read('db/migrations/0034_coa_inventory_sales_cutover.sql');
+const salesRoute = read('routes/sales.js');
 
-// ── 1. The premise: the posting authority says 113 = Inventory ────────────
+// ── 1. One posting leaf under the governed inventory folder ────────────────
 {
-  check('glPosting documents 112 = AR', /112 = AR/.test(glPosting));
-  check('glPosting documents 113 = Inventory', /113 = Inventory/.test(glPosting));
-  for (const [name, code] of [['INVENTORY', '1200'], ['BRANCH_INVENTORY', '1210'],
-                              ['WIP', '1220'], ['FINISHED_GOODS', '1230']]) {
-    check(`${name} (${code}) is parented under 113`,
-      new RegExp(name + ":[^}]*code: '" + code + "'[^}]*parent: '113'").test(glPosting), code);
+  for (const name of ['INVENTORY', 'BRANCH_INVENTORY', 'WIP', 'FINISHED_GOODS']) {
+    check(`${name} resolves to the single Inventory Control account (1200)`,
+      CORE_ACCOUNTS[name].code === '1200' && CORE_ACCOUNTS[name].parent === '100300', name);
   }
-  check('AR (1150) is parented under 112, not 113',
-    /AR:\s*\{[^}]*code: '1150'[^}]*parent: '112'/.test(glPosting));
+  check('legacy stage/warehouse inventory codes are no longer runtime accounts',
+    !/code: '1210'|code: '1220'|code: '1230'/.test(glPosting));
+  check('AR (1150) is parented under modern receivables 100200',
+    /AR:\s*\{[^}]*code: '1150'[^}]*parent: '100200'/.test(glPosting));
 }
 
 // ── 2. No boot path may CREATE an inventory group at 112 ──────────────────
@@ -65,8 +67,8 @@ const glPosting = read('lib/glPosting.js');
     !/'112',\s*'المخزون'/.test(erp));
   check('server.js no longer inserts «112 المخزون»',
     !/'112',\s*'المخزون'/.test(server));
-  check('the inventory-classification helper targets 113 by a named constant',
-    /INVENTORY_GROUP_CODE\s*=\s*'113'/.test(erp));
+  check('the inventory-classification helper targets 100300 by a named constant',
+    /INVENTORY_GROUP_CODE\s*=\s*'100300'/.test(erp));
   // The helper must not invent the group either. Creating a group from a
   // repair pass is precisely how the second one appeared.
   const helperStart = erp.indexOf('async function _repairInventoryClassification');
@@ -82,13 +84,45 @@ const glPosting = read('lib/glPosting.js');
     !/'112'/.test(helper), (helper.match(/'11\d'/g) || []).slice(0, 5));
 }
 
-// ── 3. The two boot migrations now agree ──────────────────────────────────
+// ── 3. Boot agrees and never resurrects stage/category GL accounts ─────────
 {
-  // server.js's v5.11.14 block treats 112 as AR (it moves 1150 there).
-  check('server.js still moves AR 1150 to 112',
-    /WHERE code = '1150'[\s\S]{0,80}\[id112/.test(server) || /code = '1150'/.test(server));
-  check('server.js still moves the warehouse codes to 113',
-    /code IN \('1200','1210','1220','1230'\)/.test(server));
+  check('server.js places only 1200 under 100300',
+    /code = '1200'[\s\S]{0,300}100300|100300[\s\S]{0,300}code = '1200'/.test(server));
+  check('server.js never revives the old warehouse/stage code family',
+    !/code IN \('1200','1210','1220','1230'\)/.test(server));
+}
+
+// ── 6. Production cutover is non-destructive and cannot double-post ────────
+{
+  check('cutover never deletes accounts or ledger history',
+    !/DELETE\s+FROM\s+gl_accounts|DELETE\s+FROM\s+gl_entries|UPDATE\s+gl_entries/i.test(cutover));
+  check('unused rows are archived, not hidden warnings on active rows',
+    /status = 'archived'/.test(cutover) && /archived_by = 'migration:0034'/.test(cutover));
+  check('inventory roles converge on 1200',
+    /WORK_IN_PROGRESS/.test(cutover) && /FINISHED_GOODS/.test(cutover) && /code = '1200'/.test(cutover));
+  check('pre-cutover queued sales are guarded then marked posted_legacy',
+    /0034_cutover_guard_failed/.test(cutover) && /status = 'posted_legacy'/.test(cutover));
+  check('the fail-closed queue guard runs before every chart mutation',
+    cutover.indexOf('0034_cutover_guard_failed') < cutover.indexOf('UPDATE gl_accounts inventory_account'));
+  check('the cutover guard is pool-safe and never relies on a temporary table',
+    !/CREATE\s+TEMPORARY\s+TABLE/i.test(cutover));
+  check('the cutover guard fails deterministically without depending on SQL strict mode',
+    /SELECT\s+'0033'\s*,\s*'0034_cutover_guard_failed'/i.test(cutover) &&
+    !/SELECT\s+NULL\s*,\s*'0034_cutover_guard_failed'/i.test(cutover));
+  check('cutover rejects unproved legacy and already-double-posted queue rows',
+    /posted_legacy/.test(cutover) && /reference_type = 'SalesBatch'/.test(cutover) &&
+    /legacy_journal\.id IS NOT NULL/.test(cutover));
+  check('legacy WIP/branch/finished accounts are archived under inventory, never deleted',
+    /legacy_inventory\.code IN \('1210','1220','1230'\)/.test(cutover) &&
+    /legacy_inventory\.status = 'archived'/.test(cutover));
+  check('the stale account balance cache is rebuilt from posted journal lines',
+    /SET account_row\.balance = COALESCE\(ledger_total\.ledger_balance, 0\)/.test(cutover));
+  check('unused standard-template leaves may retire instead of keeping 300+ active rows',
+    !/WHERE account_row\.is_system_root = 0\s+AND COALESCE\(account_row\.system_managed/.test(cutover));
+  check('the migration never assumes gl_accounts has company_id',
+    !/inventory_account\.company_id|gl_accounts[^\n]*company_id/.test(cutover));
+  check('checkout no longer posts one Sale journal per invoice',
+    !/referenceType:\s*'Sale'/.test(salesRoute.slice(0, salesRoute.indexOf("router.post('/:id/void'"))));
 }
 
 // ── 4. The cleanup merge, and its never-automate boundary ────────────────
@@ -120,23 +154,12 @@ const glPosting = read('lib/glPosting.js');
   check('the merge is gated so it runs once', /InventoryDuplicateMerge_v1','1'/.test(block) || start > 0);
 }
 
-// ── 5. The /gl/seed template agrees with the posting authority ───────────
-//
-// The seed is the LAST source that could recreate the conflict. It only runs
-// on a chart with zero accounts (the COUNT guard at the top of the route), so
-// it can never rewrite a live chart — but a fresh install seeded the old way
-// was born with Inventory at 112 and Receivables at 113, i.e. the mirror image
-// of what every journal writer assumes, and grew a second inventory group the
-// first time the boot migrations ran.
+// ── 5. The governed template agrees with every runtime writer ─────────────
 {
-  const start = erp.indexOf('const accounts = [');
-  const end = erp.indexOf('];', start);
-  check('the seed array is locatable', start > 0 && end > start);
-  const rows = [...erp.slice(start, end)
-    .matchAll(/\{code:'([^']+)',name:'([^']+)'[^}]*parent:(?:'([^']*)'|null)/g)]
-    .map((m) => ({ code: m[1], name: m[2], parent: m[3] ?? null }));
+  const rows = JSON.parse(read('db/coa-template.json'))
+    .map((r) => ({ code: r.code, name: r.nameAr, parent: r.parentCode || null, kind: r.kind }));
   const byCode = new Map(rows.map((r) => [r.code, r]));
-  check('the seed parses to a non-trivial chart', rows.length > 50, rows.length);
+  check('the governed template is non-trivial', rows.length > 100, rows.length);
 
   // Structural hygiene — a seed that contradicts itself cannot be a baseline.
   const dupes = [...new Set(rows.map((r) => r.code).filter((c, i, a) => a.indexOf(c) !== i))];
@@ -144,22 +167,18 @@ const glPosting = read('lib/glPosting.js');
   const dangling = rows.filter((r) => r.parent && !byCode.has(r.parent)).map((r) => r.code + '→' + r.parent);
   check('every seeded parent exists in the seed', dangling.length === 0, dangling);
 
-  // The families the owner sees, in the order the posting engine assumes.
-  for (const [code, must] of [['112', 'ذمم'], ['113', 'المخزون'], ['114', 'مقدم'],
-                              ['115', 'العهد'], ['116', 'المدخلات']]) {
-    const a = byCode.get(code);
-    check(`seed ${code} is ${must}`, !!a && a.name.includes(must), a ? a.name : '(absent)');
-  }
-  check('the seed does NOT name 112 as inventory',
-    !(byCode.get('112') || {}).name?.includes('مخزون'), (byCode.get('112') || {}).name);
+  const inventoryFolder = byCode.get('100300');
+  check('100300 is the sole governed inventory folder',
+    inventoryFolder?.kind === 'folder' && inventoryFolder.name === 'المخزون', inventoryFolder);
+  const inventoryChildren = rows.filter((r) => r.parent === '100300');
+  check('inventory has exactly one GL posting leaf',
+    inventoryChildren.length === 1 && inventoryChildren[0].code === '1200' && inventoryChildren[0].kind === 'leaf',
+    inventoryChildren);
+  check('the template contains no warehouse/stage/category inventory accounts',
+    !rows.some((r) => ['1210', '1220', '1230'].includes(r.code) || /^113\d{2}$/.test(r.code)));
 
-  // 521/522/523 are owned by CORE_ACCOUNTS (waste, variance, PPV). Seeding
-  // them as payroll/rent/maintenance filed every waste posting in the business
-  // under «الرواتب والأجور».
-  check('seed 521 is the waste family, not payroll',
-    /هدر|توالف/.test((byCode.get('521') || {}).name || ''), (byCode.get('521') || {}).name);
-  check('payroll moved off 521 to its own family',
-    /الرواتب/.test((byCode.get('526') || {}).name || ''), (byCode.get('526') || {}).name);
+  check('/gl/seed executes the governed template before the forensic legacy array',
+    /source: 'governed-coa-template'/.test(erp));
 
   // Every parent CORE_ACCOUNTS declares must exist, or ensureCoreAccounts
   // walks up, finds nothing, and inserts the account as a PARENTLESS ROOT —
@@ -178,4 +197,4 @@ if (failures.length) {
   console.error('\nFAILED:\n  ' + failures.join('\n  '));
   process.exit(1);
 }
-console.log('✅ one inventory group (113); no boot path re-creates a second one at 112');
+console.log('✅ one inventory control account (1200) under governed folder 100300');

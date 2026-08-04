@@ -21,7 +21,7 @@ function check(name, cond, extra) {
   console.error('  ✗ ' + name);
 }
 
-const ACC = { revenue: '4100', outputVat: '2210', cogs: '5100', inventory: '1200', cashFallback: '1110' };
+const ACC = { revenue: '4100', outputVat: '2210', cogs: '5100', inventory: '1200', cashFallback: '1110', platformCommission: '5500', platformPayable: '2320' };
 
 let seq = 0;
 function row(type, occurred, { net, tax, gross, cogs = 0, pay = '1110', brand = null, branch = null } = {}) {
@@ -44,8 +44,8 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
 // exact direction of a sale. A refund booking as a sale is the worst failure
 // this subsystem can produce, and nothing in the row's shape revealed it.
 {
-  const sale = A.planBatches([row('sale', '2026-07-28T12:00:00Z', { net: 100, tax: 15, gross: 115, cogs: 40 })], 'invoice', ACC)[0];
-  const ret = A.planBatches([row('return', '2026-07-28T14:00:00Z', { net: 100, tax: 15, gross: 115, cogs: 40 })], 'invoice', ACC)[0];
+  const sale = A.planBatches([row('sale', '2026-07-28T12:00:00Z', { net: 100, tax: 15, gross: 115, cogs: 40 })], 'daily', ACC)[0];
+  const ret = A.planBatches([row('return', '2026-07-28T14:00:00Z', { net: 100, tax: 15, gross: 115, cogs: 40 })], 'daily', ACC)[0];
 
   check('a sale DEBITS cash', leg(sale, '1110').debit === 115 && leg(sale, '1110').credit === 0, sale.legs);
   check('a sale CREDITS revenue', leg(sale, '4100').credit === 100 && leg(sale, '4100').debit === 0);
@@ -60,6 +60,14 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
     leg(ret, '5100').credit === 40 && leg(ret, '1200').debit === 40);
 
   check('both balance', sale.balanced && ret.balanced);
+  check('batch-item snapshot carries the sale net/tax/gross/COGS',
+    sale.sources[0].net === 100 && sale.sources[0].tax === 15 &&
+    sale.sources[0].gross === 115 && sale.sources[0].cogs === 40,
+    sale.sources[0]);
+  check('batch-item snapshot preserves return signs',
+    ret.sources[0].net === -100 && ret.sources[0].tax === -15 &&
+    ret.sources[0].gross === -115 && ret.sources[0].cogs === -40,
+    ret.sources[0]);
   check('no leg ever carries a negative amount',
     [...sale.legs, ...ret.legs].every((l) => l.debit >= 0 && l.credit >= 0));
 }
@@ -95,18 +103,16 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
   ];
   const daily = A.planBatches(rows, 'daily', ACC);
   const monthly = A.planBatches(rows, 'monthly', ACC);
-  const invoice = A.planBatches(rows, 'invoice', ACC);
 
   check('daily → 3 batches', daily.length === 3, daily.map((b) => b.label));
   check('monthly → 2 batches', monthly.length === 2, monthly.map((b) => b.label));
-  check('invoice → 3 batches', invoice.length === 3);
 
   const sum = (bs) => bs.reduce((s, b) => s + Math.round(b.net * 100), 0);
-  check('all three granularities carry identical money',
-    sum(daily) === 60000 && sum(monthly) === 60000 && sum(invoice) === 60000,
-    [sum(daily), sum(monthly), sum(invoice)]);
+  check('both posting granularities carry identical money',
+    sum(daily) === 60000 && sum(monthly) === 60000,
+    [sum(daily), sum(monthly)]);
   check('every batch can still list its invoices',
-    [...daily, ...monthly, ...invoice].every((b) => b.sources.length === b.itemCount));
+    [...daily, ...monthly].every((b) => b.sources.length === b.itemCount));
   check('monthly labels are months', monthly.every((b) => /^\d{4}-\d{2}$/.test(b.label)), monthly.map((b) => b.label));
   check('the queue ids are carried for claiming',
     daily.every((b) => b.queueIds.length === b.itemCount));
@@ -144,9 +150,9 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
     row('sale', '2026-07-28T22:30:00Z', { net: 100, tax: 0, gross: 100 }),  // 01:30 Riyadh 07-29
   ];
   const b = A.planBatches(rows, 'daily', ACC);
-  check('one trading night → one batch', b.length === 1, b.map((x) => x.label));
-  check('the batch is labelled by the trading night', b[0].label === '2026-07-28', b[0].label);
-  check('but dated by the LATEST calendar date it contains', b[0].journalDate === '2026-07-29', b[0].journalDate);
+  check('one trading night across midnight → two accounting-day batches', b.length === 2, b.map((x) => x.label));
+  check('batches are labelled by calendar date', b.map((x) => x.label).join(',') === '2026-07-28,2026-07-29', b.map((x) => x.label));
+  check('each journal date equals its accounting bucket', b.every((x) => x.journalDate === x.label), b);
 }
 
 // ── 6. Halalas, and the money check ──────────────────────────────────────
@@ -168,7 +174,7 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
     payments: [{ code: '1110', amount: 999 }],
     revenue: [{ code: '4100', amount: 100 }, { code: '2210', amount: 15, tax: true }],
   });
-  const bb = A.planBatches([{ ...bad, id: 99 }], 'invoice', ACC)[0];
+  const bb = A.planBatches([{ ...bad, id: 99 }], 'daily', ACC)[0];
   check('a real payment mismatch is reported',
     bb.warnings.some((w) => w.startsWith('PAYMENT_MISMATCH')), bb.warnings);
   check('…and the batch is NOT postable', bb.postable === false);
@@ -180,20 +186,34 @@ const leg = (b, code) => b.legs.find((l) => l.accountCode === code) || { debit: 
   check('an unknown granularity throws', (() => {
     try { A.planBatches([], 'weekly', ACC); return false; } catch (_) { return true; }
   })());
-  check('the granularities are exactly daily/monthly/invoice',
-    JSON.stringify(A.GRANULARITIES) === JSON.stringify(['daily', 'monthly', 'invoice']));
+  check('the posting granularities are exactly daily/monthly',
+    JSON.stringify(A.GRANULARITIES) === JSON.stringify(['daily', 'monthly']));
 
-  // A row with no payment split must still balance — via the fallback — and
-  // must SAY it fell back rather than inventing a payment method silently.
+  // Missing payment evidence must fail closed; it may never be invented as cash.
   const bare = cap.buildQueueRow({ sourceType: 'sale', sourceId: 'BARE',
     occurredAt: new Date('2026-07-28T12:00:00Z'), net: 100, tax: 15, gross: 115 });
-  const b = A.planBatches([{ ...bare, id: 1 }], 'invoice', ACC)[0];
-  check('a split-less row still balances', b.balanced, b.legs);
-  check('…on the fallback account', leg(b, '1110').debit === 115);
-  check('…and says so', b.warnings.some((w) => /no payment split/.test(w)), b.warnings);
+  const b = A.planBatches([{ ...bare, id: 1 }], 'daily', ACC)[0];
+  check('a split-less row is not postable', b.postable === false);
+  check('no fallback cash leg is invented', leg(b, '1110').debit === 0);
+  check('the missing split is explicit', b.warnings.some((w) => w.startsWith('PAYMENT_SPLIT_MISSING')), b.warnings);
 }
 
-// ── 8. Purity — preview and post must come from one function ─────────────
+// ── 8. Platform commission is part of the same balanced batch ────────────
+{
+  const base = cap.buildQueueRow({
+    sourceType: 'sale', sourceId: 'COM-1', occurredAt: new Date('2026-07-28T12:00:00Z'),
+    net: 100, tax: 15, gross: 115,
+    payments: [{ code: '1110', amount: 115 }],
+    revenue: [{ code: '4100', amount: 100 }, { code: '2210', amount: 15, tax: true }],
+    commissions: [{ expenseCode: '5500', payableCode: '2320', amount: 12.5 }],
+  });
+  const b = A.planBatches([{ ...base, id: 501 }], 'daily', ACC)[0];
+  check('commission debits expense', leg(b, '5500').debit === 12.5, b.legs);
+  check('commission credits platform payable', leg(b, '2320').credit === 12.5, b.legs);
+  check('commission batch remains balanced', b.balanced && b.postable, b);
+}
+
+// ── 9. Purity — preview and post must come from one function ─────────────
 {
   const fs = require('fs');
   const path = require('path');

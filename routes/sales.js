@@ -1,6 +1,6 @@
 const router = require('express').Router();
-const acctDate = require('../lib/accountingDate');
 const salesPostingCapture = require('../lib/salesPosting/capture');
+const { CORE_ACCOUNTS } = require('../lib/glPosting');
 const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
@@ -14,7 +14,6 @@ const requireCapability = require('../middleware/requireCapability');
 // pos.refund?" about the CALLER *and* about an approving manager, instead of
 // letting the middleware 403 before the approval credentials are ever read.
 const { hasCapability } = require('../middleware/requireCapability');
-const gl = require('../lib/glPosting');
 // The ONE authority for "what is this person called" — users.full_name →
 // settings.user_meta[u].name → username. The receipt's cashier line and the
 // JWT claim the till prints from (routes/auth.js) both go through it, so an
@@ -301,14 +300,23 @@ function _parseSplitFromDetails(splitDetails, pmGlMap) {
 // EVERY sale roll back with "حساب غير موجود". Each key is optional; when
 // absent we keep the canonical core code (which gl.ensureCoreAccounts seeds
 // on first post, so a standard account can never be missing). Returns:
-//   { revenue, outputVat, cogs, inventory }
+//   { revenue, outputVat, cogs, inventory, platformCommission, platformPayable }
 async function _resolveSaleGlCodes(db) {
-  const codes = { revenue: '4100', outputVat: '2210', cogs: '5100', inventory: '1200' };
+  const codes = {
+    revenue: CORE_ACCOUNTS.SALES_REVENUE.code,
+    outputVat: CORE_ACCOUNTS.OUTPUT_VAT.code,
+    cogs: CORE_ACCOUNTS.COGS.code,
+    inventory: CORE_ACCOUNTS.INVENTORY.code,
+    platformCommission: CORE_ACCOUNTS.PLATFORM_COMMISSION.code,
+    platformPayable: CORE_ACCOUNTS.PLATFORM_PAYABLE.code,
+  };
   const keyMap = {
     revenue:   'GL_SALES_REVENUE_CODE',
     outputVat: 'GL_OUTPUT_VAT_CODE',
     cogs:      'GL_COGS_CODE',
-    inventory: 'GL_INVENTORY_CODE'
+    inventory: 'GL_INVENTORY_CODE',
+    platformCommission: 'GL_PLATFORM_COMMISSION_CODE',
+    platformPayable: 'GL_PLATFORM_PAYABLE_CODE',
   };
   try {
     const wantedKeys = Object.values(keyMap);
@@ -577,6 +585,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     let _captureRevenue = [];
     let _captureCogsByWarehouse = [];
     let _captureCogs = 0;
+    let _captureCommissions = [];
 
     // ─── v6.2.0 Wave F.3 — Period close guard ───
     // Reject the sale up-front if the date falls in a closed/locked
@@ -1635,10 +1644,10 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     // Production: removed debug log
 
     // ═══════════════════════════════════════════════════════════════
-    // AUTO GL POSTING — Revenue + VAT + COGS
-    // v6.0.1 Wave A: GL posting now FATAL — any failure throws, the
-    // surrounding transaction rolls back the sale + inventory + ZATCA
-    // stamp. No more "sale saved with missing GL" scenarios.
+    // DEFERRED GL SNAPSHOT — Revenue + VAT + COGS
+    // Checkout computes and freezes the exact economic legs here, but writes
+    // no journal. The queue capture below is fatal and the operator later
+    // posts one daily/monthly journal with invoice drill-down.
     // v6.0.3 Wave C.1: zero-cost components are detected and surfaced
     // via `cogsWarning` in the response so the cashier sees a toast.
     // Journal lines:
@@ -1810,7 +1819,6 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         // splitDetails object (unambiguous) rather than re-parsing payStr,
         // whose '/' separator collides with method names like "شبكة/مدى".
         // Falls back to the string parser for non-split / legacy payloads.
-        const entries = [];
         if (invTotal > 0) {
           let paymentDebits;
           // G-SPLIT — case-insensitive guard: a React 'split' sale now routes
@@ -1866,31 +1874,6 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
           _captureRevenue = [{ code: saleGl.revenue, amount: net }];
           if (vat > 0) _captureRevenue.push({ code: saleGl.outputVat, amount: vat, tax: true });
 
-          // Debit(s) — by payment method (one per split, GL routed dynamically)
-          paymentDebits.forEach(pd => {
-            entries.push({
-              accountCode: pd.code,
-              debit: pd.amount, credit: 0,
-              description: 'Sale receipt — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
-              branchId: branchId || null, brandId: brandId || null
-            });
-          });
-          // Credit Sales Revenue (net) — GROSS revenue (post-discount net) at minimum
-          entries.push({
-            accountCode: saleGl.revenue,
-            debit: 0, credit: net,
-            description: 'Sales revenue — ' + orderId + (resolvedChannelName ? ' (' + resolvedChannelName + ')' : ''),
-            branchId: branchId || null, brandId: brandId || null
-          });
-          // Credit Output VAT (if any)
-          if (vat > 0) {
-            entries.push({
-              accountCode: saleGl.outputVat,
-              debit: 0, credit: vat,
-              description: 'Output VAT — ' + orderId,
-              branchId: branchId || null, brandId: brandId || null
-            });
-          }
         }
 
         // v6.0.1 Wave A.5 — Discount GL entries REMOVED (Net method per IFRS 15 §70).
@@ -1910,68 +1893,29 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
           _captureCogs = totalCogs;
           _captureCogsByWarehouse = [{ warehouseId: warehouseId || null, amount: totalCogs,
             cogsCode: saleGl.cogs, inventoryCode: saleGl.inventory }];
-          entries.push({
-            accountCode: saleGl.cogs,
-            debit: totalCogs, credit: 0,
-            description: 'COGS — ' + orderId,
-            branchId: branchId || null, brandId: brandId || null,
-            warehouseId: warehouseId || null
-          });
-          entries.push({
-            accountCode: saleGl.inventory,
-            debit: 0, credit: totalCogs,
-            description: 'Inventory reduction (sale) — ' + orderId,
-            branchId: branchId || null, brandId: brandId || null,
-            warehouseId: warehouseId || null
-          });
         }
 
-        // v7.5 — entries may legitimately be empty (comp sale whose components
-        // all carry zero cost): skip posting rather than fail on all-zero lines.
-        if (entries.length) {
-          const post = await gl.postJournal(db, {
-            journalDate: acctDate.journalDate(now),
-            description: (invTotal > 0 ? 'Sale ' : 'Sale (comp — zero total) ') + orderId + ' (' + (payStr || '—') + ')',
-            referenceType: 'Sale',
-            referenceId: orderId,
-            entries,
-            postedBy: username || ''
-          });
-          // v6.0.1 Wave A.2 — GL posting failure is FATAL. Throws to roll back
-          // the entire transaction (sale row + inventory + ZATCA stamp).
-          if (!post.success) {
-            throw new Error('GL_POSTING_FAILED: ' + (post.error || 'unknown'));
+        // No journal is written per invoice. The values above are immutable
+        // snapshots for the posting queue, which creates one daily/monthly
+        // journal while retaining invoice drill-down.
+
+        // Commission is part of the same queued event. Losing this lookup
+        // would understate both expense and the platform payable, so it is no
+        // longer a best-effort side journal.
+        if (channelId && net > 0) {
+          const [chRow] = await db.query(
+            'SELECT commission_pct, service_fee_pct FROM sales_channels WHERE id = ? LIMIT 1', [channelId]);
+          const _pct = chRow.length
+            ? (Number(chRow[0].commission_pct) || 0) + (Number(chRow[0].service_fee_pct) || 0) : 0;
+          const _amt = Math.round(net * (_pct / 100) * 100) / 100;
+          if (_amt > 0) {
+            _captureCommissions = [{
+              amount: _amt,
+              expenseCode: saleGl.platformCommission,
+              payableCode: saleGl.platformPayable,
+            }];
           }
         }
-
-        // v7.1 — Channel commission + service fee as a SEPARATE journal.
-        // BEST-EFFORT: postJournal returns a success flag (never throws), and the
-        // whole block is wrapped so a missing account / any error only logs — the
-        // sale is NEVER lost. The journal is balanced (Dr expense = Cr payable).
-        try {
-          if (channelId && net > 0) {
-            const [chRow] = await db.query(
-              'SELECT commission_pct, service_fee_pct FROM sales_channels WHERE id = ? LIMIT 1', [channelId]);
-            const _pct = chRow.length
-              ? (Number(chRow[0].commission_pct) || 0) + (Number(chRow[0].service_fee_pct) || 0) : 0;
-            const _amt = Math.round(net * (_pct / 100) * 100) / 100;
-            if (_amt > 0) {
-              await gl.ensureCoreAccounts(db); // idempotent — seeds 5500 + 2320 if missing
-              const cPost = await gl.postJournal(db, {
-                journalDate: acctDate.journalDate(now),
-                description: 'عمولة قناة ' + (resolvedChannelName || '') + ' — ' + orderId,
-                referenceType: 'ChannelCommission',
-                referenceId: orderId,
-                entries: [
-                  { accountCode: '5500', debit: _amt, credit: 0, description: 'عمولة منصة التوصيل', branchId: branchId || null, brandId: brandId || null },
-                  { accountCode: '2320', debit: 0, credit: _amt, description: 'مستحق للمنصة', branchId: branchId || null, brandId: brandId || null }
-                ],
-                postedBy: username || ''
-              });
-              if (!cPost.success) console.warn('[sale ' + orderId + '] channel commission GL not posted:', cPost.error);
-            }
-          }
-        } catch (commErr) { console.warn('[sale ' + orderId + '] channel commission GL skipped:', commErr.message); }
       }
     }
 
@@ -1980,14 +1924,15 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     //  • INSIDE the transaction (before the commit below), so a projection
     //    failure rolls back the sale, inventory and GL together. Anything
     //    after the commit runs under autocommit and could not be rolled back.
-    //  • AFTER the GL post, because linkPosSale resolves the sale's 'Sale'
-    //    journal by reference and it must already exist on this connection.
+    //  • `gl_journal_id` is intentionally NULL until the event belongs to an
+    //    aggregated SalesBatch; O2C returns resolve from immutable line and
+    //    component snapshots, not from an invoice-level journal.
     //  • linkPosSale(conn, …) only — never InvoiceService.issue(), which opens
     //    its OWN connection via db.withTransaction and would then SELECT … FOR
     //    UPDATE rows this transaction has not committed: a guaranteed self-
     //    deadlock, amplified by the pool's lock-wait retry loop.
     //
-    // Fatal by design, matching the GL contract above: a sale whose snapshot
+    // Fatal by design: a sale whose snapshot
     // is missing or disagrees with the ledger is not returnable and not
     // auditable, so it is better never recorded than recorded wrong.
     //
@@ -2078,12 +2023,10 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
     // there is no account resolution and no balance check. Those move to
     // posting time, which is the change the owner asked for.
     //
-    // Non-fatal: a queue-write failure must not lose a sale the customer has
-    // already paid for. The compensating control is the standing health check
-    // (`countUnqueuedSales` must return zero), so a swallowed failure is
-    // visible rather than silent.
-    try {
-      await salesPostingCapture.capture(db, {
+    // The queue is now the accounting source of truth. It is written in this
+    // same transaction and is therefore fatal: a committed sale without its
+    // economic event could never be included in a batch.
+    await salesPostingCapture.capture(db, {
         sourceType: 'sale',
         sourceId: orderId,
         occurredAt: now,
@@ -2095,8 +2038,8 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         payments: _capturePayments,
         revenue: _captureRevenue,
         cogsByWarehouse: _captureCogsByWarehouse,
-      });
-    } catch (_) { /* capture is best-effort by contract — see lib/salesPosting/capture.js */ }
+        commissions: _captureCommissions,
+      }, { throwOnError: true });
 
     // v6.0.1 Wave A — commit the transaction
     await _conn.commit();
@@ -2636,31 +2579,33 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
   for (const m of movs) {
     // 2a. Restore warehouse_stock if a warehouse was tracked
     if (m.warehouse_id) {
-      try {
-        await c.query(
-          'UPDATE warehouse_stock SET qty = qty + ?, last_updated = ? WHERE warehouse_id = ? AND item_id = ?',
-          [Number(m.qty) || 0, now, m.warehouse_id, m.item_id]);
-      } catch (_) { /* row may have been deleted; non-fatal */ }
+      const [stockRestore] = await c.query(
+        'UPDATE warehouse_stock SET qty = qty + ?, last_updated = ? WHERE warehouse_id = ? AND item_id = ?',
+        [Number(m.qty) || 0, now, m.warehouse_id, m.item_id]);
+      if (stockRestore.affectedRows !== 1) {
+        const e = new Error('warehouse stock row missing during sale reversal');
+        e.code = 'INVENTORY_RESTORE_FAILED'; e.status = 409; throw e;
+      }
     } else {
       // Legacy path: deduction happened against inv_items.stock directly
-      try {
-        await c.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
-          [Number(m.qty) || 0, m.item_id]);
-      } catch (_) {}
+      const [stockRestore] = await c.query('UPDATE inv_items SET stock = stock + ? WHERE id = ?',
+        [Number(m.qty) || 0, m.item_id]);
+      if (stockRestore.affectedRows !== 1) {
+        const e = new Error('inventory item missing during sale reversal');
+        e.code = 'INVENTORY_RESTORE_FAILED'; e.status = 409; throw e;
+      }
     }
 
     // 2b. Write a reversing movement so the warehouse ledger is honest
     const reverseId = 'MOV-VOID-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
-    try {
-      await c.query(
-        `INSERT INTO inventory_movements
-          (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [reverseId, now, m.item_id, m.item_name, 'in', Number(m.qty) || 0,
-         'عكس بيع', username || 'system',
-         'void of ' + orderId + ' (mov ' + m.id + ')',
-         m.warehouse_id || null]);
-    } catch (_) {}
+    await c.query(
+      `INSERT INTO inventory_movements
+        (id, movement_date, item_id, item_name, type, qty, reason, username, notes, warehouse_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [reverseId, now, m.item_id, m.item_name, 'in', Number(m.qty) || 0,
+       'عكس بيع', username || 'system',
+       'void of ' + orderId + ' (mov ' + m.id + ')',
+       m.warehouse_id || null]);
 
     restored.push({
       itemId: m.item_id, itemName: m.item_name,
@@ -2671,10 +2616,37 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
   // 3. Recompute global stock for each affected item once
   const itemIds = Array.from(new Set(movs.map(m => m.item_id))).filter(Boolean);
   for (const id of itemIds) {
-    try { await recomputeInvItemStock(c, id); } catch (_) {}
+    await recomputeInvItemStock(c, id);
   }
 
-  // 4. Reverse the GL journals for this sale.
+  // 4. Reconcile the deferred posting state before touching the GL.
+  // A sale that has not reached a batch has no journal to reverse: cancel its
+  // immutable queue snapshot. Once a SalesBatch is posted, an invoice-level
+  // hard reversal would destroy the batch's audit trail, so require the O2C
+  // credit-note workflow instead.
+  let postingState = null;
+  try {
+    const [queued] = await c.query(
+      "SELECT id, status, batch_id FROM sales_posting_queue WHERE source_type='sale' AND source_id=? FOR UPDATE",
+      [orderId]);
+    postingState = queued[0] || null;
+    if (postingState && ['posting', 'posted', 'stranded'].includes(String(postingState.status))) {
+      const err = new Error('Sale belongs to a posted/in-flight sales batch — issue an O2C Credit Note');
+      err.code = 'SALES_BATCH_REQUIRES_CREDIT_NOTE'; err.status = 409; throw err;
+    }
+    if (postingState && ['pending', 'failed'].includes(String(postingState.status))) {
+      await c.query(
+        "UPDATE sales_posting_queue SET status='cancelled', last_error=NULL WHERE id=?",
+        [postingState.id]);
+    }
+  } catch (queueErr) {
+    if (!queueErr || queueErr.code !== 'ER_NO_SUCH_TABLE') throw queueErr;
+    postingState = null; // pre-sales-posting deployment: use legacy journals
+  }
+
+  // 5. Reverse only a historical per-invoice GL journal. New pending sales
+  // intentionally have none; posted_legacy/no-queue rows retain rollback
+  // compatibility with the old accounting path.
   //
   // BOTH reference types, and that is the fix: a sale on a delivery channel
   // posts a SECOND journal — Dr 5500 commission / Cr 2320 payable to the
@@ -2687,6 +2659,10 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
   // for anyone trying to clean it up by hand.
   let reversedGl = false;
   try {
+    const shouldReverseLegacyGl = !postingState || postingState.status === 'posted_legacy';
+    if (!shouldReverseLegacyGl) {
+      reversedGl = false;
+    } else {
     const [journals] = await c.query(
       'SELECT id FROM gl_journals WHERE reference_type IN (?, ?) AND reference_id = ?',
       ['Sale', 'ChannelCommission', orderId]);
@@ -2703,6 +2679,7 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
       await c.query('DELETE FROM gl_journals WHERE id = ?', [j.id]);
       reversedGl = true;
     }
+    }
   } catch (glErr) {
     // v7.5 — ONLY a missing-GL-tables deploy is non-fatal. Anything else
     // (lock timeout, constraint failure) must abort the void: otherwise it
@@ -2710,10 +2687,10 @@ async function _reverseSaleEffects(conn, orderId, username, opts) {
     if (!glErr || glErr.code !== 'ER_NO_SUCH_TABLE') throw glErr;
   }
 
-  // 5. Optionally hard-delete the sale row + lines
+  // 6. Optionally hard-delete the sale row + lines
   let deletedSale = false;
   if (opts.deleteSale) {
-    try { await c.query('DELETE FROM sales_items WHERE order_id = ?', [orderId]); } catch (_) {}
+    await c.query('DELETE FROM sales_items WHERE order_id = ?', [orderId]);
     await c.query('DELETE FROM sales WHERE id = ?', [orderId]);
     deletedSale = true;
   }
@@ -3180,8 +3157,11 @@ router.delete('/:orderId', requireCapability('sales.delete'), async (req, res) =
       throw err;
     }
     if (req.query.force === '1') {
-      await db.query('DELETE FROM sales WHERE id = ?', [orderId]);
-      return res.json({ success: true, force: true, warning: 'inventory + GL NOT reversed' });
+      return res.status(409).json({
+        success: false,
+        code: 'FORCE_DELETE_RETIRED',
+        error: 'الحذف القسري غير متاح؛ استخدم الإلغاء أو إشعارًا دائنًا للحفاظ على المخزون والحسابات.',
+      });
     }
     const [sale] = await db.query('SELECT id FROM sales WHERE id = ?', [orderId]);
     if (!sale.length) return res.status(404).json({ success: false, error: 'sale-not-found' });
@@ -3208,9 +3188,11 @@ router.post('/bulk-delete', requireCapability('sales.delete'), async (req, res) 
     const username = req.user.username;
 
     if (force) {
-      const placeholders = ids.map(() => '?').join(',');
-      await db.query('DELETE FROM sales WHERE id IN (' + placeholders + ')', ids);
-      return res.json({ success: true, deleted: ids.length, force: true, warning: 'inventory + GL NOT reversed' });
+      return res.status(409).json({
+        success: false,
+        code: 'FORCE_DELETE_RETIRED',
+        error: 'الحذف القسري الجماعي غير متاح؛ كل فاتورة تحتاج إلغاءً أو إشعارًا دائنًا محكومًا.',
+      });
     }
 
     const reversed = [];

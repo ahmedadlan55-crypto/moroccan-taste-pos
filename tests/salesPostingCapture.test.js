@@ -5,12 +5,10 @@
  *
  * The owner's complaint: «كل عملية بيع ترحل بقيد وهذا ليس جيدا». The fix is
  * that a sale ENQUEUES an economic event instead of posting a journal, and a
- * human later posts one aggregated journal per day / month / invoice.
+ * human later posts one aggregated journal per day or month.
  *
- * Phase A ships the queue and the capture ONLY — no behaviour changes yet.
- * That ordering is deliberate: the risky write is exercised under real
- * production load, and the invariant "no sale escapes the queue" is PROVEN,
- * before any accounting behaviour depends on it.
+ * Capture is the atomic accounting source for checkout: no per-invoice
+ * journal is written, so a queue failure must roll the sale back.
  *
  * What this file pins is mostly placement and structure, because that is where
  * this design can fail silently.
@@ -120,10 +118,11 @@ function check(name, cond, extra) {
     /salesPostingCapture\.capture\(db,/.test(code));
   check('capture is NOT handed the pool', !/salesPostingCapture\.capture\(_pool/.test(code));
 
-  // It must not be able to take the till down.
+  // It must be fatal now that there is no per-invoice GL fallback.
   const around = code.slice(Math.max(0, capIdx - 400), capIdx + 900);
-  check('the call is wrapped so a queue failure cannot lose a paid sale',
-    /try \{[\s\S]*salesPostingCapture\.capture\([\s\S]*?\} catch/.test(around));
+  check('capture is fail-closed inside checkout',
+    /salesPostingCapture\.capture\([\s\S]*throwOnError:\s*true/.test(around) &&
+    !/try \{[\s\S]*salesPostingCapture\.capture\([\s\S]*?\} catch/.test(around));
 }
 
 // ── 7. The capture module may not open its own connection ────────────────
@@ -165,6 +164,9 @@ function check(name, cond, extra) {
   check('one queue row per economic event is a UNIQUE KEY',
     /UNIQUE KEY uq_spq_source \(source_type, source_id\)/.test(src));
   check('a batch cannot be double-submitted', /UNIQUE KEY uq_spb_idem \(idempotency_key\)/.test(src));
+  check('late batches use one atomic counter row per bucket',
+    /CREATE TABLE sales_posting_bucket_sequences/.test(src) &&
+    /PRIMARY KEY \(granularity, bucket_key\)/.test(src));
   check('batch membership is its own append-only table',
     /CREATE TABLE sales_posting_batch_items/.test(src));
   check('the queue carries both dates', /business_day DATE NOT NULL/.test(src) && /calendar_date DATE NOT NULL/.test(src));
@@ -172,7 +174,7 @@ function check(name, cond, extra) {
   // Additive only — this must not touch an existing table.
   check('the migration creates tables and alters nothing',
     !/ALTER TABLE/.test(src) && !/DROP /.test(src));
-  check('it only creates its own three tables',
+  check('it only creates its own sales-posting tables',
     (src.match(/CREATE TABLE (\w+)/g) || []).every((s) => /sales_posting_/.test(s)),
     src.match(/CREATE TABLE (\w+)/g));
 }
@@ -194,9 +196,34 @@ function check(name, cond, extra) {
     /db\/migrations\/sales-posting\/schema'\)\.apply/.test(boot));
 }
 
-console.log(`\n${pass} passed, ${failures.length} failed`);
-if (failures.length) {
-  console.error('\nFAILED:\n  ' + failures.join('\n  '));
+(async () => {
+  // Mutation probe: moving the ER_NO_SUCH_TABLE branch above throwOnError
+  // makes this fail. Checkout has no per-invoice journal fallback anymore.
+  const missingTable = {
+    query: async () => {
+      const e = new Error('queue table missing');
+      e.code = 'ER_NO_SUCH_TABLE';
+      throw e;
+    },
+  };
+  let strictError = null;
+  try {
+    await cap.capture(missingTable, { sourceType: 'sale', sourceId: 'STRICT-1' }, { throwOnError: true });
+  } catch (e) { strictError = e; }
+  check('throwOnError propagates ER_NO_SUCH_TABLE',
+    strictError && strictError.code === 'ER_NO_SUCH_TABLE', strictError && strictError.code);
+
+  const lenient = await cap.capture(missingTable, { sourceType: 'sale', sourceId: 'LENIENT-1' });
+  check('an explicitly lenient caller may still report a missing schema',
+    lenient && lenient.ok === false && lenient.skipped === 'schema', lenient);
+
+  console.log(`\n${pass} passed, ${failures.length} failed`);
+  if (failures.length) {
+    console.error('\nFAILED:\n  ' + failures.join('\n  '));
+    process.exit(1);
+  }
+  console.log('✅ sales-posting capture: in-transaction, signed, snapshotted, and double-post-proof by key');
+})().catch((e) => {
+  console.error(e && e.stack || e);
   process.exit(1);
-}
-console.log('✅ sales-posting capture: in-transaction, signed, snapshotted, and double-post-proof by key');
+});

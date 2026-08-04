@@ -100,8 +100,11 @@ const salesRoute = read('routes/sales.js');
     /status = 'archived'/.test(cutover) && /archived_by = 'migration:0034'/.test(cutover));
   check('inventory roles converge on 1200',
     /WORK_IN_PROGRESS/.test(cutover) && /FINISHED_GOODS/.test(cutover) && /code = '1200'/.test(cutover));
-  check('pre-cutover queued sales are guarded then marked posted_legacy',
+  check('pre-cutover sales with a legacy journal are marked posted_legacy',
     /0034_cutover_guard_failed/.test(cutover) && /status = 'posted_legacy'/.test(cutover));
+  check('orphan posted_legacy rows are requeued for one governed batch journal',
+    /CUTOVER_REQUEUED_NO_LEGACY_JOURNAL/.test(cutover) &&
+    /queue_row\.status = 'pending'/.test(cutover) && /legacy_journal\.id IS NULL/.test(cutover));
   check('the fail-closed queue guard runs before every chart mutation',
     cutover.indexOf('0034_cutover_guard_failed') < cutover.indexOf('UPDATE gl_accounts inventory_account'));
   check('the cutover guard is pool-safe and never relies on a temporary table',
@@ -109,8 +112,8 @@ const salesRoute = read('routes/sales.js');
   check('the cutover guard fails deterministically without depending on SQL strict mode',
     /SELECT\s+'0033'\s*,\s*'0034_cutover_guard_failed'/i.test(cutover) &&
     !/SELECT\s+NULL\s*,\s*'0034_cutover_guard_failed'/i.test(cutover));
-  check('cutover rejects unproved legacy and already-double-posted queue rows',
-    /posted_legacy/.test(cutover) && /reference_type = 'SalesBatch'/.test(cutover) &&
+  check('cutover rejects unproved batch and already-double-posted queue rows',
+    /reference_type = 'SalesBatch'/.test(cutover) &&
     /legacy_journal\.id IS NOT NULL/.test(cutover));
   check('legacy WIP/branch/finished accounts are archived under inventory, never deleted',
     /legacy_inventory\.code IN \('1210','1220','1230'\)/.test(cutover) &&

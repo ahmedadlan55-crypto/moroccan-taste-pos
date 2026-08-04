@@ -14,16 +14,6 @@ INSERT INTO _migrations (version, filename)
 SELECT '0033', '0034_cutover_guard_failed'
 FROM (
   SELECT COUNT(*) AS bad_count FROM (
-    -- Pending old-regime events must already have their per-invoice journal.
-    SELECT queue_row.id
-    FROM sales_posting_queue queue_row
-    LEFT JOIN gl_journals legacy_journal
-      ON legacy_journal.reference_type = 'Sale'
-     AND legacy_journal.reference_id = queue_row.source_id
-    WHERE queue_row.status IN ('pending','failed','posted_legacy')
-      AND (ABS(queue_row.gross_amount) > 0.005 OR ABS(queue_row.cogs_amount) > 0.005)
-      AND legacy_journal.id IS NULL
-    UNION ALL
     -- A queue row already marked posted must have a valid SalesBatch and must
     -- NOT also carry the old Sale journal (that would be a historical double).
     SELECT queue_row.id
@@ -45,6 +35,21 @@ FROM (
   ) unsafe_rows
 ) cutover_guard
 WHERE cutover_guard.bad_count > 0;
+
+-- Historical backfill can contain rows labelled posted_legacy even though no
+-- legacy Sale journal exists. They are not safe to ignore and must not receive
+-- a per-invoice repair journal: requeue them for the governed batch poster.
+UPDATE sales_posting_queue queue_row
+LEFT JOIN gl_journals legacy_journal
+  ON legacy_journal.reference_type = 'Sale'
+ AND legacy_journal.reference_id = queue_row.source_id
+SET queue_row.status = 'pending',
+    queue_row.batch_id = NULL,
+    queue_row.posted_at = NULL,
+    queue_row.last_error = 'CUTOVER_REQUEUED_NO_LEGACY_JOURNAL'
+WHERE queue_row.status = 'posted_legacy'
+  AND (ABS(queue_row.gross_amount) > 0.005 OR ABS(queue_row.cogs_amount) > 0.005)
+  AND legacy_journal.id IS NULL;
 
 -- The existing operational account keeps its id/code so historical journals,
 -- settings and integrations remain valid. Only its presentation/governance

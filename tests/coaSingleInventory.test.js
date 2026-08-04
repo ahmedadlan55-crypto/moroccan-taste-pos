@@ -102,6 +102,9 @@ const salesRoute = read('routes/sales.js');
     /WORK_IN_PROGRESS/.test(cutover) && /FINISHED_GOODS/.test(cutover) && /code = '1200'/.test(cutover));
   check('cutover role ids are deterministic without unavailable database hash functions',
     /ARH34-/.test(cutover) && /AR34-/.test(cutover) && !/MD5\s*\(/i.test(cutover));
+  check('role upsert qualifies target version fields against the INSERT SELECT source',
+    /account_roles\.account_id <> VALUES\(account_id\)/.test(cutover) &&
+    /account_roles\.version \+ 1, account_roles\.version/.test(cutover));
   check('pre-cutover sales with a legacy journal are marked posted_legacy',
     /0034_cutover_guard_failed/.test(cutover) && /status = 'posted_legacy'/.test(cutover));
   check('orphan posted_legacy rows are requeued for one governed batch journal',

@@ -299,7 +299,8 @@ JOIN (
 ) role_keys
 WHERE inventory_account.code = '1200'
 ON DUPLICATE KEY UPDATE
-  version = IF(account_id <> VALUES(account_id), version + 1, version),
+  version = IF(account_roles.account_id <> VALUES(account_id),
+               account_roles.version + 1, account_roles.version),
   account_id = VALUES(account_id),
   is_active = 1,
   notes = VALUES(notes),

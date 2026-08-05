@@ -231,8 +231,10 @@ test('single-account first page has full totals, page balances and a next cursor
   equal(result.pagination.hasMore, true);
   ok(result.pagination.nextCursor, 'expected next cursor');
   const sql = db.calls.map((c) => c.sql).join('\n');
-  ok(/COALESCE\(company_id,\s*'CO-MAIN'\)\s*=\s*\?/.test(db.calls[0].sql), 'single account lookup must be fixed to CO-MAIN');
-  equal(db.calls[0].params, ['A1', 'CO-MAIN']);
+  ok(/COALESCE\(requested\.company_id,\s*'CO-MAIN'\)\s*=\s*\?/.test(db.calls[0].sql), 'requested account lookup must be fixed to CO-MAIN');
+  ok(/COALESCE\(canonical\.company_id,\s*'CO-MAIN'\)\s*=\s*\?/.test(db.calls[0].sql), 'canonical account lookup must be fixed to CO-MAIN');
+  ok(/coa_0036_account_map/.test(db.calls[0].sql), 'legacy account id must resolve through the canonical map');
+  equal(db.calls[0].params, ['A1', 'CO-MAIN', 'CO-MAIN']);
   ok(!/account_code/.test(sql), 'renamed/reused code must not merge history');
   equal((sql.match(/j\.status = 'posted'/g) || []).length, 3, 'every financial query is posted-only');
 

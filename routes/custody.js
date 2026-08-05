@@ -919,4 +919,7 @@ module.exports = router;
 // Exported so every custody path resolves the same canonical control account.
 module.exports.createCustodyUserGLAccount = createCustodyUserGLAccount;
 module.exports.ensureCustodyParentAccount = ensureCustodyParentAccount;
-module.exports.CUSTODY_GROUP_CODE = CUSTODY_GROUP_CODE;
+// Keep the historical export name for callers outside this repository, but
+// make both names resolve to the single canonical subledger control account.
+module.exports.CUSTODY_GROUP_CODE = CUSTODY_CONTROL_CODE;
+module.exports.CUSTODY_CONTROL_CODE = CUSTODY_CONTROL_CODE;

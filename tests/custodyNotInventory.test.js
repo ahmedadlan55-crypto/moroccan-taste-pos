@@ -29,6 +29,10 @@ check('custody never inserts a gl_accounts row',
   !/INSERT(?:\s+IGNORE)?\s+INTO\s+gl_accounts/i.test(custody));
 check('custody topups and expenses resolve the one control code',
   (custody.match(/CUSTODY_CONTROL_CODE/g) || []).length >= 4);
+check('custody module exports only the defined canonical control code',
+  custody.includes('module.exports.CUSTODY_GROUP_CODE = CUSTODY_CONTROL_CODE;') &&
+  custody.includes('module.exports.CUSTODY_CONTROL_CODE = CUSTODY_CONTROL_CODE;') &&
+  !custody.includes('module.exports.CUSTODY_GROUP_CODE = CUSTODY_GROUP_CODE;'));
 check('ERP historic-topup repair cannot mint employee accounts',
   !/'GL-1130'|'11301'|code LIKE '1130%'/i.test(erp.slice(
     erp.indexOf("router.post('/gl/repair-topups'"),

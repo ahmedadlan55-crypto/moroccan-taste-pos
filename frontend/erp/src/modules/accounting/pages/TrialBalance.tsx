@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Search } from "lucide-react";
-import { Button, DatePicker, Input, Select, Toggle } from "@/shared/ui";
+import { BookOpen, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Download, Search } from "lucide-react";
+import { Button, DatePicker, Input, PrintDocument, Select, Toggle } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
 import { useLang, useT } from "@/i18n";
 import {
@@ -17,20 +17,11 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
+  exportRowsCsv,
   useAppliedFilter,
   printReport,
 } from "../components";
-
-const TYPE_BAR: Record<string, string> = {
-  asset: "bg-sky-400",
-  liability: "bg-rose-400",
-  equity: "bg-violet-400",
-  revenue: "bg-emerald-400",
-  expense: "bg-amber-400",
-};
 
 interface FlatRow extends TrialBalanceRow {
   depth: number;
@@ -61,6 +52,10 @@ function isZeroRow(row: TrialBalanceRow): boolean {
     .every((value) => Math.abs(Number(value) || 0) < ZERO);
 }
 
+function isMainRow(row: TrialBalanceRow): boolean {
+  return row.isFolder || row.hasChildren;
+}
+
 function buildTree(rows: TrialBalanceRow[], options: TreeViewOptions): { flat: FlatRow[]; roots: TrialBalanceRow[] } {
   const ids = new Set(rows.map((r) => r.accountId));
   const rowById = new Map(rows.map((r) => [r.accountId, r]));
@@ -81,6 +76,10 @@ function buildTree(rows: TrialBalanceRow[], options: TreeViewOptions): { flat: F
     rows
       .filter((r) => {
         if (options.maxLevel != null && r.level > options.maxLevel) return false;
+        // Retired skeleton rows with no accounting footprint add noise but no
+        // audit value. Archived accounts that DO carry an opening, movement or
+        // closing figure remain visible regardless of the hide-zero toggle.
+        if (!r.isActive && isZeroRow(r)) return false;
         if (options.hideZero && isZeroRow(r)) return false;
         if (!query) return true;
         return normalizeSearch(`${r.code} ${r.nameAr} ${r.nameEn || ""}`).includes(query);
@@ -129,8 +128,8 @@ export function TrialBalancePage() {
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useTrialBalance(filter.applied);
   const [search, setSearch] = useState("");
-  const [maxLevel, setMaxLevel] = useState<number | null>(null);
-  const [hideZero, setHideZero] = useState(false);
+  const [maxLevel, setMaxLevel] = useState<number | null>(3);
+  const [hideZero, setHideZero] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 
   // Tier A.1 corrective gate: this used to recompute the footer totals by
@@ -146,6 +145,14 @@ export function TrialBalancePage() {
     () => buildTree(rows, { collapsed, search, maxLevel, hideZero }).flat,
     [rows, collapsed, search, maxLevel, hideZero],
   );
+  // Printing/exporting must never inherit a transient collapse state. A
+  // collapsed branch is a screen-navigation preference, not an accounting
+  // filter, so paper/CSV always receives the complete filtered hierarchy.
+  const outputFlat = useMemo(
+    () => buildTree(rows, { collapsed: new Set<string>(), search, maxLevel, hideZero }).flat,
+    [rows, search, maxLevel, hideZero],
+  );
+  const visibleIds = useMemo(() => new Set(flat.map((row) => row.accountId)), [flat]);
   const totals = query.data?.totals;
   const diagnostics = query.data?.diagnostics;
   const isClean = query.data?.isClean;
@@ -159,13 +166,45 @@ export function TrialBalancePage() {
     lang === "en" ? row.nameEn || row.nameAr : row.nameAr || row.nameEn || row.code;
   const viewRestricted = !!search.trim() || maxLevel != null || hideZero || collapsed.size > 0;
 
-  const openLedger = (accountId: string) => {
-    const params = new URLSearchParams({
-      accountId,
-      from: filter.applied.from,
-      to: filter.applied.to,
-    });
+  const openLedger = (row: TrialBalanceRow) => {
+    const params = new URLSearchParams();
+    params.set(isMainRow(row) ? "parentId" : "accountId", row.accountId);
+    params.set("from", filter.applied.from);
+    params.set("to", filter.applied.to);
     navigate(`/accounting/general-ledger?${params.toString()}`);
+  };
+
+  const exportCsv = () => {
+    const header = [
+      t("accounting.coa.col.code"),
+      t("accounting.coa.form.nameAr"),
+      t("accounting.coa.form.nameEn"),
+      t("accounting.coa.col.level"),
+      t("accounting.coa.col.kind"),
+      `${t("accounting.trialBalance.openingCol")} - ${t("accounting.common.debit")}`,
+      `${t("accounting.trialBalance.openingCol")} - ${t("accounting.common.credit")}`,
+      `${t("accounting.trialBalance.periodCol")} - ${t("accounting.common.debit")}`,
+      `${t("accounting.trialBalance.periodCol")} - ${t("accounting.common.credit")}`,
+      `${t("accounting.trialBalance.closingCol")} - ${t("accounting.common.debit")}`,
+      `${t("accounting.trialBalance.closingCol")} - ${t("accounting.common.credit")}`,
+    ];
+    exportRowsCsv(
+      `trial-balance-${filter.applied.from}-${filter.applied.to}.csv`,
+      header,
+      outputFlat.map((row) => [
+        row.code,
+        row.nameAr,
+        row.nameEn || "",
+        row.level,
+        t(isMainRow(row) ? "accounting.coa.kpi.control" : "accounting.coa.kpi.posting"),
+        row.openDebit,
+        row.openCredit,
+        row.periodDebit,
+        row.periodCredit,
+        row.closeDebit,
+        row.closeCredit,
+      ]),
+    );
   };
 
   const toggleRow = (id: string) =>
@@ -182,6 +221,11 @@ export function TrialBalancePage() {
         title={t("accounting.trialBalance.title")}
         subtitle={t("accounting.trialBalance.subtitle")}
         onPrint={printReport}
+        extraActions={
+          <Button variant="secondary" onClick={exportCsv} disabled={outputFlat.length === 0}>
+            <Download className="h-4 w-4" /> {t("table.exportCsv")}
+          </Button>
+        }
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
         <FilterField label={t("accounting.common.fromDate")}>
@@ -244,11 +288,15 @@ export function TrialBalancePage() {
         isEmpty={rows.length === 0}
         onRetry={() => query.refetch()}
       >
-        <PrintArea>
+        <PrintDocument
+          title={t("accounting.trialBalance.title")}
+          subtitle={period}
+          meta={t("accounting.generalLedger.postedOnly")}
+          className="print-landscape print-long-report print-single-total"
+        >
           <div className="surface p-4">
-            <PrintBanner title={t("accounting.trialBalance.title")} period={period} />
             {viewRestricted && (
-              <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+              <p className="mb-3 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs font-bold leading-5 text-blue-900">
                 {t("accounting.trialBalance.filteredTotalsNotice", {
                   shown: flat.length,
                   total: rows.length,
@@ -260,10 +308,11 @@ export function TrialBalancePage() {
                 {t("accounting.trialBalance.noFilterMatch")}
               </p>
             )}
-            <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[52rem] text-sm">
+            <div className="hidden overflow-x-auto xl:block print:block">
+            <table className="w-full min-w-[58rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-extrabold text-slate-500">
+                  <th rowSpan={2} className="w-28 px-3 py-2 text-start">{t("accounting.coa.col.code")}</th>
                   <th rowSpan={2} className="px-3 py-2 text-right">{t("accounting.common.account")}</th>
                   <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
                     {t("accounting.trialBalance.openingCol")}
@@ -285,8 +334,22 @@ export function TrialBalancePage() {
                 </tr>
               </thead>
               <tbody>
-                {flat.map((r) => (
-                  <tr key={r.accountId} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
+                {outputFlat.map((r) => {
+                  const main = isMainRow(r);
+                  const visible = visibleIds.has(r.accountId);
+                  return (
+                  <tr
+                    key={r.accountId}
+                    data-account-kind={main ? "main" : "posting"}
+                    className={`${visible ? "" : "hidden print:table-row"} border-b border-slate-100 last:border-0 ${
+                      main ? "bg-blue-50/70 hover:bg-blue-50" : "bg-white hover:bg-slate-50/70"
+                    }`}
+                  >
+                    <td className="px-3 py-2 text-start">
+                      <code dir="ltr" className={`text-xs font-bold tabular-nums ${main ? "text-blue-700" : "text-slate-500"}`}>
+                        {r.code}
+                      </code>
+                    </td>
                     <td className="px-3 py-2" style={{ paddingInlineStart: 12 + r.depth * 22 }}>
                       <span className="inline-flex items-center gap-2">
                         {r.hasChildren ? (
@@ -305,21 +368,21 @@ export function TrialBalancePage() {
                         ) : (
                           <span className="no-print inline-block h-7 w-7" />
                         )}
-                        <span
-                          className={`inline-block h-3.5 w-1 rounded-sm ${TYPE_BAR[r.type] ?? "bg-slate-300"}`}
-                          aria-hidden="true"
-                        />
                         <button
                           type="button"
                           onClick={() => navigate(`/accounting/chart-of-accounts/${encodeURIComponent(r.accountId)}`)}
-                          className={`${r.depth === 0 ? "font-extrabold text-slate-900" : "font-semibold text-slate-700"} text-start hover:text-teal-700 hover:underline`}
+                          className={`${main ? "font-extrabold text-blue-900" : "font-semibold text-slate-800"} text-start hover:text-teal-700 hover:underline`}
                         >
                           {rowName(r)}
                         </button>
-                        <code dir="ltr" className="text-[11px] text-slate-400">{r.code}</code>
+                        {main && (
+                          <span className="rounded-md border border-blue-200 bg-white/80 px-1.5 py-0.5 text-[10px] font-bold text-blue-800">
+                            {t("accounting.coa.kpi.control")}
+                          </span>
+                        )}
                         <button
                           type="button"
-                          onClick={() => openLedger(r.accountId)}
+                          onClick={() => openLedger(r)}
                           className="no-print inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-bold text-teal-700 hover:bg-teal-50"
                           aria-label={t("accounting.trialBalance.openLedgerFor", { account: rowName(r) })}
                         >
@@ -328,14 +391,15 @@ export function TrialBalancePage() {
                         </button>
                       </span>
                     </td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.openDebit} /></td>
-                    <td className="px-3 py-2 text-left"><Num value={r.openCredit} /></td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.periodDebit} /></td>
-                    <td className="px-3 py-2 text-left"><Num value={r.periodCredit} /></td>
+                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.openDebit} strong={main} /></td>
+                    <td className="px-3 py-2 text-left"><Num value={r.openCredit} strong={main} /></td>
+                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.periodDebit} strong={main} /></td>
+                    <td className="px-3 py-2 text-left"><Num value={r.periodCredit} strong={main} /></td>
                     <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.closeDebit} strong /></td>
                     <td className="px-3 py-2 text-left"><Num value={r.closeCredit} strong /></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               {/* Release integration — accounting's field names and its
                   `{totals && …}` guard, with sprint's t() for the label. The
@@ -348,7 +412,7 @@ export function TrialBalancePage() {
               {totals && (
                 <tfoot>
                   <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                    <td className="px-3 py-2.5 text-right">
+                    <td colSpan={2} className="px-3 py-2.5 text-right">
                       {viewRestricted
                         ? t("accounting.trialBalance.fullScopeTotal")
                         : t("accounting.common.total")}
@@ -365,12 +429,13 @@ export function TrialBalancePage() {
             </table>
             </div>
 
-            <div className="grid gap-3 md:hidden">
+            <div className="grid gap-3 xl:hidden print:hidden">
               {flat.map((r) => (
                 <article
                   key={r.accountId}
-                  className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
-                  style={{ marginInlineStart: Math.min(r.depth, 4) * 12 }}
+                  className={`rounded-2xl border p-3 shadow-sm ${
+                    isMainRow(r) ? "border-blue-200 bg-blue-50/70" : "border-slate-200 bg-white"
+                  }`}
                   aria-label={t("accounting.trialBalance.mobileAccountLevel", {
                     account: rowName(r),
                     level: r.level,
@@ -382,8 +447,12 @@ export function TrialBalancePage() {
                       onClick={() => navigate(`/accounting/chart-of-accounts/${encodeURIComponent(r.accountId)}`)}
                       className="min-w-0 text-start"
                     >
-                      <span className="block truncate text-sm font-extrabold text-slate-900">{rowName(r)}</span>
-                      <code dir="ltr" className="text-[11px] text-slate-400">{r.code}</code>
+                      <span className={`block truncate text-sm font-extrabold ${isMainRow(r) ? "text-blue-900" : "text-slate-900"}`}>
+                        {rowName(r)}
+                      </span>
+                      <code dir="ltr" className={`text-[11px] ${isMainRow(r) ? "text-blue-700" : "text-slate-500"}`}>
+                        {r.code}
+                      </code>
                       <span className="ms-2 text-[10px] font-bold text-slate-400">
                         {t("accounting.trialBalance.level", { level: r.level })}
                       </span>
@@ -401,7 +470,7 @@ export function TrialBalancePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => openLedger(r.accountId)}
+                    onClick={() => openLedger(r)}
                     className="no-print mb-2 inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-teal-50 px-3 text-xs font-bold text-teal-700"
                   >
                     <BookOpen className="h-4 w-4" /> {t("accounting.trialBalance.openLedger")}
@@ -422,7 +491,7 @@ export function TrialBalancePage() {
             </div>
             {totals && <BalanceStatus totals={totals} isClean={isClean} diagnostics={diagnostics} />}
           </div>
-        </PrintArea>
+        </PrintDocument>
       </ReportState>
     </div>
   );

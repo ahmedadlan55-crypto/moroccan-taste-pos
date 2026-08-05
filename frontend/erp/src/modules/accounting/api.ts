@@ -313,7 +313,7 @@ export interface GlLedgerResponse {
   pagination?: { bounded: boolean; maxAccounts: number; maxLines: number };
   generatedAt?: string;
 }
-/** main = a ROOT account · sub = anything that has a parent · both = no filter. */
+/** main = a control/folder account · sub = a posting leaf · both = no filter. */
 export type GlAccountKind = "both" | "main" | "sub";
 
 /**
@@ -328,8 +328,10 @@ export function useGlLedger(
   accType: GlAccountKind = "both",
   addedBy = "",
   accountId = "",
+  parentId = "",
 ) {
   const selectedAccount = accountId.trim();
+  const selectedParent = parentId.trim();
   return useQuery({
     queryKey: [
       "acc",
@@ -340,6 +342,7 @@ export function useGlLedger(
       accType,
       addedBy.trim(),
       selectedAccount,
+      selectedParent,
     ],
     enabled: !!range,
     queryFn: async () =>
@@ -352,6 +355,7 @@ export function useGlLedger(
             accType,
             ...(addedBy.trim() ? { addedBy: addedBy.trim() } : {}),
             ...(selectedAccount ? { accounts: selectedAccount } : {}),
+            ...(selectedParent ? { parent: selectedParent } : {}),
           },
         }),
       ),

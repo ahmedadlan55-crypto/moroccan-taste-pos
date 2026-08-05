@@ -129,6 +129,13 @@
     size: A4;
     margin: 12mm;
   }
+  @page accounting-landscape {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  .print-document.print-landscape {
+    page: accounting-landscape;
+  }
   .no-print {
     display: none !important;
   }
@@ -156,6 +163,9 @@
   .surface {
     box-shadow: none;
     break-inside: avoid;
+  }
+  .print-document.print-long-report .surface {
+    break-inside: auto;
   }
   tr,
   .chip {
@@ -222,6 +232,9 @@
   }
   .print-document tfoot {
     display: table-footer-group;
+  }
+  .print-document.print-single-total tfoot {
+    display: table-row-group;
   }
   .print-document table {
     width: 100% !important;

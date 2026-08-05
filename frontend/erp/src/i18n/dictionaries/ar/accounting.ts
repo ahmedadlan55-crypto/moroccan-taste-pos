@@ -74,6 +74,14 @@ export const accounting = {
     clearFilters: "مسح التصفية ({count})",
     showingCount: "معروض {count} من {total}",
     asOfUnsupported: "الأرصدة المعروضة حالية — الخادم لا يدعم بعد الأرصدة حتى تاريخ محدد.",
+    print: {
+      currentSnapshot: "دليل الحسابات الحالي · الأرصدة الحالية",
+      scope: "نطاق الطباعة: {count} من {total} حساب",
+      parentCode: "رمز الرئيسي",
+      status: "الحالة",
+      debitBalance: "رصيد مدين",
+      creditBalance: "رصيد دائن",
+    },
     dr: "مدين",
     cr: "دائن",
     contra: "حساب مقابل",
@@ -575,6 +583,12 @@ export const accounting = {
     shownOf: "يُعرض {shown} من {total} حساب",
     clearSearch: "مسح البحث",
     singleAccountScope: "عرض تفصيلي: حساب واحد",
+    parentAccountScope: "أستاذ تجميعي: الحسابات التابعة",
+    printScope: {
+      parent: "نطاق الطباعة: الحسابات النهائية التابعة للحساب التجميعي",
+      single: "نطاق الطباعة: حساب ترحيل واحد",
+      all: "نطاق الطباعة: الحسابات ذات الحركة — قيود مُرحّلة فقط",
+    },
     clearAccountScope: "عرض كل الحسابات",
     addedBy: "مُنشئ القيد",
     addedByPlaceholder: "اسم المستخدم (اختياري)",
@@ -584,6 +598,10 @@ export const accounting = {
     level: "المستوى {level}",
     contra: "حساب مقابل",
     archived: "مؤرشف",
+    export: {
+      referenceType: "نوع المرجع",
+      referenceId: "رقم المرجع",
+    },
     noSearchMatch: "لا يوجد حساب يطابق البحث — جرّب اسمًا أو كودًا آخر.",
     filteredNotice: "الإجماليات أعلاه للنطاق كاملًا؛ البحث يُخفي حاليًا {hidden} حسابًا.",
     accType: {

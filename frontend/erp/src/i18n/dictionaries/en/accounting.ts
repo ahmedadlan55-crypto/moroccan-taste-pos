@@ -63,6 +63,14 @@ export const accounting = {
     showingCount: "Showing {count} of {total}",
     asOfUnsupported:
       "Balances shown are current — the server does not support as-of-date balances yet.",
+    print: {
+      currentSnapshot: "Current chart of accounts · current balances",
+      scope: "Print scope: {count} of {total} accounts",
+      parentCode: "Parent code",
+      status: "Status",
+      debitBalance: "Debit balance",
+      creditBalance: "Credit balance",
+    },
     dr: "Dr",
     cr: "Cr",
     contra: "Contra",
@@ -555,6 +563,12 @@ export const accounting = {
     shownOf: "Showing {shown} of {total} accounts",
     clearSearch: "Clear search",
     singleAccountScope: "Drill-down: one account",
+    parentAccountScope: "Consolidated ledger: descendant accounts",
+    printScope: {
+      parent: "Print scope: posting descendants of the control account",
+      single: "Print scope: one posting account",
+      all: "Print scope: accounts with activity — posted entries only",
+    },
     clearAccountScope: "Show all accounts",
     addedBy: "Journal creator",
     addedByPlaceholder: "Username (optional)",
@@ -564,6 +578,10 @@ export const accounting = {
     level: "Level {level}",
     contra: "Contra account",
     archived: "Archived",
+    export: {
+      referenceType: "Reference type",
+      referenceId: "Reference ID",
+    },
     noSearchMatch: "No account matches the search — try another name or code.",
     filteredNotice: "The totals above cover the full scope; the search is currently hiding {hidden} account(s).",
     accType: {

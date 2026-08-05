@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Badge, DatePicker, Input, Select } from "@/shared/ui";
+import { Download } from "lucide-react";
+import { Badge, Button, DatePicker, Input, PrintDocument, Select } from "@/shared/ui";
 import { formatDate } from "@/shared/lib";
 import { useLang, useT } from "@/i18n";
 import {
@@ -17,11 +18,10 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
+  exportRowsCsv,
 } from "../components";
 
 interface GlFilter {
@@ -215,6 +215,7 @@ export function GeneralLedgerPage() {
     return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
   };
   const accountId = (searchParams.get("accountId") || "").trim();
+  const parentId = (searchParams.get("parentId") || "").trim();
   const filter = useAppliedFilter<GlFilter>({
     from: dateParam("from", startOfYearISO()),
     to: dateParam("to", todayISO()),
@@ -229,6 +230,7 @@ export function GeneralLedgerPage() {
     filter.applied.accType,
     filter.applied.addedBy,
     accountId,
+    parentId,
   );
   const data = query.data;
   const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
@@ -244,12 +246,73 @@ export function GeneralLedgerPage() {
   );
   const hidden = allSections.length - sections.length;
 
+  // Export the complete server result, not the client-side search subset and
+  // not a rendered/paginated slice. Monetary cells stay numeric so Excel can
+  // sum them; names/references remain ordinary text columns.
+  const exportRows = useMemo<(string | number)[][]>(() =>
+    allSections.flatMap((section) => {
+      const account = [
+        section.code,
+        section.nameAr,
+        section.nameEn,
+        section.level,
+        section.opening,
+        section.totalDebit,
+        section.totalCredit,
+        section.closingBalance,
+      ];
+      if (section.lines.length === 0) {
+        return [[...account, "", "", "", "", "", "", 0, 0, section.closingBalance]];
+      }
+      return section.lines.map((line) => [
+        ...account,
+        line.date,
+        line.journalNumber,
+        line.description,
+        line.referenceType,
+        line.referenceId,
+        line.addedBy,
+        line.debit,
+        line.credit,
+        line.runningBalance,
+      ]);
+    }), [allSections]);
+
+  const onExport = () => exportRowsCsv(
+    `general-ledger-${filter.applied.from}-${filter.applied.to}.csv`,
+    [
+      t("accounting.coa.col.code"),
+      t("accounting.coa.form.nameAr"),
+      t("accounting.coa.form.nameEn"),
+      t("accounting.coa.col.level"),
+      t("accounting.generalLedger.openingBalance"),
+      t("accounting.generalLedger.totalDebit"),
+      t("accounting.generalLedger.totalCredit"),
+      t("accounting.common.closing"),
+      t("accounting.common.date"),
+      t("accounting.common.journalNo"),
+      t("accounting.common.statement"),
+      t("accounting.generalLedger.export.referenceType"),
+      t("accounting.generalLedger.export.referenceId"),
+      t("accounting.generalLedger.addedBy"),
+      t("accounting.common.debit"),
+      t("accounting.common.credit"),
+      t("accounting.common.balance"),
+    ],
+    exportRows,
+  );
+
   return (
     <div>
       <ReportHeader
         title={t("accounting.generalLedger.title")}
         subtitle={t("accounting.generalLedger.subtitle")}
         onPrint={printReport}
+        extraActions={
+          <Button variant="secondary" onClick={onExport} disabled={allSections.length === 0}>
+            <Download className="h-4 w-4" /> {t("table.exportCsv")}
+          </Button>
+        }
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
         <FilterField label={t("accounting.common.fromDate")}>
@@ -326,9 +389,17 @@ export function GeneralLedgerPage() {
         onRetry={() => query.refetch()}
         emptyBody={t("accounting.generalLedger.empty")}
       >
-        <PrintArea>
+        <PrintDocument
+          title={t("accounting.generalLedger.title")}
+          subtitle={period}
+          meta={parentId
+            ? t("accounting.generalLedger.printScope.parent")
+            : accountId
+              ? t("accounting.generalLedger.printScope.single")
+              : t("accounting.generalLedger.printScope.all")}
+          className="print-landscape print-long-report"
+        >
           <div className="surface mb-5 p-4">
-            <PrintBanner title={t("accounting.generalLedger.title")} period={period} />
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <Badge tone="success">{t("accounting.generalLedger.postedOnly")}</Badge>
               <Badge tone="neutral">{t("accounting.generalLedger.identityAccountId")}</Badge>
@@ -343,6 +414,17 @@ export function GeneralLedgerPage() {
               {accountId && (
                 <>
                   <Badge tone="info">{t("accounting.generalLedger.singleAccountScope")}</Badge>
+                  <Link
+                    to="/accounting/general-ledger"
+                    className="no-print text-xs font-bold text-teal-700 underline"
+                  >
+                    {t("accounting.generalLedger.clearAccountScope")}
+                  </Link>
+                </>
+              )}
+              {parentId && (
+                <>
+                  <Badge tone="info">{t("accounting.generalLedger.parentAccountScope")}</Badge>
                   <Link
                     to="/accounting/general-ledger"
                     className="no-print text-xs font-bold text-teal-700 underline"
@@ -386,7 +468,7 @@ export function GeneralLedgerPage() {
               />
             ))}
           </div>
-        </PrintArea>
+        </PrintDocument>
       </ReportState>
     </div>
   );

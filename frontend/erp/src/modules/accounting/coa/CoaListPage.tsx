@@ -18,6 +18,7 @@ import {
   Layers,
   ListTree,
   Plus,
+  Printer,
   Search,
   Stethoscope,
   Table2,
@@ -35,6 +36,7 @@ import {
   LoadingState,
   MetricCard,
   PageHeader,
+  PrintDocument,
   SegmentedControl,
   Select,
   Toggle,
@@ -262,8 +264,11 @@ export function CoaListPage() {
   );
 
   const exportRows = useCallback(() => {
-    downloadRowsCsv(columns, tableRows, `chart-of-accounts-${asOf || todayISO()}`);
-  }, [columns, tableRows, asOf]);
+    // The endpoint currently returns the current chart even when an `asOf`
+    // date is supplied. Never put that unsupported date in the filename: it
+    // would mislabel a current export as a historical snapshot.
+    downloadRowsCsv(columns, tableRows, `chart-of-accounts-current-${todayISO()}`);
+  }, [columns, tableRows]);
 
   const filterCount = activeFilterCount(filters);
 
@@ -283,6 +288,9 @@ export function CoaListPage() {
             </Button>
             <Button variant="secondary" onClick={exportRows} disabled={tableRows.length === 0}>
               <Download className="h-4 w-4" /> {t("common.export")}
+            </Button>
+            <Button variant="secondary" onClick={() => window.print()} disabled={tableRows.length === 0}>
+              <Printer className="h-4 w-4" /> {t("accounting.common.print")}
             </Button>
             {canManage && (
               <Button variant="secondary" onClick={() => navigate(`${COA_BASE}/import`)}>
@@ -491,6 +499,81 @@ export function CoaListPage() {
         </div>
       </Card>
 
+      {/* A stable official print view, independent of Tree/Table mode and of
+          DataTable pagination. It intentionally prints the complete filtered
+          chart (`tableRows`) in canonical code order. Control accounts carry
+          hierarchy and roll-up balances; posting accounts remain visually
+          neutral. Screen-only actions/tree affordances never enter the paper. */}
+      {!data.isLoading && !data.error && tableRows.length > 0 && (
+        <PrintDocument
+          title={t("accounting.coa.title")}
+          subtitle={t("accounting.coa.print.currentSnapshot")}
+          meta={t("accounting.coa.print.scope", { count: tableRows.length, total: kpis.total })}
+          className="print-only print-landscape print-long-report"
+        >
+          <table className="w-full text-xs" data-testid="coa-print-table">
+            <thead>
+              <tr className="border-b-2 border-slate-400 text-slate-800">
+                <th className="w-24 px-2 py-2 text-start">{t("accounting.coa.col.code")}</th>
+                <th className="px-2 py-2 text-start">{t("accounting.coa.form.nameAr")}</th>
+                <th className="px-2 py-2 text-start">{t("accounting.coa.form.nameEn")}</th>
+                <th className="w-24 px-2 py-2 text-start">{t("accounting.coa.print.parentCode")}</th>
+                <th className="w-16 px-2 py-2 text-center">{t("accounting.coa.col.level")}</th>
+                <th className="w-28 px-2 py-2 text-start">{t("accounting.coa.col.kind")}</th>
+                <th className="w-28 px-2 py-2 text-start">{t("accounting.coa.col.type")}</th>
+                <th className="w-24 px-2 py-2 text-start">{t("accounting.coa.print.status")}</th>
+                <th className="w-28 px-2 py-2 text-left">{t("accounting.coa.print.debitBalance")}</th>
+                <th className="w-28 px-2 py-2 text-left">{t("accounting.coa.print.creditBalance")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((account) => {
+                const hasChildren = (byParent.get(account.id) ?? []).length > 0;
+                const control = !isPostingAccount(account, hasChildren);
+                const balance = shownBalance(account);
+                const debit = balance > 0.005 ? balance : 0;
+                const credit = balance < -0.005 ? -balance : 0;
+                const parentCode = account.parentId ? data.byId.get(account.parentId)?.code : null;
+                const status = !account.isActive || account.status === "archived"
+                  ? t("accounting.coa.filter.statusArchived")
+                  : account.status === "blocked"
+                    ? t("accounting.coa.filter.statusBlocked")
+                    : t("accounting.coa.filter.statusActive");
+                return (
+                  <tr
+                    key={account.id}
+                    data-row-kind={control ? "control" : "posting"}
+                    className={control ? "bg-blue-50/60 font-bold text-blue-900" : "text-slate-700"}
+                  >
+                    <td dir="ltr" className="px-2 py-1.5 text-start font-semibold tabular-nums">{account.code}</td>
+                    <td
+                      className="px-2 py-1.5 text-start"
+                      style={{ paddingInlineStart: `${2 + Math.max(0, account.level - 1) * 3}mm` }}
+                    >
+                      {account.nameAr || "—"}
+                    </td>
+                    <td dir="ltr" className="px-2 py-1.5 text-start">{account.nameEn || "—"}</td>
+                    <td dir="ltr" className="px-2 py-1.5 text-start tabular-nums">{parentCode || "—"}</td>
+                    <td dir="ltr" className="px-2 py-1.5 text-center tabular-nums">{account.level}</td>
+                    <td className="px-2 py-1.5 text-start">
+                      {control ? t("accounting.coa.filter.controlOnly") : t("accounting.coa.filter.postingOnly")}
+                    </td>
+                    <td className="px-2 py-1.5 text-start">{glTypeLabel(t, account.type)}</td>
+                    <td className="px-2 py-1.5 text-start">{status}</td>
+                    <td dir="ltr" className="px-2 py-1.5 text-left font-semibold tabular-nums">
+                      {debit ? fmtMoney(debit) : "—"}
+                    </td>
+                    <td dir="ltr" className="px-2 py-1.5 text-left font-semibold tabular-nums">
+                      {credit ? fmtMoney(credit) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </PrintDocument>
+      )}
+
       {data.isLoading ? (
         <LoadingState />
       ) : data.error ? (
@@ -524,7 +607,9 @@ export function CoaListPage() {
           searchable={false}
           columnMenu
           tableId="coa-accounts"
-          exportFilename={`chart-of-accounts-${asOf || todayISO()}`}
+          // Export is owned by the page header so it always contains the full
+          // filtered result. DataTable only receives the current server-mode
+          // page; enabling its export would silently create a partial file.
           emptyTitle={t("accounting.coa.noMatches")}
           emptyBody={t("accounting.coa.noMatchesBody")}
           mobileTitle={(a) => accountName(a, lang)}

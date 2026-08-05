@@ -15,7 +15,8 @@ const NUM = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 export function fmt(value: number | null | undefined): string {
-  return NUM.format(Number(value) || 0);
+  const parsed = value == null ? 0 : Number(value);
+  return Number.isFinite(parsed) ? NUM.format(parsed) : "—";
 }
 
 /** A signed amount cell: LTR + tabular, negatives parenthesised, zero → dash. */
@@ -30,7 +31,19 @@ export function Num({
   strong?: boolean;
   signed?: boolean;
 }) {
-  const n = Number(value) || 0;
+  const parsed = value == null ? 0 : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return (
+      <span
+        className="font-bold tabular-nums text-rose-700"
+        data-invalid-financial-value="true"
+        title="Invalid financial value"
+      >
+        !
+      </span>
+    );
+  }
+  const n = parsed;
   if (dash && Math.abs(n) < 0.005) {
     return <span className="tabular-nums text-slate-300">—</span>;
   }
@@ -190,7 +203,10 @@ export function printReport() {
 // with a UTF-8 BOM so Excel renders the Arabic headers correctly.
 export function exportRowsCsv(filename: string, header: string[], rows: (string | number)[][]) {
   const esc = (v: string | number) => {
-    const s = String(v ?? "");
+    let s = String(v ?? "");
+    // Keep user-controlled labels as text when opened by spreadsheet apps.
+    // Numeric negatives remain numeric because only string cells are escaped.
+    if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const body = [header, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");

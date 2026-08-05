@@ -141,7 +141,9 @@ describe("TrialBalance", () => {
     // (that's real per-account data), so the proof has to be scoped to the
     // footer specifically, not "987,654 appears somewhere on the page".
     // Money is formatted "en-US", 2 decimals (see components.tsx `NUM`).
-    const tfoot = await screen.findByText("الإجمالي").then((el) => el.closest("tfoot"));
+    // The new readable default is already a summary (hide-zero + level 3), so
+    // the footer is deliberately labelled as the full-scope server total.
+    const tfoot = await screen.findByText("إجمالي النطاق الكامل").then((el) => el.closest("tfoot"));
     expect(tfoot).toBeTruthy();
     expect(tfoot!.textContent).toContain("987,654.00");
     expect(tfoot!.textContent).not.toContain("300.00");
@@ -181,6 +183,37 @@ describe("TrialBalance", () => {
       "/accounting/general-ledger?accountId=a1&from=",
     ));
   });
+
+  it("marks every control account formally and opens its recursive ledger scope", async () => {
+    get.mockResolvedValue({
+      success: true,
+      isClean: true,
+      rows: [
+        baseTrialBalanceRow({
+          accountId: "root-1", code: "100000", nameAr: "الأصول", nameEn: "Assets",
+          level: 1, hasChildren: true, isFolder: true, isPostingLeaf: false,
+        }),
+        baseTrialBalanceRow({
+          accountId: "leaf-1", code: "111100", nameAr: "الصندوق", nameEn: "Cash",
+          parentId: "root-1", level: 2,
+        }),
+      ],
+      totals: baseTrialBalanceTotals(),
+    });
+
+    wrap(<><TrialBalancePage /><LocationProbe /></>);
+    await screen.findAllByText("الأصول");
+
+    const mainRow = document.querySelector('tr[data-account-kind="main"]');
+    expect(mainRow).toBeTruthy();
+    expect(mainRow).toHaveClass("bg-blue-50/70");
+    expect(mainRow!.textContent).toContain("حسابات تجميعية");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "فتح دفتر الأستاذ للحساب الأصول" })[0]);
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toContain(
+      "/accounting/general-ledger?parentId=root-1&from=",
+    ));
+  });
 });
 
 describe("GeneralLedger drill-down", () => {
@@ -216,6 +249,30 @@ describe("GeneralLedger drill-down", () => {
     const accountLink = await screen.findByRole("link", { name: "الصندوق" });
     expect(accountLink).toHaveAttribute("href", "/accounting/chart-of-accounts/a1");
     expect(screen.getByText("عرض تفصيلي: حساب واحد")).toBeInTheDocument();
+  });
+
+  it("sends parentId for a consolidated control-account ledger", async () => {
+    get.mockImplementation((path: string, config?: { params?: Record<string, string> }) => {
+      if (path === "/erp/gl/statement-sections") return Promise.resolve({ success: true, sections: [] });
+      expect(path).toBe("/erp/reports/gl-ledger-multi");
+      expect(config?.params).toEqual(expect.objectContaining({ parent: "root-1" }));
+      expect(config?.params).not.toHaveProperty("accounts");
+      return Promise.resolve({
+        success: true,
+        sections: [{
+          accountId: "leaf-1", code: "111100", nameAr: "الصندوق", nameEn: "Cash",
+          type: "asset", level: 4, parentId: "root-1", reportSection: "cash",
+          normalBalance: "debit", isContra: false, cashFlowActivity: "operating",
+          accountStatus: "active", isActive: true, opening: 0, openingDebit: 0,
+          openingCredit: 0, totalDebit: 0, totalCredit: 0, closingBalance: 0,
+          lineCount: 0, lines: [],
+        }],
+        grandTotals: { debit: 0, credit: 0, opening: 0, closing: 0, accountCount: 1, lineCount: 0 },
+      });
+    });
+
+    wrap(<GeneralLedgerPage />, "/accounting/general-ledger?parentId=root-1&from=2026-01-01&to=2026-01-31");
+    expect(await screen.findByText("أستاذ تجميعي: الحسابات التابعة")).toBeInTheDocument();
   });
 });
 

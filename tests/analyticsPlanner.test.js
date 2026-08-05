@@ -182,6 +182,46 @@ test('cap-masked metrics stripped into meta.maskedMetrics', () => {
   ok(p.meta.maskedMetrics.join(',') === 'cogs,gross_profit', `masked: ${p.meta.maskedMetrics}`);
   ok(p.meta.requestedMetrics.join(',') === 'net_ex_vat', 'only net should survive');
 });
+test('after-return profitability expands into the exact line + return operands', () => {
+  const p = planner.plan(req({
+    metrics: ['cogs_after_returns', 'gross_profit_after_returns', 'margin_pct_after_returns'],
+    dimensions: ['branch'],
+  }), GLOBAL);
+  ok(p.statements.length === 2, `expected line + return statements, got ${p.statements.length}`);
+  const line = p.statements.find((s) => s.fact === 'line');
+  const ret = p.statements.find((s) => s.fact === 'return');
+  ok(!!line && !!ret, `facts emitted: ${p.statements.map((s) => s.fact).join(',')}`);
+  ok(line.metrics.slice().sort().join(',') === 'cogs,net_ex_vat', `line operands drifted: ${line.metrics}`);
+  ok(ret.metrics.slice().sort().join(',') === 'returns_cogs_reversed,returns_net', `return operands drifted: ${ret.metrics}`);
+  ok(
+    p.meta.additiveMetrics.slice().sort().join(',') === 'cogs,net_ex_vat,returns_cogs_reversed,returns_net',
+    `expanded operands drifted: ${p.meta.additiveMetrics}`,
+  );
+  ok(
+    p.meta.derivedMetrics.join(',') === 'cogs_after_returns,gross_profit_after_returns,margin_pct_after_returns',
+    `derived metrics drifted: ${p.meta.derivedMetrics}`,
+  );
+  ok(/SUM\(d\.net_amount\)/.test(line.rows.sql) && /SUM\(d\.cost_snapshot\)/.test(line.rows.sql),
+    'line SQL must use stored net + cost snapshots');
+  ok(/SUM\(rl\.net_amount\)/.test(ret.rows.sql) && /SUM\(rl\.cogs_reversed_amount\)/.test(ret.rows.sql),
+    'return SQL must use stored net + the exact cost persisted by GL posting');
+  ok(!/rl\.cost_snapshot/.test(ret.rows.sql),
+    'return profitability must not re-derive reversed COGS from the rounded line snapshot');
+});
+test('after-return profitability is cost-masked as a unit', () => {
+  const p = planner.plan(req({
+    metrics: ['net_ex_vat', 'cogs_after_returns', 'gross_profit_after_returns', 'margin_pct_after_returns'],
+  }), SCOPED);
+  ok(
+    p.meta.maskedMetrics.join(',') === 'cogs_after_returns,gross_profit_after_returns,margin_pct_after_returns',
+    `masked: ${p.meta.maskedMetrics}`,
+  );
+  ok(p.meta.requestedMetrics.join(',') === 'net_ex_vat', 'only the non-cost metric may survive');
+  expectErr(
+    () => planner.plan(req({ metrics: ['cogs_after_returns', 'gross_profit_after_returns', 'margin_pct_after_returns'] }), SCOPED),
+    'ANALYTICS_ALL_MASKED', 403,
+  );
+});
 test('ALL metrics masked → 403 ANALYTICS_ALL_MASKED', () => {
   expectErr(() => planner.plan(req({ metrics: ['cogs', 'margin_pct'] }), SCOPED), 'ANALYTICS_ALL_MASKED', 403);
 });

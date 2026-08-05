@@ -52,6 +52,7 @@ const POTATO = 'ITEST-ITEM-POTATO';
 const INV = 'ITEST-ARDOC-INV';
 const LINE_A = 'ITEST-ARL-BURGER';      // menu line, has components, WILL be restocked
 const LINE_B = 'ITEST-ARL-FRIES';       // menu line, has components, will NOT be restocked
+const LINE_C = 'ITEST-ARL-ROUNDING';    // two tiny components expose line-vs-component rounding
 const RET_DATE = '2029-06-15';
 let pass = 0, fail = 0; const fails = [];
 function check(n, c, extra) { if (c) { pass++; console.log('  ✅', n); } else { fail++; fails.push(n); console.log('  ❌', n, extra != null ? '→ ' + JSON.stringify(extra).slice(0, 240) : ''); } }
@@ -144,7 +145,7 @@ async function fixtures() {
        warehouse_id, issue_date, currency, subtotal, discount_amount, vat_amount, total_amount,
        paid_amount, balance_amount, status, zatca_status, version, created_by)
      VALUES (?, 'ITEST-SI-0001', 'invoice', 'pos', 'ITEST-SALE-1', 'ITEST customer',
-       ?, ?, 'SAR', 150, 0, 22.50, 172.50, 0, 172.50, 'issued', 'pending', 1, 'itest')`,
+       ?, ?, 'SAR', 152, 0, 22.80, 174.80, 0, 174.80, 'issued', 'pending', 1, 'itest')`,
     [INV, WH, RET_DATE]);
   // Line A — burger x2: net 100, vat 15, cost 40. Revenue account 4100.
   await db.query(
@@ -160,6 +161,16 @@ async function fixtures() {
        net_amount, vat_amount, gross_amount, revenue_account_code, warehouse_id, cost_snapshot, projection_version)
      VALUES (?, ?, '1', NULL, 'ITEST-MENU-FRIES', 'ITEST fries', 2, 1, 2, 25, 0, 'S', 15, 50, 7.50, 57.50, '4100', ?, 20, 1)`,
     [LINE_B, INV, WH]);
+  // Line C — two components cost 0.01 each. Returning half produces a 0.01
+  // rounded LINE snapshot, but each 0.005 component rounds to 0.01 and the
+  // actual GL reversal is therefore 0.02. Analytics must persist/read the GL
+  // amount, never re-derive it from the independently-rounded line.
+  await db.query(
+    `INSERT INTO ar_document_lines (id, document_id, source_line_id, item_id, menu_id, description,
+       entered_qty, conversion_factor_snapshot, base_qty, unit_price, discount_amount, vat_category, vat_rate,
+       net_amount, vat_amount, gross_amount, revenue_account_code, warehouse_id, cost_snapshot, projection_version)
+     VALUES (?, ?, '2', NULL, 'ITEST-MENU-ROUND', 'ITEST rounding item', 2, 1, 2, 1, 0, 'S', 15, 2, .30, 2.30, '4100', ?, .02, 1)`,
+    [LINE_C, INV, WH]);
   // Components actually deducted at checkout.
   const comp = (id, line, seq, item, name, wh, q, unitCost, total) => db.query(
     `INSERT INTO ar_document_line_components (id, document_id, document_line_id, component_seq, source,
@@ -170,6 +181,8 @@ async function fixtures() {
   await comp('ITEST-ARLC-1', LINE_A, 1, BUN, 'ITEST bun', WH, 2, 5, 10);
   await comp('ITEST-ARLC-2', LINE_A, 2, PATTY, 'ITEST patty', WH2, 2, 15, 30);
   await comp('ITEST-ARLC-3', LINE_B, 1, POTATO, 'ITEST potato', WH, 2, 10, 20);
+  await comp('ITEST-ARLC-4', LINE_C, 1, BUN, 'ITEST bun', WH, 2, .005, .01);
+  await comp('ITEST-ARLC-5', LINE_C, 2, PATTY, 'ITEST patty', WH2, 2, .005, .01);
 }
 
 (async () => {
@@ -187,8 +200,10 @@ async function fixtures() {
     // ── schema: the columns whose absence made restock dead code ──────────────
     console.log('\n▶ schema');
     const [sc] = await db.query(
-      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sales_return_lines' AND COLUMN_NAME IN ('restock','warehouse_id')");
-    check('sales_return_lines now HAS restock + warehouse_id (both were missing)', sc.length === 2, sc.map((x) => x.COLUMN_NAME));
+      "SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sales_return_lines' AND COLUMN_NAME IN ('restock','warehouse_id','cogs_reversed_amount')");
+    check('sales_return_lines has restock, warehouse, and the persisted GL cost', sc.length === 3, sc.map((x) => x.COLUMN_NAME));
+    const reversedCol = sc.find((x) => x.COLUMN_NAME === 'cogs_reversed_amount');
+    check('cogs_reversed_amount is NULL until posting freezes the actual value', reversedCol && reversedCol.IS_NULLABLE === 'YES', reversedCol);
     const [dflt] = await db.query(
       "SELECT COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='sales_return_lines' AND COLUMN_NAME='restock'");
     check('restock DEFAULTs to 0 — preserves what already-posted returns really did', String(dflt[0].COLUMN_DEFAULT) === '0', dflt[0]);
@@ -278,9 +293,10 @@ async function fixtures() {
       no && !no.restock_by && !no.restock_reason && !no.restock_at,
       no && { by: no.restock_by, why: no.restock_reason, at: no.restock_at });
 
-    const [rl] = await db.query('SELECT id, restock, warehouse_id, net_amount, vat_amount, cost_snapshot FROM sales_return_lines WHERE return_id=? ORDER BY id', [RET]);
+    const [rl] = await db.query('SELECT id, restock, warehouse_id, net_amount, vat_amount, cost_snapshot, cogs_reversed_amount FROM sales_return_lines WHERE return_id=? ORDER BY id', [RET]);
     check('warehouse_id is PERSISTED (create() used to compute it and drop it)', rl.every((l) => !!l.warehouse_id), rl.map((l) => l.warehouse_id));
     check('restock flags round-trip: one 1, one 0', rl.filter((l) => Number(l.restock) === 1).length === 1 && rl.filter((l) => Number(l.restock) === 0).length === 1, rl.map((l) => l.restock));
+    check('draft lines do not claim a COGS reversal before posting', rl.every((l) => l.cogs_reversed_amount == null), rl);
 
     const [snap] = await db.query('SELECT * FROM sales_return_line_components WHERE return_id=? ORDER BY return_line_id, component_seq', [RET]);
     check('components were SNAPSHOTTED onto the return (3 rows)', snap.length === 3, snap.length);
@@ -339,6 +355,14 @@ async function fixtures() {
 
     const posted = await call('POST', `/api/order-to-cash/returns/${RET}/post`, manager, {});
     check('manager CAN post (returns.post)', posted.status === 200, posted.body);
+    const [frozenCosts] = await db.query(
+      'SELECT original_line_id, restock, cogs_reversed_amount FROM sales_return_lines WHERE return_id=? ORDER BY id', [RET]);
+    const frozenRestock = frozenCosts.find((l) => l.original_line_id === LINE_A);
+    const frozenNoRestock = frozenCosts.find((l) => l.original_line_id === LINE_B);
+    check('posted restock line freezes the exact component cost included in GL (20)',
+      frozenRestock && Number(frozenRestock.cogs_reversed_amount) === 20, frozenRestock);
+    check('posted no-restock line freezes an explicit zero, never NULL or its cost snapshot',
+      frozenNoRestock && Number(frozenNoRestock.cogs_reversed_amount) === 0, frozenNoRestock);
     check('  …status is posted', (await retStatus(RET)) === 'posted');
 
     // ── the credit note ──────────────────────────────────────────────────────
@@ -433,6 +457,52 @@ async function fixtures() {
     check('  …potato is STILL untouched — reverse cannot un-restock what never restocked', (await stockOf(WH, POTATO)) === potatoPreRev);
     check('the COGS journal was reversed too (value and quantity move together)', (await journalsRef('SalesReturnCOGSReversal')) === 1, await journalsRef('SalesReturnCOGSReversal'));
     const [cnAfter] = await db.query('SELECT status FROM ar_documents WHERE id=?', [CN]);
+    // The main return is reversed above. A separate return now pins the case
+    // where component-level money rounding differs from the line snapshot.
+    const roundCreated = await call('POST', '/api/order-to-cash/returns', manager,
+      mkBody([{ originalLineId: LINE_C, returnQty: 1, restock: true, restockReason: 'sealed rounding fixture' }]));
+    const ROUND_RET = roundCreated.body?.data?.id;
+    check('rounding fixture return is created', roundCreated.status === 201 && !!ROUND_RET, roundCreated.body);
+    const roundApproved = await call('POST', `/api/order-to-cash/returns/${ROUND_RET}/approve`, approver, {});
+    check('rounding fixture is approved by a different manager', roundApproved.status === 200, roundApproved.body);
+    const roundPosted = await call('POST', `/api/order-to-cash/returns/${ROUND_RET}/post`, manager, {});
+    check('rounding fixture posts', roundPosted.status === 200, roundPosted.body);
+    const [roundLines] = await db.query(
+      'SELECT id, cost_snapshot, cogs_reversed_amount FROM sales_return_lines WHERE return_id=?', [ROUND_RET]);
+    check('the proportional line snapshot rounds to 0.01',
+      roundLines.length === 1 && Number(roundLines[0].cost_snapshot) === 0.01, roundLines[0]);
+    check('the persisted GL amount is 0.02 (0.01 + 0.01 components), not the line snapshot',
+      roundLines.length === 1 && Number(roundLines[0].cogs_reversed_amount) === 0.02, roundLines[0]);
+    const [roundJ] = await db.query(
+      "SELECT id FROM gl_journals WHERE reference_type='SalesReturnCOGS' AND reference_id=?", [ROUND_RET]);
+    const [roundE] = roundJ.length
+      ? await db.query('SELECT COALESCE(SUM(credit),0) AS c FROM gl_entries WHERE journal_id=?', [roundJ[0].id])
+      : [[{ c: null }]];
+    check('the persisted per-line amount equals the actual SalesReturnCOGS credit',
+      roundJ.length === 1 && roundLines.length === 1 &&
+        Number(roundE[0].c) === Number(roundLines[0].cogs_reversed_amount), roundE[0]);
+
+    // Mutation-sensitive historical path: erase only the derived snapshot and
+    // prove the idempotent backfill reconstructs the component sum; finalized
+    // no-restock lines must become an explicit zero.
+    await db.query('UPDATE sales_return_lines SET cogs_reversed_amount=NULL WHERE return_id=?', [ROUND_RET]);
+    await db.query('UPDATE sales_return_lines SET cogs_reversed_amount=NULL WHERE return_id=?', [RET]);
+    // Simulate a legacy posted/reversed return whose snapshot exists but whose
+    // COGS journal cannot be proven. The backfill must leave it UNKNOWN rather
+    // than inventing either a positive reversal or an explicit zero.
+    await db.query('UPDATE sales_returns SET cogs_journal_id=NULL WHERE id=?', [RET]);
+    const schema = require('../../db/migrations/order-to-cash/schema');
+    const changed = await schema.backfillReversedCogs(db);
+    const [backfilled] = await db.query(
+      'SELECT return_id, restock, cogs_reversed_amount FROM sales_return_lines WHERE return_id IN (?,?) ORDER BY return_id, restock',
+      [ROUND_RET, RET]);
+    const roundBackfill = backfilled.find((l) => l.return_id === ROUND_RET);
+    const noBackfill = backfilled.find((l) => l.return_id === RET && Number(l.restock) === 0);
+    check('historical backfill uses the same component/direct rules only for a proven COGS journal (0.02)',
+      changed >= 1 && roundBackfill && Number(roundBackfill.cogs_reversed_amount) === 0.02, { changed, roundBackfill });
+    check('historical return without a proven COGS journal stays NULL (unknown, not a fabricated zero)',
+      noBackfill && noBackfill.cogs_reversed_amount == null, noBackfill);
+    check('re-running the historical backfill is idempotent', (await schema.backfillReversedCogs(db)) === 0);
     check('  …and the credit note is cancelled', cnAfter[0].status === 'cancelled', cnAfter[0]);
 
     console.log(`\n${fail === 0 ? '✅' : '❌'} salesReturns: ${pass} passed, ${fail} failed`);

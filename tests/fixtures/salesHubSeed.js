@@ -273,14 +273,15 @@ async function seed(db, prefix = 'ITEST-SH') {
      cnId, I.C1, I.C1, extra.postedAt || (retDate + ' 14:00:00')]);
 
   let rlSeq = 0;
-  const retLine = (retId, menuId, qty, vat, amounts) => db.query(
+  const retLine = (retId, menuId, qty, vat, amounts, extra = {}) => db.query(
     `INSERT INTO sales_return_lines (id, return_id, menu_id, description, sold_qty,
                                      return_qty, base_qty, unit_price_snapshot, vat_category,
-                                     vat_rate, net_amount, vat_amount, gross_amount, cost_snapshot)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                                     vat_rate, net_amount, vat_amount, gross_amount, cost_snapshot,
+                                     restock, cogs_reversed_amount)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [`${prefix}-RL${++rlSeq}`, retId, menuId, menuId, qty, qty, qty,
-     amounts.gross / (qty || 1), vat.cat, vat.rate, amounts.net, amounts.vat, amounts.gross,
-     amounts.cost || 0]);
+      amounts.gross / (qty || 1), vat.cat, vat.rate, amounts.net, amounts.vat, amounts.gross,
+      amounts.cost || 0, extra.restock ? 1 : 0, extra.restock ? (amounts.reversedCost ?? amounts.cost ?? 0) : 0]);
 
   // ── F1 — mixed invoice, split payment, modifiers ─────────────────────────
   await sale(I.S1, '2032-03-10 13:00:00', 204, 'Split', {
@@ -305,7 +306,7 @@ async function seed(db, prefix = 'ITEST-SH') {
   await ofact(I.D3, I.S3, I.B1, '2032-03-11 12:00:00', '2032-03-11', { status: 'returned' });
   await pfact('pos_single', I.S3, 0, I.D3, I.B1, 'in', 'Mada', 'card', 230, '2032-03-11 12:00:00', '2032-03-11');
   await ret(I.R3, I.S3, I.D3, I.B1, I.W1, '2032-03-12', { net: 100, vat: 15, total: 115 }, I.CN3, { reason: 'quality' });
-  await retLine(I.R3, I.M1, 1, { cat: 'S', rate: 15 }, { net: 100, vat: 15, gross: 115, cost: 40 });
+  await retLine(I.R3, I.M1, 1, { cat: 'S', rate: 15 }, { net: 100, vat: 15, gross: 115, cost: 40 }, { restock: true });
   await doc(I.CN3, 'credit_note', '2032-03-12', { subtotal: 100, vat: 15, total: 115 },
     { sourceType: 'manual', sourceId: I.R3, status: 'issued', warehouse: I.W1 });
   await line(I.CN3, I.M1, 1, { cat: 'S', rate: 15 }, { net: 100, vat: 15, gross: 115, cost: 40 });
@@ -320,7 +321,7 @@ async function seed(db, prefix = 'ITEST-SH') {
   await pfact('pos_single', I.S4, 0, I.D4, I.B2, 'in', 'Cash', 'cash', 90, '2032-03-11 15:00:00', '2032-03-11', { by: I.C2 });
   await tfact(I.B2, 'cash_sale', 90, '2032-03-11 15:00:00', '2032-03-11', 'sale', I.S4, { by: I.C2 });
   await ret(I.R4, I.S4, I.D4, I.B2, I.W2, '2032-03-13', { net: 90, vat: 0, total: 90 }, I.CN4, { reason: 'expired' });
-  await retLine(I.R4, I.M2, 3, { cat: 'Z', rate: 0 }, { net: 90, vat: 0, gross: 90, cost: 15 });
+  await retLine(I.R4, I.M2, 3, { cat: 'Z', rate: 0 }, { net: 90, vat: 0, gross: 90, cost: 15 }, { restock: false });
   await doc(I.CN4, 'credit_note', '2032-03-13', { subtotal: 90, vat: 0, total: 90 },
     { sourceType: 'manual', sourceId: I.R4, status: 'issued', branch: I.B2, warehouse: I.W2 });
   await line(I.CN4, I.M2, 3, { cat: 'Z', rate: 0 }, { net: 90, vat: 0, gross: 90, cost: 15 });

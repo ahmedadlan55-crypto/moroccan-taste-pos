@@ -188,7 +188,9 @@ test('the full promised metric dictionary is present', () => {
     'discount_pct', 'voids_count', 'voids_value', 'returns_count',
     'returns_value', 'returns_vat', 'sales_before_discount',
     'net_product_sales', 'net_product_sales_ex_vat', 'statement_variance',
-    'cogs', 'gross_profit', 'margin_pct', 'payments_in',
+    'cogs', 'returns_cogs_reversed', 'uncosted_returns_net', 'gross_profit', 'margin_pct',
+    'cogs_after_returns', 'gross_profit_after_returns',
+    'margin_pct_after_returns', 'payments_in',
     'refunds_out', 'net_collections', 'tips_total', 'fees_total',
     'rounding_total', 'till_expected_cash', 'till_counted', 'till_variance',
     'item_contribution_pct', 'attach_rate', 'modifiers_per_item', 'growth',
@@ -198,8 +200,34 @@ test('the full promised metric dictionary is present', () => {
   for (const id of required) ok(!!metrics.byId[id], `metric "${id}" missing from the dictionary`);
 });
 test('cost and profit metrics require analytics.cost.view', () => {
-  for (const id of ['cogs', 'gross_profit', 'margin_pct']) {
+  for (const id of [
+    'cogs', 'returns_cogs_reversed', 'uncosted_returns_net', 'gross_profit', 'margin_pct',
+    'cogs_after_returns', 'gross_profit_after_returns', 'margin_pct_after_returns',
+  ]) {
     ok(metrics.byId[id].requiresCap === 'analytics.cost.view', `${id} must require analytics.cost.view`);
+  }
+});
+test('after-return profit metrics use the four stored, single-basis operands', () => {
+  const expectedInputs = 'net_ex_vat,cogs,returns_net,returns_cogs_reversed';
+  const netCogs = metrics.byId.cogs_after_returns;
+  const gp = metrics.byId.gross_profit_after_returns;
+  const margin = metrics.byId.margin_pct_after_returns;
+  ok(netCogs.kind === 'derived', 'after-return COGS must be derived');
+  ok(netCogs.inputs.join(',') === 'cogs,returns_cogs_reversed', `net COGS inputs drifted: ${netCogs.inputs}`);
+  ok(netCogs.equationKey === 'cogsAfterReturns', `wrong net-COGS equation: ${netCogs.equationKey}`);
+  ok(netCogs.format === 'money', 'net COGS must be formatted as money');
+  ok(gp.kind === 'derived' && margin.kind === 'derived', 'after-return profitability must be derived');
+  ok(gp.inputs.join(',') === expectedInputs, `gross profit inputs drifted: ${gp.inputs}`);
+  ok(margin.inputs.join(',') === expectedInputs, `margin inputs drifted: ${margin.inputs}`);
+  ok(gp.equationKey === 'grossProfitAfterReturns', `wrong gross-profit equation: ${gp.equationKey}`);
+  ok(margin.equationKey === 'marginPctAfterReturns', `wrong margin equation: ${margin.equationKey}`);
+  ok(gp.format === 'money', 'gross profit must be formatted as money');
+  ok(margin.format === 'percent', 'margin must be formatted as percent');
+  // Nested derived inputs are rejected by the planner. Pin the raw inputs so a
+  // tempting refactor through net_product_sales_ex_vat/gross_profit cannot
+  // make the metrics unplannable at runtime.
+  for (const input of gp.inputs) {
+    ok(metrics.byId[input].kind === 'additive', `${input} must remain an additive planner input`);
   }
 });
 test('metric ids are unique', () => {

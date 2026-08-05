@@ -363,6 +363,18 @@ async function main() {
     });
   });
 
+  await test('analytics calendar-day uses the fact local date, not the document issue date', async () => {
+    fakeDb.reset();
+    await InvoiceService.list({
+      scope: SCOPE_A, analyticsPopulation: true, businessDay: 'false',
+      from: '2026-03-01', to: '2026-03-31',
+    });
+    calls.forEach((c) => {
+      ok(/DATE\(f\.occurred_at_local\) >= \?/.test(c.sql), 'analytics calendar basis drifted: ' + c.sql);
+      ok(!/d\.issue_date >= \?/.test(c.sql), 'document issue date widened the analytics population: ' + c.sql);
+    });
+  });
+
   await test('channels and orderTypes reach SQL and bind one placeholder each', async () => {
     fakeDb.reset();
     await InvoiceService.list({ scope: SCOPE_GLOBAL, channels: 'CH-A,CH-B', orderTypes: ['dine_in'] });
@@ -411,6 +423,130 @@ async function main() {
     const whereOf = (s) => s.slice(s.indexOf('WHERE'), s.indexOf('ORDER BY') === -1 ? undefined : s.indexOf('ORDER BY')).trim();
     eq(whereOf(countQ.sql), whereOf(pageQ.sql), 'the COUNT filters differently from the page it counts');
     eq(JSON.stringify(countQ.params), JSON.stringify(pageQ.params.slice(0, countQ.params.length)), 'different bound values');
+  });
+
+  await test('analytics channel filtering and display use the fact column only', async () => {
+    fakeDb.reset();
+    await InvoiceService.list({
+      scope: SCOPE_A, analyticsPopulation: true, channels: ['CH-A'],
+    });
+    calls.forEach((c) => {
+      ok(/f\.channel_id IN \(\?\)/.test(c.sql), 'analytics channel did not use its fact: ' + c.sql);
+      ok(!/COALESCE\(f\.channel_id, d\.channel_id\) IN/.test(c.sql),
+        'document fallback widened the analytics population: ' + c.sql);
+    });
+    const page = calls.find((c) => /ORDER BY/.test(c.sql));
+    ok(page && /f\.channel_id AS channel/.test(page.sql),
+      'the displayed channel differs from the channel the KPI groups: ' + (page && page.sql));
+  });
+
+  await test('negative POS line/component costs are rejected before the first write', async () => {
+    let queries = 0;
+    const noWrite = { async query() { queries++; return [[]]; } };
+    let lineErr = null;
+    try {
+      await InvoiceService._ensurePosLines(noWrite, 'DOC-X', [{
+        sourceLineId: 'L1', enteredQty: 1, baseQty: 1, unitPrice: 1,
+        discountAmount: 0, vatCategory: 'S', vatRate: 15,
+        netAmount: 1, vatAmount: 0.15, grossAmount: 1.15,
+        costSnapshot: -0.01, projectionVersion: 1,
+      }], []);
+    } catch (e) { lineErr = e; }
+    ok(lineErr && lineErr.code === 'VALIDATION_ERROR', 'negative line cost was accepted');
+    eq(queries, 0, 'line validation happened after a database write');
+
+    let manualErr = null;
+    try {
+      await InvoiceService._computeDoc({ async query() { return [[{ setting_value: '15' }]]; } }, {
+        lines: [{ enteredQty: 1, factor: 1, unitPrice: 1, costSnapshot: -0.01 }],
+      });
+    } catch (e) { manualErr = e; }
+    ok(manualErr && manualErr.code === 'VALIDATION_ERROR',
+      'manual/contract invoice source accepted a negative cost snapshot');
+
+    let componentErr = null;
+    try {
+      await InvoiceService._ensurePosLines(noWrite, 'DOC-X', [{
+        sourceLineId: 'L1', enteredQty: 1, baseQty: 1, unitPrice: 1,
+        discountAmount: 0, vatCategory: 'S', vatRate: 15,
+        netAmount: 1, vatAmount: 0.15, grossAmount: 1.15,
+        costSnapshot: 0.01, projectionVersion: 1,
+      }], [{
+        sourceLineId: 'L1', invItemId: 'I1', deductedBaseQty: 1,
+        unitCostSnapshot: 0.01, totalCost: -0.01, projectionVersion: 1,
+      }]);
+    } catch (e) { componentErr = e; }
+    ok(componentErr && componentErr.code === 'VALIDATION_ERROR', 'negative component cost was accepted');
+    eq(queries, 0, 'component validation happened after a database write');
+
+    let unitErr = null;
+    try {
+      await InvoiceService._ensurePosLines(noWrite, 'DOC-X', [{
+        sourceLineId: 'L1', enteredQty: 1, baseQty: 1, unitPrice: 1,
+        discountAmount: 0, vatCategory: 'S', vatRate: 15,
+        netAmount: 1, vatAmount: 0.15, grossAmount: 1.15,
+        costSnapshot: 0.01, projectionVersion: 1,
+      }], [{
+        sourceLineId: 'L1', invItemId: 'I1', deductedBaseQty: 1,
+        unitCostSnapshot: -0.01, totalCost: 0.01, projectionVersion: 1,
+      }]);
+    } catch (e) { unitErr = e; }
+    ok(unitErr && unitErr.code === 'VALIDATION_ERROR', 'negative component unit cost was accepted');
+    eq(queries, 0, 'unit-cost validation happened after a database write');
+  });
+
+  await test('restore refuses a historical negative component before moving stock', async () => {
+    let queries = 0;
+    const conn = {
+      async query(sql) {
+        queries++;
+        if (/FROM sales_return_line_components/.test(sql)) return [[{
+          return_line_id: 'RL1', component_seq: 1, inv_item_id: 'I1',
+          warehouse_id: 'W1', restored_base_qty: 1, total_cost: -0.01,
+        }]];
+        throw new Error('stock mutation was reached');
+      },
+    };
+    let caught = null;
+    try {
+      await ReturnService._restore(conn, { id: 'R1', return_number: 'RET-1' },
+        [{ id: 'RL1', restock: 1, description: 'x' }], 'manager');
+    } catch (e) { caught = e; }
+    ok(caught && caught.code === 'VALIDATION_ERROR', 'negative restored cost reached stock/GL');
+    eq(queries, 1, 'a stock query ran after the negative snapshot was detected');
+  });
+
+  await test('historical COGS backfill requires a matching ledger journal', async () => {
+    const schema = require('../db/migrations/order-to-cash/schema');
+    let sql = '';
+    const changed = await schema.backfillReversedCogs({
+      async query(q) { sql = String(q).replace(/\s+/g, ' ').trim(); return [{ affectedRows: 2 }]; },
+    });
+    eq(changed, 2, 'affected row count');
+    ok(/JOIN gl_journals gj/.test(sql), 'snapshot-only backfill would fabricate old COGS');
+    ok(/gj\.id = sr\.cogs_journal_id/.test(sql), 'return does not prove which journal carried COGS');
+    ok(/gj\.reference_type = 'SalesReturnCOGS'/.test(sql) && /gj\.reference_id = sr\.id/.test(sql),
+      'an unrelated journal could prove the backfill');
+    ok(/rl\.cogs_reversed_amount IS NULL/.test(sql), 'rerun could overwrite a frozen posting value');
+  });
+
+  await test('the Sales Decision Center list uses the exact analytics order population', async () => {
+    fakeDb.reset();
+    await InvoiceService.list({ scope: SCOPE_A, analyticsPopulation: 'true' });
+    calls.forEach((c) => {
+      ok(/f\.document_id IS NOT NULL/.test(c.sql), 'unprojected documents widened the list: ' + c.sql);
+      ok(/f\.status IS NULL OR f\.status <> 'voided'/.test(c.sql), 'voided facts were not excluded: ' + c.sql);
+      ok(/f\.source IS NULL OR f\.source NOT IN \('sales_return','credit_note'\)/.test(c.sql),
+        'credit-note facts were not excluded: ' + c.sql);
+      ok(/f\.branch_id IN \(\?\)/.test(c.sql), 'analytics scope must use the same fact branch as the KPI: ' + c.sql);
+    });
+    const page = calls.find((c) => /ORDER BY/.test(c.sql));
+    ok(page && /f\.branch_id AS branch_id/.test(page.sql),
+      'the returned branch must be the same fact branch counted by pagination: ' + (page && page.sql));
+    ok(page && /br\.name AS branch_name/.test(page.sql) && /br\.name_en AS branch_name_en/.test(page.sql),
+      'the decision table is missing bilingual branch labels: ' + (page && page.sql));
+    ok(page && /AS cashier_name/.test(page.sql),
+      'the decision table is missing the cashier display name: ' + (page && page.sql));
   });
 
   // ── 8. the dashboard's own SQL ────────────────────────────────────────────

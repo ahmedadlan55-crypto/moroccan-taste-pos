@@ -159,6 +159,54 @@ test('marginPct on zero net is null, not 0%', () => {
   eq(E.marginPct(0, 50), null);
 });
 
+test('cogsAfterReturns reverses stored return cost without clamping', () => {
+  eq(E.cogsAfterReturns(400, 100), 300);
+  eq(E.cogsAfterReturns(0, 40), -40, 'a returns-only period carries negative net COGS');
+  eq(E.cogsAfterReturns(0, 0), 0);
+  eq(E.cogsAfterReturns(null, 40), null, 'missing sales COGS is not zero');
+  eq(E.cogsAfterReturns(400, undefined), null, 'missing return COGS is not zero');
+});
+test('grossProfitAfterReturns reverses BOTH return revenue and returned COGS', () => {
+  // Net sales = 1,000 - 500 = 500; net COGS = 400 - 100 = 300.
+  // The four distinct values make changing either sign, omitting an operand,
+  // or reusing the before-return equation fail with a different answer.
+  eq(E.grossProfitAfterReturns(1000, 400, 500, 100), 200);
+  eq(E.marginPctAfterReturns(1000, 400, 500, 100), 40,
+    'the denominator is after-return net sales (500), not original sales (1000)');
+});
+test('after-return profit preserves returns-only periods and losses', () => {
+  // Credit notes are recognised in their own period. Clamping either net sales
+  // or net cost to zero would turn this honest negative period into a lie.
+  eq(E.grossProfitAfterReturns(0, 0, 100, 40), -60);
+  eq(E.marginPctAfterReturns(0, 0, 100, 40), 60,
+    'a negative numerator over negative net sales is a positive ratio');
+  eq(E.grossProfitAfterReturns(100, 130, 0, 0), -30, 'loss is not clamped');
+});
+test('after-return zero semantics: 0 cost is real, 0 denominator is undefined', () => {
+  eq(E.grossProfitAfterReturns(100, 0, 0, 0), 100, 'zero stored cost is not missing');
+  eq(E.marginPctAfterReturns(100, 0, 0, 0), 100);
+  eq(E.grossProfitAfterReturns(0, 0, 0, 0), 0, 'no activity has zero money profit');
+  eq(E.marginPctAfterReturns(0, 0, 0, 0), null, '0/0 is not 0%');
+  eq(E.grossProfitAfterReturns(100, 40, 100, 10), -30,
+    'zero after-return revenue may still carry unreversed cost');
+  eq(E.marginPctAfterReturns(100, 40, 100, 10), null);
+});
+test('after-return profitability propagates every unknown operand', () => {
+  const complete = [1000, 400, 200, 80];
+  for (let i = 0; i < complete.length; i++) {
+    const withNull = complete.slice();
+    withNull[i] = null;
+    eq(E.grossProfitAfterReturns(...withNull), null, `gross input ${i} missing`);
+    eq(E.marginPctAfterReturns(...withNull), null, `margin input ${i} missing`);
+  }
+  eq(E.grossProfitAfterReturns(1000, undefined, 200, 80), null, 'missing COGS is not fabricated as zero');
+  eq(E.marginPctAfterReturns(1000, NaN, 200, 80), null, 'invalid COGS is not fabricated as zero');
+});
+test('after-return profitability uses one halala rounding edge', () => {
+  eq(E.grossProfitAfterReturns(0.1 + 0.2, 0.1, 0.1, 0), 0.1);
+  eq(E.marginPctAfterReturns(3, 1, 0, 0), 66.67);
+});
+
 console.log('\n── collections & till ──');
 test('netCollections = settled − refunds', () => {
   eq(E.netCollections(5000, 123.45), 4876.55);

@@ -151,7 +151,9 @@ describe("the executive report's round-trip budget", () => {
       "net_product_sales_ex_vat", "invoice_total", "statement_variance",
       "orders", "avg_ticket", "qty_sold", "avg_items_per_order", "guests",
       "fees_total", "rounding_total", "returns_count", "payments_in", "refunds_out",
-      "voids_count", "voids_value", "net_collections", "cogs", "gross_profit", "margin_pct",
+      "voids_count", "voids_value", "net_collections",
+      "cogs_after_returns", "gross_profit_after_returns", "margin_pct_after_returns",
+      "uncosted_net", "uncosted_returns_net",
     ]) {
       expect(asked, `metric ${m} is no longer requested`).toContain(m);
     }

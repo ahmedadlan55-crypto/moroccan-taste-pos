@@ -136,7 +136,7 @@ export interface ReportSpec {
   rollupEligible: boolean;
   /** Which backend answers. 'reconciliation' has its own endpoint and contract. */
   engine: "analytics" | "reconciliation";
-  /** Reports whose engine is not the planner declare their own filter surface. */
+  /** Reports whose complete screen has a narrower shared filter surface. */
   fixedFilters?: readonly FilterKey[];
   /** …and their own bases. */
   fixedDateBases?: readonly DateBasis[];
@@ -191,7 +191,11 @@ export const REPORTS: readonly ReportSpec[] = [
       },
       {
         id: "voidsAndProfit",
-        metrics: ["voids_count", "voids_value", "net_collections", "cogs", "gross_profit", "margin_pct"],
+        metrics: [
+          "voids_count", "voids_value", "net_collections",
+          "cogs_after_returns", "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
         dimensions: [],
       },
       {
@@ -279,13 +283,28 @@ export const REPORTS: readonly ReportSpec[] = [
     compare: false,
     engine: "analytics",
     exportQuery: "byItem",
-    exportSort: [{ by: "gross_profit", dir: "desc" }],
-    rollupEligible: true,
+    exportSort: [{ by: "gross_profit_after_returns", dir: "desc" }],
+    // Return-aware profitability joins line + return facts. The current
+    // menu-item rollup cannot express returns_net, so this report must use the
+    // exact live facts until the return rollup gains the same dimension.
+    rollupEligible: false,
     queries: [
-      { id: "kpis", metrics: ["net_ex_vat", "cogs", "gross_profit", "margin_pct"], dimensions: [] },
+      {
+        id: "kpis",
+        metrics: [
+          "net_product_sales_ex_vat", "cogs_after_returns",
+          "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
+        dimensions: [],
+      },
       {
         id: "byItem",
-        metrics: ["qty_sold", "net_ex_vat", "cogs", "gross_profit", "margin_pct"],
+        metrics: [
+          "qty_sold", "net_product_sales_ex_vat", "cogs", "cogs_after_returns",
+          "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
         dimensions: ["menu_item"],
         limit: LIMITS.MAX_LIMIT,
       },
@@ -513,6 +532,11 @@ export const REPORTS: readonly ReportSpec[] = [
     // orders / invoice_total / avg_ticket by business day are all columns of
     // analytics_daily_branch.
     rollupEligible: true,
+    // Its KPI row and operational invoice table must honour the same scope.
+    // Brand/hour/cashier are valid on the analytics order fact but the invoice
+    // list cannot express them; showing those controls would scope only half
+    // the screen. Dedicated reports cover those dimensions directly.
+    fixedFilters: ["branchId", "channel", "orderType"],
     queries: [
       { id: "kpis", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: [] },
       { id: "byDay", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: ["day"] },

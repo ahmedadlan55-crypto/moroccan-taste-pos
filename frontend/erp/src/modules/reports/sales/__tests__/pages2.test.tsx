@@ -145,6 +145,7 @@ beforeEach(() => {
   runMock.mockResolvedValue(EMPTY);
   for (const k of Object.keys(caps)) delete caps[k];
   caps["analytics.reconciliation.view"] = true;
+  caps["invoices.view"] = true;
   window.localStorage.clear();
 });
 
@@ -153,6 +154,79 @@ afterEach(cleanup);
 /* ── 9. Orders ───────────────────────────────────────────────── */
 
 describe("Orders page", () => {
+  it("keeps the KPI and invoice table on the same supported filter and document population", async () => {
+    invoicesMock.mockResolvedValue({
+      success: true,
+      data: [invoice(1)],
+      pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 },
+    });
+
+    renderPage(
+      <OrdersPage />,
+      "/reports/sales/operations?view=orders" +
+        "&from=2032-03-01&to=2032-03-31&preset=custom&businessDay=0" +
+        "&branchId=BR-01,BR-02&channel=pos,delivery&orderType=dine_in,takeaway" +
+        "&customerId=%20CUST-009%20" +
+        // Present in the analytics URL, but NOT accepted by InvoiceService.list.
+        "&brandId=BRAND-X&paymentMethod=cash&hour=13" +
+        "&menuItemId=MENU-1&categoryId=CAT-1&cashierId=USER-1",
+    );
+
+    await waitFor(() => expect(invoicesMock).toHaveBeenCalled());
+    const params = invoicesMock.mock.calls.at(-1)?.[0];
+    expect(params).toEqual({
+      page: 1,
+      pageSize: 25,
+      analyticsPopulation: true,
+      from: "2032-03-01",
+      to: "2032-03-31",
+      businessDay: false,
+      branchId: "BR-01,BR-02",
+      channel: "pos,delivery",
+      orderType: "dine_in,takeaway",
+    });
+
+    await waitFor(() => expect(runMock).toHaveBeenCalled());
+    const kpiRequest = runMock.mock.calls
+      .map(([body]) => body)
+      .find((body) => body.dimensions.length === 0 && body.metrics.includes("orders"));
+    expect(kpiRequest).toBeDefined();
+    expect({
+      from: params?.from,
+      to: params?.to,
+      businessDay: params?.businessDay,
+      branchId: params?.branchId,
+      channel: params?.channel,
+      orderType: params?.orderType,
+    }).toEqual({
+      from: kpiRequest?.filters.from,
+      to: kpiRequest?.filters.to,
+      businessDay: kpiRequest?.dateBasis === "business_day",
+      branchId: kpiRequest?.filters.branchIds?.join(","),
+      channel: kpiRequest?.filters.channels?.join(","),
+      orderType: kpiRequest?.filters.orderTypes?.join(","),
+    });
+
+    for (const unsupported of [
+      "brandId",
+      "paymentMethod",
+      "hour",
+      "menuItemId",
+      "categoryId",
+      "cashierId",
+      "customerId",
+    ]) {
+      expect(params).not.toHaveProperty(unsupported);
+    }
+
+    expect(kpiRequest?.filters).not.toHaveProperty("brandIds");
+    expect(kpiRequest?.filters).not.toHaveProperty("paymentMethods");
+    expect(kpiRequest?.filters).not.toHaveProperty("hours");
+    expect(kpiRequest?.filters).not.toHaveProperty("menuIds");
+    expect(kpiRequest?.filters).not.toHaveProperty("categoryIds");
+    expect(kpiRequest?.filters).not.toHaveProperty("cashiers");
+  });
+
   it("renders the analytics KPI row and the invoice list; row click drills to /sales/invoices?doc=", async () => {
     dispatch({
       "orders,invoice_total,avg_ticket@": result([], {
@@ -161,7 +235,10 @@ describe("Orders page", () => {
     });
     invoicesMock.mockResolvedValue({
       success: true,
-      data: [invoice(1), invoice(2)],
+      data: [
+        { ...invoice(1), branch_name: "فرع الرياض", branch_name_en: "Riyadh Branch", cashier_name: "أحمد" },
+        invoice(2),
+      ],
       pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
     });
 
@@ -171,6 +248,8 @@ describe("Orders page", () => {
     within(screen.getByTestId("kpi-invoice_total")).getByText("3,450.00 ر.س");
     const numberCells = await screen.findAllByText("INV-1001");
     expect(numberCells.length).toBeGreaterThan(0);
+    expect(screen.getAllByText("فرع الرياض").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("أحمد").length).toBeGreaterThan(0);
 
     fireEvent.click(numberCells[0]);
     await waitFor(() =>
@@ -192,6 +271,21 @@ describe("Orders page", () => {
     invoicesMock.mockRejectedValue(new Error("boom"));
     renderPage(<OrdersPage />, "/reports/sales/orders");
     await waitFor(() => expect(document.querySelector('[data-state="error"]')).toBeInTheDocument());
+  });
+
+  it("keeps aggregate decisions visible but does not request invoice rows without invoices.view", async () => {
+    delete caps["invoices.view"];
+    dispatch({
+      "orders,invoice_total,avg_ticket@": result([], {
+        totals: { orders: 12, invoice_total: 3450, avg_ticket: 287.5 },
+      }),
+    });
+
+    renderPage(<OrdersPage />, "/reports/sales/orders");
+
+    await within(await screen.findByTestId("kpi-orders")).findByText("12");
+    expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument();
+    expect(invoicesMock).not.toHaveBeenCalled();
   });
 });
 
@@ -384,23 +478,34 @@ describe("Taxes page", () => {
 /* ── 14. Profitability ───────────────────────────────────────── */
 
 describe("Profitability page", () => {
-  const M = "qty_sold,net_ex_vat,cogs,gross_profit,margin_pct";
+  // Keep these signatures aligned with reportRegistry's profitability queries.
+  // dispatch() intentionally matches the complete ordered request so adding a
+  // metric cannot be silently answered by a stale, partial fixture.
+  const K = "net_product_sales_ex_vat,cogs_after_returns,gross_profit_after_returns,margin_pct_after_returns,uncosted_net,uncosted_returns_net";
+  const M = "qty_sold,net_product_sales_ex_vat,cogs,cogs_after_returns,gross_profit_after_returns,margin_pct_after_returns,uncosted_net,uncosted_returns_net";
   it("classifies items into menu-engineering quadrants and tones the margin cells", async () => {
     dispatch({
-      "net_ex_vat,cogs,gross_profit,margin_pct@": result([], {
-        totals: { net_ex_vat: 4000, cogs: 1600, gross_profit: 2400, margin_pct: 60 },
+      [`${K}@`]: result([], {
+        totals: {
+          net_product_sales_ex_vat: 4000,
+          cogs_after_returns: 1600,
+          gross_profit_after_returns: 2400,
+          margin_pct_after_returns: 60,
+          uncosted_net: 0,
+          uncosted_returns_net: 0,
+        },
       }),
       [`${M}@menu_item`]: result([
-        row(["a"], ["برجر"], { qty_sold: 100, net_ex_vat: 2000, cogs: 800, gross_profit: 1200, margin_pct: 60 }),
-        row(["b"], ["شاورما"], { qty_sold: 100, net_ex_vat: 1000, cogs: 900, gross_profit: 100, margin_pct: 10 }),
-        row(["c"], ["كنافة"], { qty_sold: 10, net_ex_vat: 800, cogs: 320, gross_profit: 480, margin_pct: 60 }),
-        row(["d"], ["سلطة"], { qty_sold: 10, net_ex_vat: 200, cogs: 180, gross_profit: 20, margin_pct: 10 }),
+        row(["a"], ["برجر"], { qty_sold: 100, net_product_sales_ex_vat: 2000, cogs: 800, cogs_after_returns: 800, gross_profit_after_returns: 1200, margin_pct_after_returns: 60 }),
+        row(["b"], ["شاورما"], { qty_sold: 100, net_product_sales_ex_vat: 1000, cogs: 900, cogs_after_returns: 900, gross_profit_after_returns: 100, margin_pct_after_returns: 10 }),
+        row(["c"], ["كنافة"], { qty_sold: 10, net_product_sales_ex_vat: 800, cogs: 320, cogs_after_returns: 320, gross_profit_after_returns: 480, margin_pct_after_returns: 60 }),
+        row(["d"], ["سلطة"], { qty_sold: 10, net_product_sales_ex_vat: 200, cogs: 180, cogs_after_returns: 180, gross_profit_after_returns: 20, margin_pct_after_returns: 10 }),
       ]),
     });
 
     renderPage(<ProfitabilityPage />, "/reports/sales/profitability");
 
-    await within(await screen.findByTestId("kpi-gross_profit")).findByText("2,400.00 ر.س");
+    await within(await screen.findByTestId("kpi-gross_profit_after_returns")).findByText("2,400.00 ر.س");
     // one item per quadrant (ar labels from salesReports.profitability.quadrants.*)
     expect(screen.getAllByText("النجوم").length).toBeGreaterThan(0);
     expect(screen.getAllByText("الأحصنة العاملة").length).toBeGreaterThan(0);
@@ -411,6 +516,43 @@ describe("Profitability page", () => {
     expectCellTone("10%", "bg-rose-50");
   });
 
+  it("withholds period profit when a restocked return has no trustworthy cost snapshot", async () => {
+    dispatch({
+      [`${K}@`]: result([], {
+        totals: {
+          net_product_sales_ex_vat: 1000,
+          cogs_after_returns: 500,
+          gross_profit_after_returns: 500,
+          margin_pct_after_returns: 50,
+          uncosted_net: 0,
+          uncosted_returns_net: 100,
+        },
+      }),
+      [`${M}@menu_item`]: result([
+        row(["a"], ["برجر"], {
+          qty_sold: 10,
+          net_product_sales_ex_vat: 1000,
+          cogs: 500,
+          cogs_after_returns: 500,
+          gross_profit_after_returns: 500,
+          margin_pct_after_returns: 50,
+          uncosted_net: 0,
+          uncosted_returns_net: 100,
+        }),
+      ]),
+    });
+
+    renderPage(<ProfitabilityPage />, "/reports/sales/profitability");
+
+    await screen.findByTestId("cost-provenance-notice");
+    expect(within(screen.getByTestId("kpi-net_product_sales_ex_vat")).getByText("1,000.00 ر.س")).toBeInTheDocument();
+    expect(within(screen.getByTestId("kpi-cogs_after_returns")).getByText("—")).toBeInTheDocument();
+    expect(within(screen.getByTestId("kpi-gross_profit_after_returns")).getByText("—")).toBeInTheDocument();
+    expect(within(screen.getByTestId("kpi-margin_pct_after_returns")).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("500.00 ر.س")).not.toBeInTheDocument();
+    expect(screen.queryByText("50%")).not.toBeInTheDocument();
+  });
+
   // An item with neither a recipe nor a manual cost snapshots cost 0.00, which
   // the server turns into margin_pct = 100. Unguarded, that item lands top-right
   // of the quadrant grid and is labelled a STAR — the page tells the owner to
@@ -419,11 +561,11 @@ describe("Profitability page", () => {
   it("never crowns an uncosted item a Star, and keeps it out of the medians", async () => {
     dispatch({
       [`${M}@menu_item`]: result([
-        row(["a"], ["برجر"], { qty_sold: 100, net_ex_vat: 2000, cogs: 800, gross_profit: 1200, margin_pct: 60 }),
-        row(["b"], ["شاورما"], { qty_sold: 80, net_ex_vat: 1000, cogs: 900, gross_profit: 100, margin_pct: 5 }),
+        row(["a"], ["برجر"], { qty_sold: 100, net_product_sales_ex_vat: 2000, cogs: 800, cogs_after_returns: 800, gross_profit_after_returns: 1200, margin_pct_after_returns: 60 }),
+        row(["b"], ["شاورما"], { qty_sold: 80, net_product_sales_ex_vat: 1000, cogs: 900, cogs_after_returns: 900, gross_profit_after_returns: 100, margin_pct_after_returns: 5 }),
         // no recipe, no manual cost → cost_snapshot 0.00 → phantom 100% margin
-        row(["c"], ["ماء"], { qty_sold: 90, net_ex_vat: 1000, cogs: 0, gross_profit: 1000, margin_pct: 100 }),
-        row(["d"], ["سلطة"], { qty_sold: 10, net_ex_vat: 200, cogs: 180, gross_profit: 20, margin_pct: 15 }),
+        row(["c"], ["ماء"], { qty_sold: 90, net_product_sales_ex_vat: 1000, cogs: 0, cogs_after_returns: 0, gross_profit_after_returns: 1000, margin_pct_after_returns: 100 }),
+        row(["d"], ["سلطة"], { qty_sold: 10, net_product_sales_ex_vat: 200, cogs: 180, cogs_after_returns: 180, gross_profit_after_returns: 20, margin_pct_after_returns: 15 }),
       ]),
     });
 
@@ -476,8 +618,8 @@ describe("Profitability page", () => {
   it("masks cogs as '—' and shows the cost-provenance notice when cogs is masked", async () => {
     dispatch({
       [`${M}@menu_item`]: result(
-        [row(["a"], ["برجر"], { qty_sold: 100, net_ex_vat: 2000 })],
-        { meta: { freshness: { watermark: null }, maskedMetrics: ["cogs"] } },
+        [row(["a"], ["برجر"], { qty_sold: 100, net_product_sales_ex_vat: 2000 })],
+        { meta: { freshness: { watermark: null }, maskedMetrics: ["cogs", "cogs_after_returns"] } },
       ),
     });
     renderPage(<ProfitabilityPage />, "/reports/sales/profitability");

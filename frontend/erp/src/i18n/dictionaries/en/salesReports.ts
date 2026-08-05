@@ -4,9 +4,9 @@
  *  enforced by modules/reports/sales/__tests__/registry-i18n.test.ts). */
 export const salesReports = {
   hub: {
-    eyebrow: "Reports · Sales",
-    title: "Sales Analytics",
-    subtitle: "The unified sales analytics center — metrics and dimensions from the certified fact store",
+    eyebrow: "Sales · Decision center",
+    title: "Sales Decision Center",
+    subtitle: "Understand performance and act from one place — trusted figures by item, hour, branch, cashier and payment method",
     tabsAria: "Sales analytics sections",
     settingsAria: "Report settings",
     resultsAria: "Report results",
@@ -17,6 +17,32 @@ export const salesReports = {
     viewsAria: "{center} reports",
     filtersDropped:
       "Filters this report cannot apply were removed: {filters}. The figures below cover the wider scope.",
+  },
+
+  decisions: {
+    title: "Analyze sales from the angle you need",
+    subtitle: "Open the right analysis while keeping the same period, branches and filters.",
+    items: {
+      title: "By item",
+      description: "Quantity, net sales, cost and profitability",
+      descriptionNoCost: "Quantity, net sales and each item's contribution",
+    },
+    branches: {
+      title: "By branch",
+      description: "Performance, contribution and average ticket",
+    },
+    hours: {
+      title: "By hour",
+      description: "Peak hours and underperforming periods",
+    },
+    cashiers: {
+      title: "By cashier",
+      description: "Sales, discounts and voids",
+    },
+    payments: {
+      title: "By payment method",
+      description: "Collections, refunds and reconciliation",
+    },
   },
 
   report: {
@@ -57,22 +83,27 @@ export const salesReports = {
   centers: {
     executive: {
       title: "Executive summary",
+      shortTitle: "Executive",
       subtitle: "The whole period in one statement",
     },
     items: {
       title: "Items & profitability",
+      shortTitle: "Items",
       subtitle: "Items, categories and modifiers: quantities, net, cost and margin",
     },
     payments: {
       title: "Payments & reconciliation",
+      shortTitle: "Payments",
       subtitle: "Payment methods, VAT, discounts and the cash reconciliation",
     },
     operations: {
       title: "Operations",
+      shortTitle: "Operations",
       subtitle: "Branches, channels, hours, cashiers, shifts, voids and returns",
     },
     explorer: {
       title: "Custom explorer",
+      shortTitle: "Custom",
       subtitle: "Pick metrics and dimensions and build the report you need",
     },
   },
@@ -241,6 +272,7 @@ export const salesReports = {
     returns_net: "Returns (ex. VAT)",
     returns_vat: "VAT on returns",
     returns_cogs: "Cost of returns",
+    returns_cogs_reversed: "COGS reversed for restocked returns",
     net_ex_vat: "Net sales, ex. VAT (after discount)",
     vat_amount: "VAT on sales",
     invoice_total: "Invoice totals as issued (incl. VAT)",
@@ -255,6 +287,7 @@ export const salesReports = {
     returns_value: "Returns (incl. VAT)",
     cogs: "Cost of goods sold",
     uncosted_net: "Revenue with no defined cost",
+    uncosted_returns_net: "Restocked returns with untrusted cost",
     payments_in: "Payments in",
     refunds_out: "Refunds out",
     tips_total: "Total tips",
@@ -277,6 +310,9 @@ export const salesReports = {
     discount_pct: "Discount rate",
     gross_profit: "Gross profit",
     margin_pct: "Margin rate",
+    cogs_after_returns: "Net cost of sales after returns",
+    gross_profit_after_returns: "Gross profit after returns",
+    margin_pct_after_returns: "Gross margin after returns",
     net_collections: "Net collections",
     till_variance: "Till variance",
     item_contribution_pct: "Item contribution",
@@ -354,6 +390,9 @@ export const salesReports = {
     discountPct: "Total discounts ÷ gross product sales × 100.",
     grossProfit: "Net sales (ex. VAT) − cost of goods sold.",
     marginPct: "Gross profit ÷ net sales (ex. VAT) × 100.",
+    cogsAfterReturns: "Cost of goods sold − cost of goods physically returned to stock, using the stored sale and return snapshots.",
+    grossProfitAfterReturns: "Net sales excluding VAT after returns − net cost of sales after returns.",
+    marginPctAfterReturns: "Gross profit after returns ÷ net sales excluding VAT after returns × 100.",
     netCollections: "Payments in − refunds out.",
     tillVariance: "Counted cash − expected till cash.",
     contributionPct: "Group value ÷ the ungrouped total of the same metric × 100.",
@@ -515,7 +554,9 @@ export const salesReports = {
       dogs: "Dogs",
     },
     uncostedItems:
-      "{count} items have no defined cost — excluded from classification and from the medians, and the figures above overstate the business by their cost",
+      "{count} items have no defined cost — excluded from classification and the medians, and unauditable profit indicators are withheld",
+    incompletePeriod:
+      "Some sales or restocked returns have no trustworthy cost. Period cost, profit and margin are withheld rather than publishing an unauditable profit.",
   },
 
   reconciliation: {

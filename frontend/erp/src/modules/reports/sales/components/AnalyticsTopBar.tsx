@@ -34,7 +34,7 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { Badge, Button, Dialog, DropdownMenu, IconButton, Input, SegmentedControl } from "@/shared/ui";
+import { Badge, Button, Dialog, DropdownMenu, Input, SegmentedControl } from "@/shared/ui";
 import { useCan } from "@/shared/permissions";
 import {
   ComparePicker,
@@ -124,13 +124,13 @@ export interface AnalyticsTopBarProps {
 /** One removable active-filter chip. */
 function FilterChip({ label, onRemove, removeLabel }: { label: string; onRemove: () => void; removeLabel: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 py-0.5 ps-2.5 pe-1 text-[11px] font-extrabold leading-none text-teal-700">
+    <span className="inline-flex min-h-11 items-center gap-1 rounded-full border border-teal-200 bg-teal-50 ps-3 pe-0.5 text-[11px] font-extrabold leading-none text-teal-700">
       {label}
       <button
         type="button"
         aria-label={removeLabel}
         onClick={onRemove}
-        className="grid h-5 w-5 place-items-center rounded-full text-teal-600 transition hover:bg-teal-100 hover:text-rose-600"
+        className="grid h-11 w-11 place-items-center rounded-full text-teal-600 transition hover:bg-teal-100 hover:text-rose-600"
       >
         <X className="h-3 w-3" />
       </button>
@@ -300,11 +300,11 @@ function SaveViewControl() {
           // min-h-11, not min-h-9: this is a real touch target, and it also
           // pins the action bar to the same 44px as the control row below it.
           <span className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-600 hover:bg-slate-50">
-            {/* The label collapses to its icon on a phone. DropdownMenu puts
-                the aria-label on the BUTTON, so the accessible name survives
-                the text going away. */}
+            {/* This is a primary report action, so its name stays visible on a
+                phone. Icon-only action rows save a few pixels at the cost of
+                making every unfamiliar control a guessing exercise. */}
             <Bookmark className="h-4 w-4" />
-            <span className="hidden sm:inline">{t("salesReports.topbar.saveView")}</span>
+            <span>{t("salesReports.topbar.saveView")}</span>
           </span>
         }
         items={items}
@@ -353,9 +353,18 @@ export function AnalyticsTopBar({
   /** `undefined` filterKeys = no report context → every control, as before. */
   const shows = (key: string) => !filterKeys || filterKeys.includes(key);
   const defaults = analyticsFilterCodec.defaults;
-  const brands = useBrandOptions();
-  const branches = useBranchOptions();
-  const menuItems = useMenuItemOptions();
+  // The expensive scope domains are filter editors, not page prerequisites.
+  // Keep them asleep until their editor opens (or a committed deep-link needs
+  // names for its active values). The branch picker is primary and remains
+  // eager only on reports that can actually honour a branch filter.
+  const [showMore, setShowMore] = useState(false);
+  const brands = useBrandOptions(
+    shows("brandId") && (showMore || filters.brandId.length > 0),
+  );
+  const branches = useBranchOptions(shows("branchId"));
+  const menuItems = useMenuItemOptions(
+    shows("menuItemId") && (showMore || filters.menuItemId.length > 0),
+  );
   // Segment = the last pathname piece (the hub owns /reports/sales/<segment>).
   const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
   const canExport = useCan("analytics.export");
@@ -379,7 +388,9 @@ export function AnalyticsTopBar({
   // An EMPTY load falls back to no options rather than to fake ones: an empty
   // picker is honest, a picker full of ids that match nothing is not. A FAILED
   // load is a different fact and now says so — see LookupError.
-  const channelsQuery = useChannels();
+  const channelsQuery = useChannels(
+    shows("channel") && (showMore || filters.channel.length > 0),
+  );
   const channelOptions: MultiSelectOption[] = (channelsQuery.data ?? []).map((c) => ({
     value: c.id,
     label: c.name || c.code || c.id,
@@ -390,6 +401,11 @@ export function AnalyticsTopBar({
     value: o,
     label: t(`salesReports.topbar.orderTypes.${o}`),
   }));
+  const summarizeValues = (values: string[], options: MultiSelectOption[] = []) => {
+    const labels = values.map((value) => options.find((option) => option.value === value)?.label ?? value);
+    const shown = labels.slice(0, 2).join(" · ");
+    return labels.length > 2 ? `${shown} +${formatNumber(labels.length - 2)}` : shown;
+  };
 
   /* ── DRAFT STATE ────────────────────────────────────────────────────────
    * `filters` is committed (the URL). `draft` is what the controls show. The
@@ -434,10 +450,10 @@ export function AnalyticsTopBar({
   const moreActiveCount = MORE_KEYS.filter((k) =>
     new Set(nonDefaultFilterKeys(draft)).has(k),
   ).length;
-  const [showMore, setShowMore] = useState(
-    () => MORE_KEYS.filter((k) => new Set(nonDefaultFilterKeys(filters)).has(k)).length > 0,
-  );
-
+  // Always start compact, including on a shared/deep link. The committed chips
+  // below remain visible and state exactly which hidden filters are active;
+  // opening a large filter editor automatically was the reason the first KPI
+  // disappeared below the fold on a 390px phone.
   // ── active-filter chips (codec-derived; period keys collapse into one) ──
   // Derived from the COMMITTED filters on purpose: a chip describes the report
   // on screen. Chips (and clear-all) commit immediately — removing one is an
@@ -461,6 +477,7 @@ export function AnalyticsTopBar({
   const multiChip = (
     key: "brandId" | "branchId" | "channel" | "orderType" | "paymentMethod" | "menuItemId" | "categoryId" | "cashierId",
     labelKey: string,
+    options?: MultiSelectOption[],
   ) => {
     // A chip is a claim that the report on screen is scoped this way. A key the
     // report cannot honour is dropped from the URL by the hub, so it can only
@@ -468,14 +485,14 @@ export function AnalyticsTopBar({
     if (!activeKeys.has(key) || !shows(key)) return;
     chips.push({
       id: key,
-      label: `${t(labelKey)}: ${formatNumber(filters[key].length)}`,
+      label: `${t(labelKey)}: ${summarizeValues(filters[key], options)}`,
       onRemove: () => patch({ [key]: [] } as Partial<AnalyticsFilters>),
     });
   };
-  multiChip("brandId", "salesReports.topbar.brand");
-  multiChip("branchId", "salesReports.topbar.branch");
-  multiChip("channel", "salesReports.topbar.channel");
-  multiChip("orderType", "salesReports.topbar.orderType");
+  multiChip("brandId", "salesReports.topbar.brand", toOptions(brands.data));
+  multiChip("branchId", "salesReports.topbar.branch", toOptions(branches.data));
+  multiChip("channel", "salesReports.topbar.channel", channelOptions);
+  multiChip("orderType", "salesReports.topbar.orderType", orderTypeOptions);
   // Wave-4 drill params — chips keep the URL and the chip row in lock-step.
   multiChip("paymentMethod", "salesReports.dims.payment_method");
   multiChip("menuItemId", "salesReports.dims.menu_item");
@@ -531,12 +548,11 @@ export function AnalyticsTopBar({
     );
 
   return (
-    // ONE card, two rows of chrome: an action bar and a control row, each 44px,
-    // inside 8px of padding. MEASURED collapsed (chromium, real stylesheet,
-    // 288px sidebar): 114px at 1280/1440/1920, 218px at 1024/768/375 — where
-    // the 2-column grid becomes three stacked rows. Everything that used to
-    // make this 1463px tall is either behind "more filters" or, for the page's
-    // own settings, in the hub's rail beside the report.
+    // ONE card with a named action row and a compact control grid. Desktop keeps
+    // the primary controls on one line. A phone deliberately uses one FULL-WIDTH
+    // field per row: two cramped half-width selects looked shorter in CSS yet
+    // took longer to read and left Arabic values truncated. Everything secondary
+    // stays behind "more filters" and the committed chip summary.
     <div
       className="no-print surface mb-4 flex flex-col gap-2 p-2"
       data-testid="analytics-topbar"
@@ -544,7 +560,7 @@ export function AnalyticsTopBar({
       {/* THE ONE ACTION BAR — first in the DOM, not moved with `order`
           (visually-top / tab-order-last is a WCAG 2.4.3 focus-order defect).
           Saved views, refresh, print and export live here and nowhere else. */}
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
         {/* Hidden on a phone: with the heading in the row the actions wrapped
             onto a second line, and a wrapped action bar is 44px of the very
             height this rebuild is about. The card is under a heading that
@@ -567,46 +583,46 @@ export function AnalyticsTopBar({
           </span>
         )}
         {onRefresh && (
-          <IconButton aria-label={t("salesReports.topbar.refresh")} onClick={onRefresh}>
+          <Button size="sm" variant="secondary" className="min-h-11" onClick={onRefresh}>
             <RefreshCw className="h-4 w-4" />
-          </IconButton>
+            {t("salesReports.topbar.refresh")}
+          </Button>
         )}
         <SaveViewControl />
         {/* Print is NOT export-gated: it puts the report the user is already
             reading on paper. The hub wraps the routed page in PrintArea, and
             this bar is .no-print, so the printout is the report alone. */}
-        <IconButton aria-label={t("salesReports.topbar.print")} onClick={printReport}>
+        <Button size="sm" variant="secondary" className="min-h-11" onClick={printReport}>
           <Printer className="h-4 w-4" />
-        </IconButton>
+          {t("salesReports.topbar.print")}
+        </Button>
         {canExport && <ExportMenu segment={segment} filters={filters} />}
         {pageActions}
       </div>
 
       {/* ── THE PRIMARY BAR ──────────────────────────────────────────────────
-          Period, branch, compare, Apply, more. Two columns on a phone (period
-          spans both — a custom range unfolds two date inputs into it), one row
-          from xl. No visible labels: each control names itself to assistive
-          tech via aria-label and shows its value in place, which is what keeps
-          the row 44px tall.
+          Period, branch, compare, Apply, more. One full-width field per row on
+          a phone, two columns from sm, one row from xl. Each control names
+          itself via aria-label and shows its value in place.
 
           `xl`, not `lg`: at a 1024 viewport the shell's 288px sidebar leaves
           ~688px, and four minmax() tracks whose minimums total 694px would
           push the page into horizontal overflow — which the e2e sweep fails
           on, at exactly that viewport. */}
-      {/* Both templates are STATIC strings so Tailwind emits them; only which
-          one is applied is conditional. Dropping the compare track removes a
-          column, never a row, so the measured collapsed height is unchanged:
-          one 44px control row at xl, three stacked rows below it. */}
+      {/* Both xl templates are STATIC strings so Tailwind emits them; only which
+          one is applied is conditional. */}
       <div
+        data-testid="analytics-primary-filters"
         className={cn(
-          "grid grid-cols-2 gap-2",
+          "grid grid-cols-1 gap-2 sm:grid-cols-2",
           showCompare
             ? "xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_minmax(9rem,1fr)_auto]"
             : "xl:grid-cols-[minmax(11rem,1.1fr)_minmax(9rem,1fr)_auto]",
         )}
       >
-        <div className="col-span-2 min-w-0 xl:col-span-1">
+        <div className="min-w-0 sm:col-span-2 xl:col-span-1">
           <DateRangePicker
+            className="w-full [&>span]:w-full sm:[&>span]:w-auto"
             value={{ from: draft.from, to: draft.to, preset: draft.preset }}
             onChange={(range) => edit({ from: range.from, to: range.to, preset: range.preset })}
             labels={{
@@ -623,6 +639,7 @@ export function AnalyticsTopBar({
             t("salesReports.topbar.branch"),
             branches,
             <MultiSelectCombobox
+              className="w-full"
               options={toOptions(branches.data)}
               values={draft.branchId}
               onChange={(values) => edit({ branchId: values })}
@@ -638,10 +655,12 @@ export function AnalyticsTopBar({
         {showCompare && (
           <div className="min-w-0">
             <ComparePicker
+              className="w-full [&>span]:w-full"
+              modes={["none", "prevPeriod", "prevYear"]}
               value={draft.compare}
               onChange={(mode) => {
-                // The URL contract carries none|prevPeriod|prevYear this wave; a
-                // custom compare window ships with the builder wave.
+                // This caller exposes only the three supported modes above;
+                // ComparePicker remains capable of custom windows elsewhere.
                 if (mode === "custom") return;
                 edit({ compare: mode as AnalyticsCompareMode });
               }}
@@ -654,11 +673,11 @@ export function AnalyticsTopBar({
             />
           </div>
         )}
-        <div className="col-span-2 flex items-center gap-2 xl:col-span-1">
+        <div className="flex w-full items-center gap-2 sm:col-span-2 xl:col-span-1">
           {/* Enabled ONLY when the draft differs from the URL — the button is
               the answer to "does the report below me reflect this bar?". */}
           <Button
-            className={cn("flex-1 xl:flex-none", dirty && "ring-2 ring-amber-300")}
+            className={cn("min-h-11 flex-1 xl:flex-none", dirty && "ring-2 ring-amber-300")}
             disabled={!dirty}
             onClick={apply}
           >
@@ -673,7 +692,7 @@ export function AnalyticsTopBar({
             // Explicit label: the count badge below would otherwise change the
             // button's accessible NAME every time a filter is added.
             aria-label={t("salesReports.topbar.moreFilters")}
-            className="flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+            className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 xl:flex-none"
           >
             <SlidersHorizontal className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
             <span className="truncate">{t("salesReports.topbar.moreFilters")}</span>
@@ -836,7 +855,7 @@ export function AnalyticsTopBar({
           <button
             type="button"
             onClick={reset}
-            className="rounded-md px-2 py-1 text-[11px] font-extrabold text-slate-500 transition hover:bg-slate-50 hover:text-rose-600"
+            className="min-h-11 rounded-lg px-3 text-[11px] font-extrabold text-slate-500 transition hover:bg-slate-50 hover:text-rose-600"
           >
             {t("salesReports.topbar.clearAll")}
           </button>

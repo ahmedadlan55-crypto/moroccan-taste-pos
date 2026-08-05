@@ -164,6 +164,19 @@ describe("the collapsed bar", () => {
     expect(screen.getAllByTestId("analytics-topbar")).toHaveLength(1);
   });
 
+  it("uses full-width single-column primary fields on a phone", () => {
+    renderBar();
+    const primary = screen.getByTestId("analytics-primary-filters");
+    expect(primary).toHaveClass("grid-cols-1", "sm:grid-cols-2");
+
+    const period = screen.getByRole("combobox", { name: AR.period });
+    expect(period.closest("span")?.parentElement).toHaveClass("w-full", "[&>span]:w-full");
+    const branch = screen.getByRole("button", { name: AR.branch });
+    expect(branch.parentElement).toHaveClass("w-full");
+    const compare = screen.getByRole("combobox", { name: AR.compare });
+    expect(compare.closest("span")?.parentElement).toHaveClass("w-full", "[&>span]:w-full");
+  });
+
   it("keeps the freshness watermark hook when the query reports one", () => {
     render(
       <QueryClientProvider client={newClient()}>
@@ -215,10 +228,14 @@ describe("more filters", () => {
     expect(screen.queryByTestId("more-filters")).toBeNull();
   });
 
-  it("opens itself when the URL already carries one of the hidden filters", () => {
-    // Otherwise a shared link's scope is invisible to whoever opens it.
+  it("keeps a deep link compact while its committed hidden scope stays visible", () => {
     renderBar({ channel: ["CH1"] });
-    expect(screen.getByTestId("more-filters")).toBeInTheDocument();
+    expect(screen.queryByTestId("more-filters")).toBeNull();
+    // The chip names the committed value, not merely how many values exist.
+    // When the lookup has no matching label, the raw persisted id is the
+    // honest fallback and keeps a shared link auditable.
+    expect(screen.getByTestId("active-filter-chips")).toHaveTextContent(`${AR.channel}: CH1`);
+    expect(screen.getByRole("button", { name: AR.more })).toHaveAttribute("aria-expanded", "false");
   });
 });
 

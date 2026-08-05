@@ -522,8 +522,8 @@ export function CoaListPage() {
                 <th className="w-28 px-2 py-2 text-start">{t("accounting.coa.col.kind")}</th>
                 <th className="w-28 px-2 py-2 text-start">{t("accounting.coa.col.type")}</th>
                 <th className="w-24 px-2 py-2 text-start">{t("accounting.coa.print.status")}</th>
-                <th className="w-28 px-2 py-2 text-left">{t("accounting.coa.print.debitBalance")}</th>
-                <th className="w-28 px-2 py-2 text-left">{t("accounting.coa.print.creditBalance")}</th>
+                <th dir="ltr" className="w-28 px-2 py-2 text-start">{t("accounting.coa.print.debitBalance")}</th>
+                <th dir="ltr" className="w-28 px-2 py-2 text-start">{t("accounting.coa.print.creditBalance")}</th>
               </tr>
             </thead>
             <tbody>
@@ -560,10 +560,10 @@ export function CoaListPage() {
                     </td>
                     <td className="px-2 py-1.5 text-start">{glTypeLabel(t, account.type)}</td>
                     <td className="px-2 py-1.5 text-start">{status}</td>
-                    <td dir="ltr" className="px-2 py-1.5 text-left font-semibold tabular-nums">
+                    <td dir="ltr" className="px-2 py-1.5 text-start font-semibold tabular-nums">
                       {debit ? fmtMoney(debit) : "—"}
                     </td>
-                    <td dir="ltr" className="px-2 py-1.5 text-left font-semibold tabular-nums">
+                    <td dir="ltr" className="px-2 py-1.5 text-start font-semibold tabular-nums">
                       {credit ? fmtMoney(credit) : "—"}
                     </td>
                   </tr>

@@ -220,6 +220,8 @@ export interface ComparePickerLabels {
 
 export interface ComparePickerProps {
   value: CompareMode;
+  /** Modes this caller can actually honour. Defaults to the full shared set. */
+  modes?: readonly CompareMode[];
   /** The explicit window when `value === "custom"`. */
   customRange?: CompareRange;
   onChange: (mode: CompareMode, customRange?: CompareRange) => void;
@@ -229,7 +231,7 @@ export interface ComparePickerProps {
 }
 
 /** Comparison mode select; "custom" reveals two native date inputs. */
-export function ComparePicker({ value, customRange, onChange, labels, disabled, className }: ComparePickerProps) {
+export function ComparePicker({ value, modes = COMPARE_MODES, customRange, onChange, labels, disabled, className }: ComparePickerProps) {
   const range = customRange ?? { from: "", to: "" };
 
   return (
@@ -242,7 +244,7 @@ export function ComparePicker({ value, customRange, onChange, labels, disabled, 
           const mode = e.target.value as CompareMode;
           onChange(mode, mode === "custom" ? range : undefined);
         }}
-        options={COMPARE_MODES.map((m) => ({ value: m, label: labels.modes[m] }))}
+        options={modes.map((m) => ({ value: m, label: labels.modes[m] }))}
         className="min-w-36"
       />
       {value === "custom" && (

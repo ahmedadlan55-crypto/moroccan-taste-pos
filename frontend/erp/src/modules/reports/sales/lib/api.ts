@@ -567,16 +567,18 @@ function asOptionArray(v: unknown): ScopeOption[] {
     .filter((o) => o.id !== "");
 }
 
-export function useBrandOptions() {
+export function useBrandOptions(enabled = true) {
   return useQuery({
     queryKey: ["erp", "brands"],
+    enabled,
     queryFn: async ({ signal }) => asOptionArray(await apiClient.get<unknown>("/erp/brands", { signal })),
   });
 }
 
-export function useBranchOptions() {
+export function useBranchOptions(enabled = true) {
   return useQuery({
     queryKey: ["erp", "branches-full"],
+    enabled,
     queryFn: async ({ signal }) =>
       asOptionArray(await apiClient.get<unknown>("/erp/branches-full", { signal })),
   });
@@ -611,10 +613,11 @@ function asMenuOptionRows(v: unknown): MenuOptionRow[] {
  * once and `select` picks the one the current UI language wants, so toggling
  * ar/en re-labels the picker without a refetch.
  */
-export function useMenuItemOptions() {
+export function useMenuItemOptions(enabled = true) {
   const lang = useLang();
   return useQuery({
     queryKey: ["erp", "menu-options"],
+    enabled,
     queryFn: async ({ signal }) =>
       asMenuOptionRows(await apiClient.get<unknown>("/erp/menu-options", { signal })),
     select: (rows): ScopeOption[] =>

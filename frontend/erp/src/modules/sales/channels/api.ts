@@ -62,9 +62,10 @@ export interface ChannelInput {
   useFullMenu?: boolean;
 }
 
-export function useChannels() {
+export function useChannels(enabled = true) {
   return useQuery({
     queryKey: [...CH_KEY, "list"],
+    enabled,
     queryFn: async () => {
       // On a DB error the route returns { error, channels: [] } with a 200; on
       // success it returns a bare array. Normalize both to SalesChannel[].

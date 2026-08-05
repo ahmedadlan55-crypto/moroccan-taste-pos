@@ -17,7 +17,7 @@
 // The fixture is the live e2e seed period (tests/fixtures/salesHubSeed.js
 // EXPECTED.TOTAL) so the numbers here and the numbers a reviewer sees in the
 // browser against the seeded database are the same numbers.
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,7 +25,7 @@ import { I18nProvider } from "@/i18n";
 import type { AnalyticsQueryBody, AnalyticsResult } from "../lib/api";
 import Executive from "../pages/Executive";
 
-const { TOTALS, REGISTRY } = vi.hoisted(() => ({
+const { TOTALS, REGISTRY, COST_STATE } = vi.hoisted(() => ({
   /**
    * salesHubSeed EXPECTED.TOTAL, extended with the statement metrics:
    *   sales_before_discount     1071.50 + 15.75          = 1087.25
@@ -68,8 +68,15 @@ const { TOTALS, REGISTRY } = vi.hoisted(() => ({
     cogs: 365,
     gross_profit: 585,
     margin_pct: 61.58,
+    returns_cogs: 80,
+    cogs_after_returns: 285,
+    gross_profit_after_returns: 425,
+    margin_pct_after_returns: 59.86,
+    uncosted_net: 0,
+    uncosted_returns_net: 0,
   } as Record<string, number>,
   REGISTRY: { metrics: [], dimensions: [] },
+  COST_STATE: { uncostedNet: 0, uncostedReturnsNet: 0 },
 }));
 
 vi.mock("../lib/api", async (importOriginal) => {
@@ -85,6 +92,10 @@ vi.mock("../lib/api", async (importOriginal) => {
       }
       const values: Record<string, number> = {};
       for (const m of body.metrics) if (TOTALS[m] != null) values[m] = TOTALS[m];
+      if (body.metrics.includes("uncosted_net")) values.uncosted_net = COST_STATE.uncostedNet;
+      if (body.metrics.includes("uncosted_returns_net")) {
+        values.uncosted_returns_net = COST_STATE.uncostedReturnsNet;
+      }
       const keys = body.dimensions.length > 0 ? ["2032-03-10"] : [];
       return {
         columns: [],
@@ -96,7 +107,17 @@ vi.mock("../lib/api", async (importOriginal) => {
   };
 });
 
-afterEach(cleanup);
+vi.mock("@/shared/permissions", () => ({
+  useCan: () => true,
+  usePermissions: () => ({ can: () => true }),
+  Can: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
+}));
+
+afterEach(() => {
+  COST_STATE.uncostedNet = 0;
+  COST_STATE.uncostedReturnsNet = 0;
+  cleanup();
+});
 
 /** The money in a named statement line, parsed back out of the rendered cell. */
 function lineValue(id: string): number {
@@ -212,5 +233,23 @@ describe("executive sales statement", () => {
     cleanup();
     await renderAt("/reports/sales/executive?taxIncl=1");
     expect(document.querySelectorAll('[data-testid="statement-sales"] tr[data-line="net"]')).toHaveLength(1);
+  });
+
+  it("withholds profit and margin when the period contains revenue without trustworthy cost", async () => {
+    COST_STATE.uncostedNet = 125;
+    await renderAt("/reports/sales/executive?taxIncl=0");
+
+    expect(await screen.findByTestId("cost-provenance-notice")).toHaveTextContent(
+      "حُجبت التكلفة والربح والهامش",
+    );
+
+    const kpis = screen.getByTestId("kpi-row");
+    const profitLabel = within(kpis).getByText("الربح الإجمالي بعد المرتجعات");
+    expect(profitLabel.parentElement?.querySelector("dd")).toHaveTextContent("—");
+    const marginLabel = within(kpis).getByText("هامش الربح بعد المرتجعات");
+    expect(marginLabel.parentElement?.querySelector("dd")).toHaveTextContent("—");
+
+    expect(document.querySelector('[data-line="profit"] td')?.textContent).toContain("—");
+    expect(document.querySelector('[data-line="cogs"] td')?.textContent).toContain("—");
   });
 });

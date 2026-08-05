@@ -11,10 +11,17 @@
 // printed and reconciled. The visual analysis lives on the other sections
 // (explorer, hours, branches…) — this one carries the figures.
 import { useMemo, type ReactNode } from "react";
-import { Printer } from "lucide-react";
+import {
+  Building2,
+  Clock3,
+  CreditCard,
+  PackageSearch,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 import {
   Badge,
-  Button,
   EmptyState,
   ErrorState,
   ExplainNumber,
@@ -22,6 +29,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
+import { useCan } from "@/shared/permissions";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
 import { formatCurrency, formatDateTime, formatNumber } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
@@ -46,7 +54,7 @@ const SEGMENT = "executive";
  * Every figure the report needs — in FIVE requests, not one and not six.
  *
  * lib/analytics/planner.js caps a request at MAX_METRICS = 12 and answers
- * VALIDATION_ERROR / 422 above it. The report needs 28 figures, so a single
+ * VALIDATION_ERROR / 422 above it. The report needs 30 figures, so a single
  * query would make EVERY load of this page 422 — an ErrorState with no data at
  * all. The requests are:
  *
@@ -55,7 +63,7 @@ const SEGMENT = "executive";
  *                       response and cannot be assembled from two snapshots of
  *                       the window taken a moment apart.
  *   2  `voidsAndProfit` dimensionless — the void metrics MUST ride alone (see
- *                       below), and they carry the three cost-gated metrics
+ *                       below), and they carry the five cost-gated metrics
  *                       BESIDE net_collections, which is ungated: a viewer
  *                       without analytics.cost.view then gets them masked out
  *                       of a still-valid response, where a request of only cost
@@ -319,17 +327,47 @@ function Figures({ items, testId }: { items: Array<{ id: string; label: string; 
   return (
     <dl
       data-testid={testId}
-      className="grid grid-cols-2 divide-slate-100 sm:grid-cols-3 lg:grid-cols-5 lg:divide-x lg:rtl:divide-x-reverse"
+      className={`grid grid-cols-2 divide-slate-100 sm:grid-cols-3 lg:divide-x lg:rtl:divide-x-reverse ${items.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}
     >
-      {items.map((it) => (
-        <div key={it.id} className="border-b border-slate-100 px-4 py-3 lg:border-b-0">
-          <dt className="truncate text-xs font-bold text-slate-500">{it.label}</dt>
+      {items.map((it, index) => (
+        <div
+          key={it.id}
+          className={`${items.length % 2 === 1 && index === items.length - 1 ? "col-span-2 sm:col-span-1" : ""} border-b border-slate-100 px-4 py-3 lg:border-b-0`}
+        >
+          <dt className="min-h-10 text-xs font-bold leading-5 text-slate-500">{it.label}</dt>
           <dd dir="ltr" className="mt-1 text-lg font-extrabold tabular-nums text-slate-900 text-end lg:text-start">
             {it.value}
           </dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+function DecisionShortcut({
+  to,
+  icon: Icon,
+  label,
+  description,
+}: {
+  to: string;
+  icon: LucideIcon;
+  label: string;
+  description: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className="group flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-start transition hover:border-teal-300 hover:bg-teal-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 transition group-hover:bg-white">
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-extrabold text-slate-900">{label}</span>
+        <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">{description}</span>
+      </span>
+    </Link>
   );
 }
 
@@ -409,6 +447,9 @@ interface DayRow {
 
 export default function Executive() {
   const t = useT();
+  const { search } = useLocation();
+  const canViewCashierPerformance = useCan("analytics.employees.view");
+  const canViewCost = useCan("analytics.cost.view");
   const { filters, patch } = useUrlFilters(analyticsFilterCodec);
   const registry = useAnalyticsRegistry();
 
@@ -698,72 +739,133 @@ export default function Executive() {
     };
   });
 
-  const cogs = f("cogs");
-  const grossProfit = f("gross_profit");
-  const showProfit = cogs != null || grossProfit != null;
+  const cogsAfterReturns = f("cogs_after_returns");
+  const grossProfitAfterReturns = f("gross_profit_after_returns");
+  // A zero cost is not evidence that an item was free. These exposure metrics
+  // identify revenue whose cost provenance is missing. Publishing a margin
+  // over that population would be precise-looking but unauditable, so the
+  // affected side of the comparison is withheld explicitly.
+  const periodHasUncosted =
+    (f("uncosted_net") ?? 0) >= MONEY_EPSILON ||
+    (f("uncosted_returns_net") ?? 0) >= MONEY_EPSILON;
+  const compareHasUncosted =
+    hasCompare &&
+    ((c("uncosted_net") ?? 0) >= MONEY_EPSILON ||
+      (c("uncosted_returns_net") ?? 0) >= MONEY_EPSILON);
+  const showProfit =
+    canViewCost &&
+    (periodHasUncosted || compareHasUncosted || cogsAfterReturns != null || grossProfitAfterReturns != null);
+  const trustedCogsAfterReturns = periodHasUncosted ? null : cogsAfterReturns;
+  const trustedGrossProfitAfterReturns = periodHasUncosted ? null : grossProfitAfterReturns;
+  const trustedMarginAfterReturns = periodHasUncosted ? null : f("margin_pct_after_returns");
+  const trustedCompare = (id: string) => (compareHasUncosted ? null : c(id));
+  const freshness = summaryA.data?.meta.freshness;
 
-  const activeFilterChips = [
-    filters.brandId.length > 0 && `${t("salesReports.topbar.brand")} (${filters.brandId.length})`,
-    filters.branchId.length > 0 && `${t("salesReports.topbar.branch")} (${filters.branchId.length})`,
-    filters.channel.length > 0 && `${t("salesReports.topbar.channel")} (${filters.channel.length})`,
-    filters.orderType.length > 0 && `${t("salesReports.topbar.orderType")} (${filters.orderType.length})`,
-  ].filter(Boolean) as string[];
+  const decisionHref = (center: string, view: string) => {
+    const params = new URLSearchParams(search);
+    params.set("view", view);
+    return `/reports/sales/${center}?${params.toString()}`;
+  };
+  const decisionShortcuts: Array<{
+    id: string;
+    center: string;
+    view: string;
+    icon: LucideIcon;
+  }> = [
+    { id: "items", center: "items", view: "items", icon: PackageSearch },
+    { id: "branches", center: "operations", view: "branches", icon: Building2 },
+    { id: "hours", center: "operations", view: "hours", icon: Clock3 },
+    { id: "cashiers", center: "operations", view: "cashiers", icon: UserRound },
+    { id: "payments", center: "payments", view: "payments", icon: CreditCard },
+  ].filter((shortcut) => shortcut.id !== "cashiers" || canViewCashierPerformance);
 
-  const freshness = summaryA.data?.meta.freshness?.watermark;
+  const headlineFigures = [
+    {
+      id: "net_sales",
+      label: inclBasis
+        ? t("salesReports.metrics.net_product_sales")
+        : t("salesReports.metrics.net_product_sales_ex_vat"),
+      value: money(inclBasis ? f("net_product_sales") : f("net_product_sales_ex_vat")),
+    },
+    { id: "orders", label: t("salesReports.metrics.orders"), value: count(f("orders")) },
+    { id: "avg_ticket", label: t("salesReports.metrics.avg_ticket"), value: money(f("avg_ticket")) },
+    ...(canViewCost
+      ? [
+          {
+            id: "gross_profit_after_returns",
+            label: t("salesReports.metrics.gross_profit_after_returns"),
+            value: money(trustedGrossProfitAfterReturns),
+          },
+          {
+            id: "margin_pct_after_returns",
+            label: t("salesReports.metrics.margin_pct_after_returns"),
+            value: percent(trustedMarginAfterReturns),
+          },
+        ]
+      : []),
+  ];
 
   return (
     <section className="space-y-4" data-testid="page-executive">
-      {/* ── report identity: exactly which numbers these are ── */}
-      <header className="surface flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-        <div className="min-w-0 space-y-1">
-          <h2 className="text-base font-extrabold text-slate-900">{t("salesReports.report.title")}</h2>
-          <p dir="ltr" className="text-xs font-bold tabular-nums text-slate-600 text-start">
-            {filters.from} → {filters.to}
+      <div className="flex flex-wrap items-start justify-between gap-3 px-1">
+        <div className="min-w-0">
+          <h2 className="text-lg font-extrabold text-slate-900">
+            {t("salesReports.pages.executive.title")}
+          </h2>
+          <p className="mt-0.5 text-sm font-medium text-slate-500">
+            {t("salesReports.pages.executive.subtitle")}
           </p>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-500">
-            <Badge tone="neutral">
-              {filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")}
-            </Badge>
-            <Badge tone="neutral">
-              {filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}
-            </Badge>
-            {activeFilterChips.map((chip) => (
-              <Badge key={chip} tone="info">
-                {chip}
-              </Badge>
-            ))}
-            {freshness && (
-              // data-freshness-watermark is the AGREED mask hook (see
-              // e2e/erp/visual-baselines.spec.ts): the watermark is the server's
-              // generatedAt when no rollup high-water mark exists, so it changes
-              // on every single render. Without the attribute this line diffs
-              // the pinned baseline on every run — the mask exists precisely for
-              // the moment a screen started showing it, which is now.
-              <span data-freshness-watermark className="text-slate-400">
-                {t("salesReports.topbar.refreshedAt")}: {formatDateTime(freshness)}
-              </span>
-            )}
-          </div>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => window.print()} className="print:hidden">
-          <Printer className="h-4 w-4" aria-hidden="true" />
-          {t("salesReports.report.print")}
-        </Button>
-      </header>
-
-      {/* ── operational counters (the harness's kpi-row anchor) ── */}
+        <div className="flex flex-wrap items-center gap-2">
+          {(freshness?.pendingDays ?? 0) > 0 && (
+            <Badge tone="warning">
+              {t("salesReports.topbar.lateTx", { count: freshness?.pendingDays ?? 0 })}
+            </Badge>
+          )}
+          {freshness?.watermark && (
+            <span data-freshness-watermark className="text-xs font-bold text-slate-400">
+              {t("salesReports.topbar.refreshedAt", { time: formatDateTime(freshness.watermark) })}
+            </span>
+          )}
+        </div>
+      </div>
+      {/* The first row answers the manager's first five questions. Operational
+          counters still exist in the daily result and statement; they no
+          longer displace sales, ticket and margin from the first viewport. */}
       <div className="surface overflow-hidden">
         <Figures
           testId="kpi-row"
-          items={[
-            { id: "orders", label: t("salesReports.metrics.orders"), value: count(f("orders")) },
-            { id: "avg_ticket", label: t("salesReports.metrics.avg_ticket"), value: money(f("avg_ticket")) },
-            { id: "qty_sold", label: t("salesReports.metrics.qty_sold"), value: count(f("qty_sold")) },
-            { id: "avg_items_per_order", label: t("salesReports.metrics.avg_items_per_order"), value: count(f("avg_items_per_order")) },
-            { id: "guests", label: t("salesReports.metrics.guests"), value: count(f("guests")) },
-          ]}
+          items={headlineFigures}
         />
       </div>
+
+      <section className="surface p-3" data-testid="decision-shortcuts">
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-1 px-1">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900">
+              {t("salesReports.decisions.title")}
+            </h3>
+            <p className="mt-0.5 text-xs font-medium text-slate-500">
+              {t("salesReports.decisions.subtitle")}
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {decisionShortcuts.map((shortcut) => (
+            <DecisionShortcut
+              key={shortcut.id}
+              to={decisionHref(shortcut.center, shortcut.view)}
+              icon={shortcut.icon}
+              label={t(`salesReports.decisions.${shortcut.id}.title`)}
+              description={
+                shortcut.id === "items" && !canViewCost
+                  ? t("salesReports.decisions.items.descriptionNoCost")
+                  : t(`salesReports.decisions.${shortcut.id}.description`)
+              }
+            />
+          ))}
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Section
@@ -886,19 +988,47 @@ export default function Executive() {
 
       {showProfit && (
         <Section title={t("salesReports.report.sectionProfit")} note={t("salesReports.report.sectionProfitNote")}>
+          {(periodHasUncosted || compareHasUncosted) && (
+            <div
+              data-testid="cost-provenance-notice"
+              className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold leading-5 text-amber-900"
+            >
+              {t("salesReports.profitability.incompletePeriod")}
+            </div>
+          )}
           <Statement
             showCompare={hasCompare}
             compareLabel={t("salesReports.topbar.compare")}
             lines={[
-              { id: "net", label: t("salesReports.metrics.net_ex_vat"), value: netExVat, compare: c("net_ex_vat") },
-              { id: "cogs", label: t("salesReports.metrics.cogs"), value: cogs, compare: c("cogs"), op: "sub", explain: metricExplain(t, registry.data, "cogs") },
-              { id: "profit", label: t("salesReports.metrics.gross_profit"), value: grossProfit, compare: c("gross_profit"), op: "eq", strong: true, explain: metricExplain(t, registry.data, "gross_profit") },
+              {
+                id: "net",
+                label: t("salesReports.metrics.net_product_sales_ex_vat"),
+                value: f("net_product_sales_ex_vat"),
+                compare: c("net_product_sales_ex_vat"),
+              },
+              {
+                id: "cogs",
+                label: t("salesReports.metrics.cogs_after_returns"),
+                value: trustedCogsAfterReturns,
+                compare: trustedCompare("cogs_after_returns"),
+                op: "sub",
+                explain: metricExplain(t, registry.data, "cogs_after_returns"),
+              },
+              {
+                id: "profit",
+                label: t("salesReports.metrics.gross_profit_after_returns"),
+                value: trustedGrossProfitAfterReturns,
+                compare: trustedCompare("gross_profit_after_returns"),
+                op: "eq",
+                strong: true,
+                explain: metricExplain(t, registry.data, "gross_profit_after_returns"),
+              },
             ]}
           />
           <div className="border-t border-slate-100 px-4 py-2.5 text-sm">
-            <span className="font-bold text-slate-600">{t("salesReports.metrics.margin_pct")}</span>
+            <span className="font-bold text-slate-600">{t("salesReports.metrics.margin_pct_after_returns")}</span>
             <span dir="ltr" className="ms-2 font-extrabold tabular-nums text-slate-900">
-              {percent(f("margin_pct"))}
+              {percent(trustedMarginAfterReturns)}
             </span>
           </div>
         </Section>

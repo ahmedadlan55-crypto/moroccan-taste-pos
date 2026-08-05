@@ -124,7 +124,7 @@ export const nav = {
     "wf-approval-flows": "مسارات الاعتماد",
     "wf-action-log": "سجل الإجراءات",
     // reports
-    "rp-sales": "تقارير المبيعات",
+    "rp-sales": "مركز قرار المبيعات",
     "rp-inventory": "تقارير المخزون",
     "rp-purchasing": "تقارير المشتريات",
     "rp-financial": "التقارير المالية",

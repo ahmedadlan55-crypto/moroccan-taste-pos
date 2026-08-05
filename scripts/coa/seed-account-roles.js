@@ -33,6 +33,7 @@
 const db = require('../../db/connection');
 const { ROLE_CATALOG } = require('../../lib/accountRoleCatalog');
 const { setAccountRole } = require('../../lib/accountRoles');
+const CANONICAL_CHART = require('../../db/coa-saudi-canonical');
 
 // The codes the engines post to TODAY. Sourced from lib/glPosting.js
 // CORE_ACCOUNTS and lib/hrGLPosting.js SALARY_ACCOUNTS — adopting them means
@@ -91,6 +92,16 @@ const ROLE_CODE_HINTS = {
   SUPPLIER_ADVANCES:   [],
   SUSPENSE:            [],
 };
+
+// The canonical six-digit code is always the first candidate. Legacy hints
+// remain below it only so the diagnostic can still describe a database before
+// migration 0036; after the migration every role resolves to this one source.
+for (const account of CANONICAL_CHART) {
+  for (const role of account.roles || []) {
+    const hints = ROLE_CODE_HINTS[role] || (ROLE_CODE_HINTS[role] = []);
+    ROLE_CODE_HINTS[role] = [account.code, ...hints.filter((code) => code !== account.code)];
+  }
+}
 
 function argValue(args, name, dflt) {
   const eq = args.find((a) => a.startsWith(name + '='));

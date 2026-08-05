@@ -17,39 +17,24 @@ catch (_) { analyticsProjection = { safeProject: async () => {}, projectCashVouc
 // ═══════════════════════════════════════════════════════════════
 async function ensureCashAccount(cashBoxId, name, code) {
   const [existing] = await db.query('SELECT gl_account_id FROM cash_boxes WHERE id = ?', [cashBoxId]);
-  if (existing.length && existing[0].gl_account_id) return existing[0].gl_account_id;
-  // Create under 1101 (النقدية)
-  const [parent] = await db.query("SELECT id FROM gl_accounts WHERE code = '1101' LIMIT 1");
-  let parentId = parent.length ? parent[0].id : null;
-  if (!parentId) {
-    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
-    parentId = 'GL-1101';
-    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-      [parentId, '1101', 'النقدية', 'asset', p11.length ? p11[0].id : null, 3]);
-  }
-  const accId = 'GL-CB-' + Date.now();
-  const accCode = '1101-' + code;
-  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-    [accId, accCode, name, 'asset', parentId, 4]);
+  const [target] = await db.query(
+    "SELECT id FROM gl_accounts WHERE company_id='CO-MAIN' AND code=? AND status='active' LIMIT 1",
+    [glPosting.CORE_ACCOUNTS.CASH.code]
+  );
+  if (!target.length) throw new Error('حساب مراقبة النقدية غير موجود في دليل الحسابات');
+  const accId = target[0].id;
   await db.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [accId, cashBoxId]);
   return accId;
 }
 
 async function ensureBankAccount(bankId, name, code) {
   const [existing] = await db.query('SELECT gl_account_id FROM bank_accounts WHERE id = ?', [bankId]);
-  if (existing.length && existing[0].gl_account_id) return existing[0].gl_account_id;
-  const [parent] = await db.query("SELECT id FROM gl_accounts WHERE code = '1102' LIMIT 1");
-  let parentId = parent.length ? parent[0].id : null;
-  if (!parentId) {
-    const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
-    parentId = 'GL-1102';
-    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-      [parentId, '1102', 'البنوك', 'asset', p11.length ? p11[0].id : null, 3]);
-  }
-  const accId = 'GL-BK-' + Date.now();
-  const accCode = '1102-' + code;
-  await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-    [accId, accCode, name, 'asset', parentId, 4]);
+  const [target] = await db.query(
+    "SELECT id FROM gl_accounts WHERE company_id='CO-MAIN' AND code=? AND status='active' LIMIT 1",
+    [glPosting.CORE_ACCOUNTS.BANK.code]
+  );
+  if (!target.length) throw new Error('حساب مراقبة البنوك غير موجود في دليل الحسابات');
+  const accId = target[0].id;
   await db.query('UPDATE bank_accounts SET gl_account_id = ? WHERE id = ?', [accId, bankId]);
   return accId;
 }
@@ -226,8 +211,8 @@ router.get('/gl-accounts-all', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 router.get('/gl-accounts-tree', async (req, res) => {
   try {
-    const root = String(req.query.root || '1101');
-    if (!/^\d{1,4}(?:-\w+)?$/.test(root)) return res.json([]);
+    const root = String(req.query.root || glPosting.CORE_ACCOUNTS.CASH.code);
+    if (!/^\d{6}$/.test(root)) return res.json([]);
     // Return both the root row and any descendant whose code starts with the root.
     // The COA uses a hierarchical text code like 1101-01, 1101-02, …
     const [rows] = await db.query(
@@ -239,7 +224,7 @@ router.get('/gl-accounts-tree', async (req, res) => {
     res.json(rows.map(r => ({
       id: r.id, code: r.code, nameAr: r.name_ar,
       level: Number(r.level)||0, parentId: r.parent_id, type: r.type,
-      isLeaf: r.code !== root  // anything below the requested root is selectable
+      isLeaf: true
     })));
   } catch(e) { res.json([]); }
 });
@@ -282,22 +267,16 @@ router.post('/cash-boxes', async (req, res) => {
     if (glAccountId) {
       const [g] = await db.query('SELECT code FROM gl_accounts WHERE id=? AND is_active=1', [glAccountId]);
       if (!g.length) return res.json({ success:false, error: 'حساب الأستاذ غير موجود' });
-      if (g[0].code && !String(g[0].code).startsWith('1101'))
-        return res.json({ success:false, error: 'حساب الصندوق يجب أن يكون تحت 1101 (النقدية)' });
+      if (String(g[0].code) !== glPosting.CORE_ACCOUNTS.CASH.code)
+        return res.json({ success:false, error: 'يجب ربط الصندوق بحساب مراقبة النقدية 111100' });
       glId = glAccountId;
     }
     // v5.11.4 — when no existing glAccountId is supplied but a parent IS,
     // mint a fresh gl_account beneath it with the user's suggested code.
-    else if (parentGlId) {
-      try {
-        const created = await createGlAccountUnderParent({
-          parentId: parentGlId, suggestedCode, suggestedLevel,
-          suggestedName: name, type: 'asset', requiredRoot: '1101'
-        });
-        if (created) glId = created.id;
-      } catch (e) {
-        return res.json({ success:false, error: e.message });
-      }
+    else {
+      const [control] = await db.query("SELECT id FROM gl_accounts WHERE code=? AND status='active' LIMIT 1", [glPosting.CORE_ACCOUNTS.CASH.code]);
+      if (!control.length) return res.json({ success:false, error: 'حساب مراقبة النقدية غير موجود' });
+      glId = control[0].id;
     }
     if (id) {
       await db.query(
@@ -353,21 +332,15 @@ router.post('/bank-accounts', async (req, res) => {
     if (glAccountId) {
       const [g] = await db.query('SELECT code FROM gl_accounts WHERE id=? AND is_active=1', [glAccountId]);
       if (!g.length) return res.json({ success:false, error: 'حساب الأستاذ غير موجود' });
-      if (g[0].code && !String(g[0].code).startsWith('1102'))
-        return res.json({ success:false, error: 'حساب البنك يجب أن يكون تحت 1102 (البنوك)' });
+      if (String(g[0].code) !== glPosting.CORE_ACCOUNTS.BANK.code)
+        return res.json({ success:false, error: 'يجب ربط البنك بحساب مراقبة البنوك 111200' });
       glId = glAccountId;
     }
     // v5.11.4 — same parent-picker support for the "add bank" modal
-    else if (parentGlId) {
-      try {
-        const created = await createGlAccountUnderParent({
-          parentId: parentGlId, suggestedCode, suggestedLevel,
-          suggestedName: bankName, type: 'asset', requiredRoot: '1102'
-        });
-        if (created) glId = created.id;
-      } catch (e) {
-        return res.json({ success:false, error: e.message });
-      }
+    else {
+      const [control] = await db.query("SELECT id FROM gl_accounts WHERE code=? AND status='active' LIMIT 1", [glPosting.CORE_ACCOUNTS.BANK.code]);
+      if (!control.length) return res.json({ success:false, error: 'حساب مراقبة البنوك غير موجود' });
+      glId = control[0].id;
     }
     if (id) {
       await db.query(
@@ -427,22 +400,15 @@ router.get('/receipts', async (req, res) => {
 // based on its source_type. Reused by POST /receipts (draft persist) and
 // POST /receipts/:id/approve (GL posting).
 async function _receiptSourceGl(sourceType) {
-  let code = '4203', name = 'إيرادات أخرى';
-  if (sourceType === 'customer') { code = '1125'; name = 'حسابات العملاء'; }
-  else if (sourceType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
-  else if (sourceType === 'rent')     { code = '4202'; name = 'إيرادات إيجارات'; }
-  else if (sourceType === 'sales')    { code = '4101'; name = 'المبيعات'; }
+  let code = '419900', name = 'إيرادات أخرى';
+  if (sourceType === 'customer') { code = glPosting.CORE_ACCOUNTS.AR.code; name = 'ذمم العملاء'; }
+  else if (sourceType === 'employee') { code = '112300'; name = 'سلف الموظفين'; }
+  else if (sourceType === 'rent')     { code = '419900'; name = 'إيرادات أخرى'; }
+  else if (sourceType === 'sales')    { code = glPosting.CORE_ACCOUNTS.SALES_REVENUE.code; name = 'إيرادات المبيعات'; }
   let [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
   let id;
   if (r.length) id = r[0].id;
-  else {
-    id = 'GL-' + code;
-    const parentCode = code[0] === '1' ? '11' : '4';
-    const type = code[0] === '1' ? 'asset' : 'revenue';
-    const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [parentCode]);
-    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-      [id, code, name, type, p.length ? p[0].id : null, 3]);
-  }
+  else throw new Error('الحساب الرقابي ' + code + ' غير موجود في دليل الحسابات');
   return { id, code, name };
 }
 
@@ -684,7 +650,7 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
     const [r] = await db.query('SELECT id, code, name_ar FROM gl_accounts WHERE id = ?', [expenseAccountId]);
     if (r.length) return { id: r[0].id, code: r[0].code, name: r[0].name_ar };
   }
-  let code = '5205', name = 'مصروفات أخرى';
+  let code = '599900', name = 'مصروفات أخرى';
   // ── ONE payables control account ────────────────────────────────────────
   //
   // This used to route supplier payments to `2101 حسابات الموردين` while the
@@ -697,8 +663,8 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
   // 2100 wins because procurement already owns it and the posted history sits
   // there. Reclassifying what is already on 2101 is a one-shot BALANCED
   // journal at boot (server.js), never a rewrite of posted rows.
-  if (recipientType === 'supplier')      { code = '2100'; name = 'ذمم دائنة'; }
-  else if (recipientType === 'employee') { code = '1130'; name = 'سلف الموظفين'; }
+  if (recipientType === 'supplier')      { code = glPosting.CORE_ACCOUNTS.AP.code; name = 'ذمم الموردين'; }
+  else if (recipientType === 'employee') { code = '112300'; name = 'سلف الموظفين'; }
   const [r] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
   let id;
   if (r.length) id = r[0].id;
@@ -711,11 +677,8 @@ async function _paymentRecipientGl(recipientType, expenseAccountId) {
     const err = new Error('حساب الذمم الدائنة (' + code + ') غير موجود في دليل الحسابات');
     err.code = 'ap_account_missing'; err.status = 500; throw err;
   } else {
-    id = 'GL-' + code;
-    const type = recipientType === 'employee' ? 'asset' : 'expense';
-    const [p] = await db.query('SELECT id FROM gl_accounts WHERE code = ? LIMIT 1', [code[0]]);
-    await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-      [id, code, name, type, p.length ? p[0].id : null, 3]);
+    const err = new Error('الحساب الرقابي (' + code + ') غير موجود في دليل الحسابات');
+    err.code = 'control_account_missing'; err.status = 500; throw err;
   }
   return { id, code, name };
 }

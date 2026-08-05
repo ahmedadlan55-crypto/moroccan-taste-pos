@@ -73,13 +73,14 @@ const SELLER_NAME_FALLBACK = process.env.COMPANY_NAME || 'Moroccan Taste';
 const SELLER_VAT_FALLBACK = process.env.TAX_NUMBER || '';
 
 // Map payment method keys → GL account codes.
-// cash → 1110 (Cash), card/mada/stc/online → 1120 (Bank), kita/credit → 1150 (AR)
+// cash → canonical cash control, card/mada/stc/online → bank control,
+// kita/credit → trade receivables. The actual codes come from CORE_ACCOUNTS.
 function _payToAccountCode(method) {
   const m = (method || '').toLowerCase();
-  if (m === 'cash' || m.startsWith('cash')) return '1110';
-  if (m === 'kita' || m === 'credit' || m === 'ar' || m.indexOf('ذمم') >= 0) return '1150';
+  if (m === 'cash' || m.startsWith('cash')) return CORE_ACCOUNTS.CASH.code;
+  if (m === 'kita' || m === 'credit' || m === 'ar' || m.indexOf('ذمم') >= 0) return CORE_ACCOUNTS.AR.code;
   // default card/bank
-  return '1120';
+  return CORE_ACCOUNTS.BANK.code;
 }
 
 // V5.7.18 — same Arabic normalization the shift-close matcher uses.
@@ -102,12 +103,12 @@ function _normPmName(s) {
 
 // Does this payment-method label/key denote a credit / on-account sale?
 // Anchored on the file's own GL mapping (_payToAccountCode routes credit to the
-// AR account 1150) so the guard and the posted journal never disagree. Also
+// canonical AR account) so the guard and the posted journal never disagree. Also
 // catches the Arabic labels the pos-v2 legacyPayload and middleware/o2cLegacyGate
 // treat as on-account (كيتا / آجل / ذمم), so a direct POST can't slip a credit
 // sale past the guard by sending the display label instead of the 'credit' key.
 function _isCreditMethod(method) {
-  if (_payToAccountCode(method) === '1150') return true;
+  if (_payToAccountCode(method) === CORE_ACCOUNTS.AR.code) return true;
   const k = _normPmName(method); // lower-cased + Arabic normalized (آجل → اجل)
   return /^(credit|customer_credit|kita|ar)$/.test(k) || /كيتا|اجل|ذمم/.test(k);
 }
@@ -163,7 +164,7 @@ async function _canViewAllSales(user) {
 }
 
 // Build a payment-method → GL account code map by joining payment_methods.gl_account_id → gl_accounts.code
-// Returns: { 'cash': '1110', 'card': '1120', 'hangerstation': '4150', ... }
+// Returns configured payment-method keys mapped to canonical GL account codes.
 // V5.7.18 — keys normalized; both name and name_ar registered so the
 //   sale's payment_method string resolves to the configured GL even
 //   when the cashier typed an Arabic variant (مدى vs مدي).
@@ -1878,7 +1879,7 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
 
         // v6.0.1 Wave A.5 — Discount GL entries REMOVED (Net method per IFRS 15 §70).
         // Revenue is recognised at the consideration the entity is entitled to
-        // = net post-discount, which is already in the Cr 4100 line above.
+        // = net post-discount, already included in the sales-revenue credit.
         // The previous "Dr Discount Allowed / Cr Revenue add-back" pattern
         // double-inflated revenue without properly adjusting Output VAT for
         // the discount portion, producing a 3-way inconsistency.

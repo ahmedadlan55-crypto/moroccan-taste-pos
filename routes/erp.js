@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const db = require('../db/connection');
-const { ensureCoreAccounts, nextFlatJournalNumber } = require('../lib/glPosting');
+const { ensureCoreAccounts, nextFlatJournalNumber, CORE_ACCOUNTS } = require('../lib/glPosting');
 // v5.11.1 — official 150-account COA template (mirrored from the Excel
 // the user attached). Loaded once at boot, used by /gl/seed-from-template
 // to seed or refresh the chart of accounts in one click.
@@ -1374,7 +1374,7 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
 //
 // The governed six-digit chart has one Inventory folder (100300) and one
 // posting leaf (1200). Warehouse/category/product detail is never a GL node.
-const INVENTORY_GROUP_CODE = '100300';
+const INVENTORY_GROUP_CODE = '113000';
 
 async function _repairInventoryClassification(db) {
   const repaired = [];
@@ -3420,24 +3420,19 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 
       // Find custody user GL account
       let custAccId = null;
-      const [custAccRows] = await db.query("SELECT id, code FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (t.user_name||'').substring(0,20) + '%']);
+      const [custAccRows] = await db.query(
+        'SELECT id, code FROM gl_accounts WHERE code = ? AND is_active = 1 LIMIT 1',
+        [CORE_ACCOUNTS.EMPLOYEE_ADVANCES.code]);
       if (custAccRows.length) custAccId = custAccRows[0].id;
       if (!custAccId) {
-        // Create it
-        const parentId = 'GL-1130';
-        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-          [parentId, '1130', 'عهد الموظفين', 'asset', null, 3]);
-        const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
-        let nextCode = '11301';
-        if (children.length) nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0)+1);
-        custAccId = 'GL-' + nextCode;
-        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-          [custAccId, nextCode, 'عهدة ' + (t.user_name||''), 'asset', parentId, 4]);
+        throw new Error('CUSTODY_CONTROL_ACCOUNT_MISSING');
       }
 
       // Find a default cash account for old topups (11101)
       let cashAccId = null;
-      const [cashAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '11101' OR (code LIKE '1110%' AND type='asset') ORDER BY code LIMIT 1");
+      const [cashAcc] = await db.query(
+        'SELECT id FROM gl_accounts WHERE code = ? AND is_active = 1 LIMIT 1',
+        [CORE_ACCOUNTS.CASH.code]);
       if (cashAcc.length) cashAccId = cashAcc[0].id;
 
       if (!custAccId) continue;
@@ -3506,7 +3501,7 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 //   • missingCoreAccounts: required core accounts (CASH/INVENTORY/COGS…) absent
 router.get('/gl/diagnose', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
-    const CORE_CODES = ['1110','1120','1150','1200','2100','2210','3100','4100','5100','5200','5300'];
+    const CORE_CODES = Array.from(new Set(Object.values(CORE_ACCOUNTS).map((row) => row.code)));
 
     const [accs] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     const [jrns] = await db.query('SELECT COUNT(*) AS cnt, status FROM gl_journals GROUP BY status');

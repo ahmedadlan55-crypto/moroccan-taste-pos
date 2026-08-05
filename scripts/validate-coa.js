@@ -26,8 +26,8 @@ data.forEach((a, i) => {
   }
   if (!String(a.nameAr || '').trim()) errors.push(`[NAME-AR] "${a.code}" is missing its Arabic name`);
   if (!String(a.nameEn || '').trim()) errors.push(`[NAME-EN] "${a.code}" is missing its English name`);
-  if (!Number.isInteger(a.level) || a.level < 1 || a.level > 5) {
-    errors.push(`[LEVEL-RANGE] "${a.code}" has level ${a.level}; canonical depth is 1..5`);
+  if (!Number.isInteger(a.level) || a.level < 1 || a.level > 4) {
+    errors.push(`[LEVEL-RANGE] "${a.code}" has level ${a.level}; canonical depth is 1..4`);
   }
   if (byCode[a.code]) {
     errors.push(`[DUP] code "${a.code}" appears at index ${byCode[a.code]._idx} and ${i}`);
@@ -35,19 +35,16 @@ data.forEach((a, i) => {
   byCode[a.code] = Object.assign({ _idx: i }, a);
 });
 
-// Pass 2: parent existence + numeric namespace + level + type. A root owns
-// its GG class. Every lower folder must reserve a namespace by ending in at
-// least one zero; its children must begin with the significant prefix before
-// those zeroes. This catches both a child hung under the wrong sibling group
-// and a folder code that leaves no namespace for children.
-function _stripTrailingZeros(s) { return String(s || '').replace(/0+$/, ''); }
+// Pass 2: parent existence + numeric namespace + level + type. The governed
+// six-digit policy uses one significant digit per hierarchy level:
+// X00000 → XY0000 → XYZ000 → XYZW00. Parent links remain authoritative;
+// this prefix rule catches a child attached to the wrong presentation family.
 data.forEach((a, i) => {
   // Root check
   if (!a.parentCode) {
     if (a.level !== 1) errors.push(`[LEVEL] root "${a.code}" has level ${a.level}, expected 1`);
-    // Roots must end in all-zeros for the GGMMPP convention
-    if (String(a.code).length === 6 && !/^(10|20|30|40|50)0000$/.test(String(a.code))) {
-      errors.push(`[ROOT-FORMAT] root "${a.code}" should be GG0000 (10/20/30/40/50 + 0000)`);
+    if (!/^[1-5]00000$/.test(String(a.code))) {
+      errors.push(`[ROOT-FORMAT] root "${a.code}" should be X00000 (100000..500000)`);
     }
     return;
   }
@@ -57,13 +54,10 @@ data.forEach((a, i) => {
     errors.push(`[ORPHAN] "${a.code}" (${a.nameAr}) parentCode="${a.parentCode}" does NOT exist`);
     return;
   }
-  // Root owns its whole GG class; lower folders own their significant prefix.
+  // A level-N parent owns its first N significant digits.
   const childCode  = String(a.code || '');
   const parentCode = String(a.parentCode || '');
-  const namespace = p.level === 1 ? parentCode.slice(0, 2) : _stripTrailingZeros(parentCode);
-  if (p.level > 1 && p.kind === 'folder' && namespace === parentCode) {
-    errors.push(`[PARENT-NAMESPACE] folder "${p.code}" (${p.nameAr}) reserves no trailing-zero namespace for children`);
-  }
+  const namespace = parentCode.slice(0, p.level);
   if (namespace && !childCode.startsWith(namespace)) {
     errors.push(`[CHILD-PREFIX] "${a.code}" (${a.nameAr}) is outside parent "${a.parentCode}" namespace "${namespace}"`);
   }
@@ -120,7 +114,7 @@ const ROOT_POLICY = {
   '200000': { type: 'liability', nameAr: 'الالتزامات', nameEn: 'Liabilities' },
   '300000': { type: 'equity', nameAr: 'حقوق الملكية', nameEn: 'Equity' },
   '400000': { type: 'revenue', nameAr: 'الإيرادات', nameEn: 'Revenue' },
-  '500000': { type: 'expense', nameAr: 'المصروفات (تشمل تكلفة المبيعات)', nameEn: 'Expenses (incl. COGS)' },
+  '500000': { type: 'expense', nameAr: 'المصروفات', nameEn: 'Expenses' },
 };
 const roots = data.filter((a) => !a.parentCode);
 if (roots.length !== 5) errors.push(`[ROOT-COUNT] expected exactly 5 canonical roots, found ${roots.length}`);

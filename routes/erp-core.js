@@ -1588,8 +1588,8 @@ router.post('/royalty-runs/:id/approve', requireCapability('royalty.manage'), as
           referenceType: 'RoyaltyRun',
           referenceId: req.params.id,
           entries: [
-            { accountCode: '6100', debit: amt, credit: 0, description: 'Franchise royalty expense', brandId: run.brand_id },
-            { accountCode: '2310', debit: 0, credit: amt, description: 'Royalty liability to brand owner', brandId: run.brand_id },
+            { accountCode: gl.CORE_ACCOUNTS.FRANCHISE_FEE.code, debit: amt, credit: 0, description: 'Franchise royalty expense', brandId: run.brand_id },
+            { accountCode: gl.CORE_ACCOUNTS.ROYALTY_PAYABLE.code, debit: 0, credit: amt, description: 'Royalty liability to brand owner', brandId: run.brand_id },
           ],
           postedBy: actor,
         });

@@ -12,9 +12,9 @@ const VAT_RATE = Number(process.env.VAT_RATE) || 15;
 // Map an expense payment method → GL credit account code
 function _expensePaymentCredit(method) {
   const m = (method || '').toLowerCase();
-  if (m === 'bank' || m === 'card' || m === 'mada' || m === 'stc' || m === 'stc_pay' || m === 'transfer') return '1120';
-  if (m === 'credit' || m === 'ap' || m === 'supplier' || m === 'عاجل') return '2100';
-  return '1110';  // default = cash
+  if (m === 'bank' || m === 'card' || m === 'mada' || m === 'stc' || m === 'stc_pay' || m === 'transfer') return gl.CORE_ACCOUNTS.BANK.code;
+  if (m === 'credit' || m === 'ap' || m === 'supplier' || m === 'عاجل') return gl.CORE_ACCOUNTS.AP.code;
+  return gl.CORE_ACCOUNTS.CASH.code;
 }
 
 // Ensure an 'Expense' transaction_type exists (Phase C bridge target)
@@ -194,7 +194,7 @@ router.post('/', requireCapability('finance.expenses.view'), async (req, res) =>
           net = Math.round((totalAmount / (1 + VAT_RATE / 100)) * 100) / 100;
           vat = Math.round((totalAmount - net) * 100) / 100;
         }
-        const expAcct = accountCode || '5200';
+        const expAcct = accountCode || '599900';
         const payAcct = _expensePaymentCredit(paymentMethod);
 
         const entries = [
@@ -204,7 +204,7 @@ router.post('/', requireCapability('finance.expenses.view'), async (req, res) =>
         ];
         if (vat > 0) {
           entries.push({
-            accountCode: '1290', debit: vat, credit: 0,
+            accountCode: gl.CORE_ACCOUNTS.INPUT_VAT.code, debit: vat, credit: 0,
             description: 'Input VAT — ' + expenseId,
             branchId: branchId || null, brandId: brandId || null
           });

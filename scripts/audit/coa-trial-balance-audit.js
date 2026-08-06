@@ -9,17 +9,32 @@
  *
  * Usage:
  *   node scripts/audit/coa-trial-balance-audit.js [--out <path>] [--env local|production]
+ *   node scripts/audit/coa-trial-balance-audit.js --target=prod --assert-readonly
  *
  * --env is a LABEL ONLY (stamped into the report header) — it does not change
- * which database is queried. Pointing this at production requires the caller
- * to supply production credentials via env vars themselves; this script does
- * not know how to reach Railway and will not attempt to.
+ * which database is queried.
+ *
+ * --target DOES change it:
+ *   dev  (default) — whatever DB_* / DATABASE_URL already point at.
+ *   prod           — reads the connection URL from the COA_AUDIT_PROD_URL env
+ *                    var. The URL is never read from a file in the repo and is
+ *                    never printed; only host and database name are stamped
+ *                    into the report. If the var is absent the script exits
+ *                    rather than silently auditing dev and labelling it prod —
+ *                    a mislabelled audit is worse than no audit.
+ *
+ * Pair --target=prod with --assert-readonly. Nothing here writes, but that flag
+ * makes the CREDENTIAL prove it, which is the only guarantee that survives a
+ * future edit to this file.
  */
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const db = require('../../db/connection');
+// Assigned in main() AFTER --target is resolved: db/connection.js builds its
+// pool from env at require time, so requiring it here would pin the dev
+// database before we ever get a chance to repoint it.
+let db;
 
 // ── Known hardcoded legacy account-code schemes we're checking for drift ──
 // lib/glPosting.js CORE_ACCOUNTS, WITH the parent code each entry declares
@@ -79,16 +94,46 @@ const REQUESTED_ROLES = {
   SUPPLIER_ADVANCES: ['دفعات مقدمة لموردين', 'سلف موردين'],
 };
 
+function argValue(args, name) {
+  const eq = args.find((a) => a.startsWith(name + '='));
+  if (eq) return eq.slice(name.length + 1);
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
 async function main() {
   const args = process.argv.slice(2);
-  const envLabel = (args.includes('--env') ? args[args.indexOf('--env') + 1] : 'local') || 'local';
-  const outArgIdx = args.indexOf('--out');
-  const outPath = outArgIdx >= 0 ? args[outArgIdx + 1]
-    : path.join(__dirname, '..', '..', 'docs', 'audits',
+
+  // ── --target: which database, resolved BEFORE db/connection is required ──
+  const dbTarget = (argValue(args, '--target') || 'dev').toLowerCase();
+  if (dbTarget !== 'dev' && dbTarget !== 'prod') {
+    console.error(`✗ unknown --target=${dbTarget}. Use dev or prod.`);
+    process.exit(1);
+  }
+  if (dbTarget === 'prod') {
+    const url = process.env.COA_AUDIT_PROD_URL;
+    if (!url) {
+      console.error('\n✗ --target=prod needs COA_AUDIT_PROD_URL in the environment.');
+      console.error('  Auditing dev while labelling the report "production" would be');
+      console.error('  worse than not running at all, so this exits instead.\n');
+      console.error('  COA_AUDIT_PROD_URL=mysql://user:pass@host:port/db \\');
+      console.error('    node scripts/audit/coa-trial-balance-audit.js --target=prod --assert-readonly\n');
+      process.exit(1);
+    }
+    process.env.DATABASE_URL = url;
+  }
+  db = require('../../db/connection');
+
+  // --env stays a pure label, but --target=prod implies it so the two can
+  // never disagree in the header.
+  const envLabel = dbTarget === 'prod' ? 'production'
+    : (argValue(args, '--env') || 'local');
+  const outPath = argValue(args, '--out')
+    || path.join(__dirname, '..', '..', 'docs', 'audits',
         envLabel === 'production' ? 'COA_TRIAL_BALANCE_AUDIT_PRODUCTION_AR.md'
                                    : 'COA_TRIAL_BALANCE_AUDIT_LOCAL_AR.md');
 
-  const report = { envLabel, generatedAt: new Date().toISOString(), sections: {} };
+  const report = { envLabel, dbTarget, generatedAt: new Date().toISOString(), sections: {} };
 
   // Which physical database are we actually pointed at? (host+db name only,
   // never credentials) — stamped into the report so nobody mistakes this for
@@ -481,6 +526,105 @@ async function main() {
     mismatches: headerVsLines,
   };
 
+  // ── 15. UNCLASSIFIED ACCOUNTS — the release-gate signal ─────────────────
+  //
+  // The reports currently infer an account's statement section from its code
+  // prefix and, for assets, from a regex over its ARABIC NAME. That is why
+  // renaming an account can move it on the balance sheet. The end state is
+  // that classification comes from stored columns only — so the count that
+  // matters is "how many accounts could NOT be classified from stored data".
+  //
+  // Reported per-reason rather than as one number: an account missing
+  // report_section is a different repair from one that is postable but has no
+  // normal_balance. Columns added later by the CoA migration are probed
+  // dynamically so this section keeps working before AND after it lands.
+  const [colRows] = await db.query(
+    `SELECT column_name AS c FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'gl_accounts'`);
+  const have = new Set(colRows.map((r) => String(r.c || r.COLUMN_NAME).toLowerCase()));
+  const postingLeaf =
+    "COALESCE(a.is_folder,0) = 0 AND NOT EXISTS (SELECT 1 FROM gl_accounts _c WHERE _c.parent_id = a.id)";
+
+  const unclassified = {};
+  const countWhere = async (label, where) => {
+    const [[row]] = await db.query(`SELECT COUNT(*) AS n FROM gl_accounts a WHERE ${where}`);
+    unclassified[label] = row.n;
+  };
+  await countWhere('missingReportSection', "(a.report_section IS NULL OR a.report_section = '')");
+  await countWhere('missingReportSection_postingLeaf',
+    `(a.report_section IS NULL OR a.report_section = '') AND ${postingLeaf}`);
+  await countWhere('missingNameEn', "(a.name_en IS NULL OR a.name_en = '')");
+  if (have.has('normal_balance')) {
+    await countWhere('missingNormalBalance', "(a.normal_balance IS NULL OR a.normal_balance = '')");
+  }
+  if (have.has('cash_flow_activity')) {
+    await countWhere('missingCashFlowActivity',
+      `(a.cash_flow_activity IS NULL OR a.cash_flow_activity = '') AND ${postingLeaf}`);
+  }
+  const [unclassifiedSample] = await db.query(
+    `SELECT a.id, a.code, a.name_ar, a.type, a.report_section, a.is_folder,
+            (SELECT COUNT(*) FROM gl_entries e WHERE e.account_id = a.id) AS entries
+       FROM gl_accounts a
+      WHERE (a.report_section IS NULL OR a.report_section = '') AND ${postingLeaf}
+      ORDER BY entries DESC, a.code LIMIT 50`);
+  report.sections.unclassifiedAccounts = {
+    note: 'Accounts that cannot be placed on a financial statement from STORED data alone. ' +
+          'missingReportSection_postingLeaf is the release-gate number: a folder with no section is ' +
+          'cosmetic, a POSTING account with no section silently lands in a fallback bucket. ' +
+          'Columns not yet added by the CoA migration are skipped rather than reported as zero.',
+    columnsPresent: [...have].sort(),
+    counts: unclassified,
+    sample: unclassifiedSample,
+  };
+
+  // ── 16. ACCOUNT REFERENCE SURFACE ───────────────────────────────────────
+  //
+  // Renumbering or deleting an account is only as safe as the set of things
+  // pointing at it. Some tables reference by id, others by CODE — and a
+  // code reference does not break loudly when the code changes, it silently
+  // resolves to the wrong account or to nothing. This enumerates both and
+  // counts live (non-null) references so the migration manifest can be honest
+  // about blast radius instead of assuming gl_entries is the only consumer.
+  const [refCols] = await db.query(
+    `SELECT table_name AS t, column_name AS c
+       FROM information_schema.columns
+      WHERE table_schema = DATABASE()
+        AND table_name <> 'gl_accounts'
+        AND (column_name LIKE '%account_id' OR column_name LIKE '%account_code')
+      ORDER BY table_name, column_name`);
+  const references = [];
+  for (const r of refCols) {
+    const t = r.t || r.TABLE_NAME;
+    const c = r.c || r.COLUMN_NAME;
+    // Identifiers come from information_schema, not user input, but they are
+    // still backticked rather than interpolated bare.
+    try {
+      const [[row]] = await db.query(
+        `SELECT COUNT(*) AS n FROM \`${t}\` WHERE \`${c}\` IS NOT NULL`);
+      references.push({ table: t, column: c, by: /code$/i.test(c) ? 'code' : 'id', nonNull: row.n });
+    } catch (e) {
+      references.push({ table: t, column: c, by: /code$/i.test(c) ? 'code' : 'id', error: e.message });
+    }
+  }
+  report.sections.accountReferences = {
+    note: 'Every column outside gl_accounts that points at an account, with live reference counts. ' +
+          'by="code" rows are the dangerous ones: a code change does not fail loudly there.',
+    totalColumns: references.length,
+    byCodeColumns: references.filter((x) => x.by === 'code').length,
+    liveByCodeReferences: references.filter((x) => x.by === 'code').reduce((s, x) => s + (x.nonNull || 0), 0),
+    references,
+  };
+
+  // ── 17. HARDCODED POSTING CODES IN THE REPO ─────────────────────────────
+  //
+  // The inventory that account_roles has to replace. Scanned from source, not
+  // guessed: a literal 3-6 digit string on a line that also mentions an
+  // account/posting concept. Deliberately reported per-file with the matched
+  // line so the migration can be worked file by file and the number can be
+  // watched down to zero, rather than being a single opaque total.
+  report.sections.hardcodedPostingCodes = scanHardcodedCodes(
+    path.join(__dirname, '..', '..'));
+
   writeReport(report, outPath);
   console.log('Audit complete. Report written to:', outPath);
   console.log(JSON.stringify({
@@ -502,9 +646,66 @@ async function main() {
     salaryAccountsWrongParent: report.sections.legacyCodeDrift.SALARY_ACCOUNTS_wrongParent.length,
     taxNatureFlags: report.sections.taxNatureFlags.flags.length,
     headerVsLinesMismatch: report.sections.headerVsLinesTieOut.mismatches.length,
+    unclassifiedPostingAccounts: report.sections.unclassifiedAccounts.counts.missingReportSection_postingLeaf,
+    accountsMissingNameEn: report.sections.unclassifiedAccounts.counts.missingNameEn,
+    accountRefColumnsByCode: report.sections.accountReferences.byCodeColumns,
+    liveByCodeReferences: report.sections.accountReferences.liveByCodeReferences,
+    hardcodedPostingCodeLiterals: report.sections.hardcodedPostingCodes.totalLiterals,
+    hardcodedPostingCodeFiles: report.sections.hardcodedPostingCodes.filesAffected,
   }, null, 2));
 
   await db.end();
+}
+
+// ── hardcoded posting-code scanner ────────────────────────────────────────
+// A literal like '1110' is only interesting when it is being used AS an
+// account. Requiring an account/posting word on the same line is what keeps
+// this from drowning in timeouts, HTTP codes and array indexes; the cost is
+// that a literal on its own line is missed, so treat the number as a floor.
+const SCAN_DIRS = ['lib', 'routes', 'services'];
+const CODE_LINE = /(account|acct|debit|credit|posting|coa|gl_|glAccount|CORE_ACCOUNTS|SALARY_ACCOUNTS)/i;
+const CODE_LITERAL = /['"](\d{3,6})['"]/g;
+
+function scanHardcodedCodes(root) {
+  const perFile = {};
+  let total = 0;
+  const walk = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(full); continue; }
+      if (!e.name.endsWith('.js')) continue;
+      let src;
+      try { src = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      const rel = path.relative(root, full).replace(/\\/g, '/');
+      const hits = [];
+      src.split('\n').forEach((line, i) => {
+        if (!CODE_LINE.test(line)) return;
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return; // comments describe, they don't post
+        const codes = [...line.matchAll(CODE_LITERAL)].map((m) => m[1]);
+        if (codes.length) hits.push({ line: i + 1, codes, text: line.trim().slice(0, 160) });
+      });
+      if (hits.length) {
+        perFile[rel] = hits;
+        total += hits.reduce((s, h) => s + h.codes.length, 0);
+      }
+    }
+  };
+  SCAN_DIRS.forEach((d) => walk(path.join(root, d)));
+  const ranked = Object.entries(perFile)
+    .map(([file, hits]) => ({ file, literals: hits.reduce((s, h) => s + h.codes.length, 0), lines: hits.length }))
+    .sort((a, b) => b.literals - a.literals);
+  return {
+    note: 'Account-code literals in lib/, routes/, services/ on lines that also mention an account or ' +
+          'posting concept. A FLOOR, not an exact count — a literal alone on its own line is not matched. ' +
+          'This is the inventory account_roles must replace; the target is zero.',
+    scanned: SCAN_DIRS,
+    totalLiterals: total,
+    filesAffected: ranked.length,
+    byFile: ranked,
+    detail: perFile,
+  };
 }
 
 function groupCount(rows, keyOrFn) {

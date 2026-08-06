@@ -69,6 +69,7 @@ const GUARDED = [
   // /gl/diagnose returns every account whose balance is non-zero.
   ['routes/erp.js', "/gl/diagnose", 'finance.accounts.manage'],
   ['routes/erp.js', "/gl/coa-template", 'finance.accounts.manage'],
+  ['routes/erp.js', "/gl/statement-sections", 'finance.gl.view'],
   // ── period close — finance.periods.manage ─────────────────────────────────
   ['routes/erp/periods.js', "/periods/:label/close", 'finance.periods.manage'],
   ['routes/erp/periods.js', "/periods/:label/soft-close", 'finance.periods.manage'],

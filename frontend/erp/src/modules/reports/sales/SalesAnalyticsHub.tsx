@@ -42,7 +42,9 @@ import { useT } from "@/i18n";
 import { analyticsFilterCodec, nonDefaultFilterKeys, type AnalyticsFilters } from "./lib/filters";
 import {
   CENTERS,
+  FILTER_DIMENSION,
   REPORT_BY_ID,
+  reportAnalyticsFilterKeys,
   reportFilterKeys,
   resolveHubRoute,
   supportsDateBasisToggle,
@@ -53,7 +55,7 @@ import {
 import { AnalyticsTopBar } from "./components/AnalyticsTopBar";
 import { BasisOfPreparation } from "./components/BasisOfPreparation";
 
-import { SectionPicker } from "./components/SectionPicker";
+import { CenterNav } from "./components/CenterNav";
 import { ViewSwitcher } from "./components/ViewSwitcher";
 import { useListSeparator } from "./lib/listSeparator";
 import { ReportRailProvider } from "./lib/reportRail";
@@ -116,6 +118,13 @@ export default function SalesAnalyticsHub() {
     () => (report ? reportFilterKeys(report, can) : []),
     [report, can],
   );
+  const showExactExport = useMemo(() => {
+    if (!report?.exportQuery) return false;
+    const exportFilters = new Set(reportAnalyticsFilterKeys(report, can));
+    return nonDefaultFilterKeys(filters)
+      .filter((key) => key in FILTER_DIMENSION)
+      .every((key) => exportFilters.has(key as FilterKey));
+  }, [report, filters, can]);
 
   /* ── the auto-drop ─────────────────────────────────────────────────────── */
   const toDrop = useMemo(() => {
@@ -145,7 +154,7 @@ export default function SalesAnalyticsHub() {
   const header = (
     <PageHeader
       eyebrow={t("salesReports.hub.eyebrow")}
-      title={t("salesReports.hub.title")}
+      title={report ? t(`salesReports.pages.${report.id}.title`) : t("salesReports.hub.title")}
       subtitle={
         report ? t(`salesReports.pages.${report.id}.subtitle`) : t("salesReports.hub.subtitle")
       }
@@ -177,6 +186,14 @@ export default function SalesAnalyticsHub() {
     return !!r && (!r.cap || can(r.cap));
   };
   const centerViews = CENTERS.find((c) => c.id === route.center)!.views.filter(visible);
+  const visibleCenters = CENTERS.map((center) => ({
+    id: center.id,
+    label: t(`salesReports.centers.${center.id}.title`),
+    shortLabel: t(`salesReports.centers.${center.id}.shortTitle`),
+    subtitle: t(`salesReports.centers.${center.id}.subtitle`),
+    views: center.views.filter(visible),
+  })).filter((center) => center.views.length > 0);
+  const activeCenter = visibleCenters.find((center) => center.id === route.center);
   const segmentDenied = !!report.cap && !can(report.cap);
   const noticeKeys = dropped && dropped.view === route.view ? dropped.keys : [];
 
@@ -193,36 +210,48 @@ export default function SalesAnalyticsHub() {
     navigate(hubHref(target.center, viewId, search));
   };
 
+  const goToCenter = (centerId: string) => {
+    const target = visibleCenters.find((center) => center.id === centerId);
+    const firstView = target?.views[0];
+    if (!firstView) return;
+    navigate(hubHref(centerId, firstView, search));
+  };
+
   return (
     <>
       {header}
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <SectionPicker
-          label={t("salesReports.hub.pickerLabel")}
-          ariaLabel={t("salesReports.hub.tabsAria")}
-          value={report.id}
-          onChange={goToView}
-          groups={CENTERS.map((c) => ({
-            key: c.id,
-            label: t(`salesReports.centers.${c.id}.title`),
-            options: c.views.filter(visible).map((viewId) => ({
-              id: viewId,
-              title: t(`salesReports.pages.${viewId}.title`),
-              subtitle: t(`salesReports.pages.${viewId}.subtitle`),
-            })),
-          })).filter((g) => g.options.length > 0)}
-        />
-        <ViewSwitcher
-          ariaLabel={t("salesReports.hub.viewsAria", {
-            center: t(`salesReports.centers.${route.center}.title`),
-          })}
-          value={report.id}
-          onChange={goToView}
-          options={centerViews.map((viewId) => ({
-            id: viewId,
-            label: t(`salesReports.pages.${viewId}.title`),
-          }))}
-        />
+      <div className="no-print surface mb-4 overflow-hidden" data-testid="sales-workspace-nav">
+        <div className="bg-slate-50 p-2.5">
+          <CenterNav
+            ariaLabel={t("salesReports.hub.tabsAria")}
+            value={route.center}
+            onChange={goToCenter}
+            options={visibleCenters.map(({ id, label, shortLabel }) => ({ id, label, shortLabel }))}
+          />
+        </div>
+        <div className="flex min-w-0 flex-col gap-3 border-t border-slate-100 px-3 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-4">
+          <div className="min-w-0 lg:max-w-[34rem]" data-testid="active-sales-center">
+            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-teal-700">
+              {t("salesReports.hub.workspaceLabel")}
+            </p>
+            <h2 className="mt-0.5 text-base font-black text-slate-950">{activeCenter?.label}</h2>
+            <p className="mt-0.5 text-xs font-medium leading-5 text-slate-500">{activeCenter?.subtitle}</p>
+          </div>
+          {centerViews.length > 1 && (
+            <ViewSwitcher
+              ariaLabel={t("salesReports.hub.viewsAria", {
+                center: t(`salesReports.centers.${route.center}.title`),
+              })}
+              value={report.id}
+              onChange={goToView}
+              className="lg:max-w-[65%] lg:justify-end"
+              options={centerViews.map((viewId) => ({
+                id: viewId,
+                label: t(`salesReports.pages.${viewId}.title`),
+              }))}
+            />
+          )}
+        </div>
       </div>
 
       {noticeKeys.length > 0 && (
@@ -250,6 +279,7 @@ export default function SalesAnalyticsHub() {
           `filterKeys` / `showCompare` / the two basis flags come from the
           registry: a control the routed report cannot honour is not rendered. */}
       <AnalyticsTopBar
+        reportId={report.id}
         filters={filters}
         patch={patch}
         reset={reset}
@@ -257,6 +287,7 @@ export default function SalesAnalyticsHub() {
         showCompare={report.compare}
         showDateBasis={supportsDateBasisToggle(report)}
         showTaxBasis={supportsTaxToggle(report)}
+        showExport={showExactExport}
       />
 
       {/* ── the work area: the report, and (only when the routed page publishes

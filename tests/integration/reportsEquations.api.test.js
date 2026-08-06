@@ -222,7 +222,9 @@ async function fixtures() {
     const eq = await call('GET', `/api/erp/reports/equity-changes?from=${EQ_FROM}&to=${EQ_TO}`, manager);
     check('equity-changes answers 200 success', eq.status === 200 && eq.body?.success === true, eq.body);
     const buckets = eq.body?.buckets || [];
-    check('buckets are the balance sheet\'s five, in IFRS order', buckets.map((b) => b.key).join(',') === 'capital,retained,drawings,reserves,zakat', buckets.map((b) => b.key));
+    check('equity buckets exclude Zakat payable, which is a current liability',
+      buckets.map((b) => b.key).join(',') === 'capital,retained,drawings,reserves',
+      buckets.map((b) => b.key));
     const cap = buckets.find((b) => b.key === 'capital');
     const capAcc = (cap?.accounts || []).find((a) => a.id === P('A-CAP'));
     check('capital account: opening 50,000 / periodCredit 50,000 / closing 100,000', !!capAcc && capAcc.opening === 50000 && capAcc.periodCredit === 50000 && capAcc.periodDebit === 0 && capAcc.closing === 100000, capAcc);

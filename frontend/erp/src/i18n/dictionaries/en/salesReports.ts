@@ -4,9 +4,10 @@
  *  enforced by modules/reports/sales/__tests__/registry-i18n.test.ts). */
 export const salesReports = {
   hub: {
-    eyebrow: "Reports · Sales",
-    title: "Sales Analytics",
-    subtitle: "The unified sales analytics center — metrics and dimensions from the certified fact store",
+    eyebrow: "Sales · Decision center",
+    title: "Sales Decision Center",
+    subtitle: "Understand performance and act from one place — trusted figures by item, hour, branch, cashier and payment method",
+    workspaceLabel: "Current decision path",
     tabsAria: "Sales analytics sections",
     settingsAria: "Report settings",
     resultsAria: "Report results",
@@ -17,6 +18,111 @@ export const salesReports = {
     viewsAria: "{center} reports",
     filtersDropped:
       "Filters this report cannot apply were removed: {filters}. The figures below cover the wider scope.",
+  },
+
+  decisions: {
+    title: "Analyze sales from the angle you need",
+    subtitle: "Open the right analysis while keeping the same period, branches and filters.",
+    items: {
+      title: "By item",
+      description: "Quantity, net sales, cost and profitability",
+      descriptionNoCost: "Quantity, net sales and each item's contribution",
+    },
+    branches: {
+      title: "By branch",
+      description: "Performance, contribution and average ticket",
+    },
+    hours: {
+      title: "By hour",
+      description: "Peak hours and underperforming periods",
+    },
+    cashiers: {
+      title: "By cashier",
+      description: "Sales, discounts and voids",
+    },
+    payments: {
+      title: "By payment method",
+      description: "Collections, refunds and reconciliation",
+    },
+  },
+
+  command: {
+    stepUnderstand: "01 · Understand the result",
+    stepExplain: "04 · Explore further",
+    stepVerify: "05 · Verify the trusted detail",
+    title: "Sales pulse and period decisions",
+    subtitle: "Start with the outcome, monitor exceptions, then open the dimension that explains it without losing the report scope.",
+    enableCompare: "Compare with previous period",
+    compareOff: "Comparison is off",
+    exVatBasis: "Value shown excluding VAT",
+    openAnalysis: "Open related analysis",
+    attention: {
+      title: "02 · What needs attention now",
+      subtitle: "Control exceptions and performance changes derived from the period itself, with no hidden estimated thresholds.",
+      clearTitle: "No visible exceptions",
+      clearBody: "Statement, collections and costing are within the available controls for this period. Enable comparison to monitor performance change too.",
+    },
+    pulse: {
+      title: "Period day pulse",
+      subtitle: "The strongest and weakest days in the displayed data; select a day to pin its scope and review the detail.",
+      bestSales: "Highest sales day",
+      weakestSales: "Weakest sales day",
+      busiest: "Highest order day",
+      highestTicket: "Highest average ticket",
+      openDay: "View this day",
+    },
+    drivers: {
+      step: "03 · Understand what moved the result",
+      title: "Performance drivers",
+      subtitle: "Switch dimension to see the current leading contributor, strongest gain and biggest decline among active groups in the period.",
+      dimensionAria: "Choose the performance-driver dimension",
+      dimensions: {
+        branch: "Branch",
+        item: "Item",
+        hour: "Hour",
+        cashier: "Cashier",
+        payment: "Collections",
+      },
+      cards: {
+        leader: "Current leading contributor",
+        gain: "Strongest value gain",
+        decline: "Biggest value decline",
+      },
+      scopeLimited: "The result hit the row limit; the item ranking below covers the returned rows and is not claimed to include rows beyond them.",
+      failed: "Performance drivers could not be loaded for this dimension.",
+      compareNeeded: "Enable comparison to see gains and declines beside the current leading contributor.",
+      empty: "No groups can be ranked in the current scope.",
+    },
+    details: {
+      title: "Statement, controls and daily detail",
+      subtitle: "The formal verification layer: sales statement, VAT, collections, returns, profit and exportable daily detail.",
+    },
+    signals: {
+      statementVariance: {
+        title: "Invoice header-to-line variance",
+        body: "The control line is not zero; review the invoices in this scope before relying on the statement.",
+      },
+      settlement: {
+        title: "Invoice-to-collection difference",
+        body: "Invoice value does not match net receipts and refunds; open reconciliation to identify the source.",
+      },
+      uncosted: {
+        title: "Sales without trusted cost",
+        body: "Part of revenue or returns has no complete cost snapshot, so affected profit indicators are withheld.",
+      },
+      pending: {
+        title: "Days are still processing",
+        body: "Days inside the period have not reached the data-complete watermark yet; their results may change after refresh.",
+      },
+      salesDecline: {
+        title: "Net sales declined",
+        body: "Net sales are below the comparison period. Start with branches, then inspect the channels and items driving it.",
+      },
+      ordersDecline: {
+        title: "Order count declined",
+        body: "Orders are below the comparison period. Review trading hours and branches to locate the decline.",
+      },
+    },
   },
 
   report: {
@@ -48,7 +154,7 @@ export const salesReports = {
     sectionCollections: "Collections by payment method",
     sectionCollectionsNote: "Received, refunded and net collections, reconciled against the invoice total",
     sectionReturns: "Returns and voids",
-    sectionReturnsNote: "Count, value and share of net sales",
+    sectionReturnsNote: "Count, value and share of VAT-inclusive invoiced sales before returns",
     sectionProfit: "Cost and profit",
     sectionProfitNote: "Cost comes from at-sale snapshots, never from today's cost",
     sectionDaily: "Daily detail",
@@ -57,22 +163,27 @@ export const salesReports = {
   centers: {
     executive: {
       title: "Executive summary",
+      shortTitle: "Executive",
       subtitle: "The whole period in one statement",
     },
     items: {
       title: "Items & profitability",
+      shortTitle: "Items",
       subtitle: "Items, categories and modifiers: quantities, net, cost and margin",
     },
     payments: {
       title: "Payments & reconciliation",
+      shortTitle: "Payments",
       subtitle: "Payment methods, VAT, discounts and the cash reconciliation",
     },
     operations: {
       title: "Operations",
+      shortTitle: "Operations",
       subtitle: "Branches, channels, hours, cashiers, shifts, voids and returns",
     },
     explorer: {
       title: "Custom explorer",
+      shortTitle: "Custom",
       subtitle: "Pick metrics and dimensions and build the report you need",
     },
   },
@@ -100,7 +211,21 @@ export const salesReports = {
     },
     payments: {
       title: "Payments",
-      subtitle: "Collections and refunds by payment method and provider",
+      subtitle: "Collections and refunds by date, weekday, hour, cashier and payment method",
+      breakdown: {
+        title: "Collections breakdown",
+        subtitle: "Change the table axes without changing the period totals, with up to three analysis levels.",
+        quickViews: "Quick collections views",
+        levels: "{count} level(s)",
+        method: "Payment method",
+        date: "Date",
+        weekday: "Weekday",
+        hour: "Hour",
+        collector: "Cashier / payment collector",
+        hint: "Example: Date ← Cashier ← Hour. Date follows the date basis selected in the filters (business day or calendar day).",
+        adjusted: "A saved or unavailable grouping was adjusted to the nearest grouping this user can access.",
+        scopeLimited: "This breakdown reached the query row limit. Narrow the period or use fewer levels before relying on a complete ranking.",
+      },
     },
     cashiers: {
       title: "Cashier Performance",
@@ -241,6 +366,7 @@ export const salesReports = {
     returns_net: "Returns (ex. VAT)",
     returns_vat: "VAT on returns",
     returns_cogs: "Cost of returns",
+    returns_cogs_reversed: "COGS reversed for restocked returns",
     net_ex_vat: "Net sales, ex. VAT (after discount)",
     vat_amount: "VAT on sales",
     invoice_total: "Invoice totals as issued (incl. VAT)",
@@ -255,6 +381,7 @@ export const salesReports = {
     returns_value: "Returns (incl. VAT)",
     cogs: "Cost of goods sold",
     uncosted_net: "Revenue with no defined cost",
+    uncosted_returns_net: "Restocked returns with untrusted cost",
     payments_in: "Payments in",
     refunds_out: "Refunds out",
     tips_total: "Total tips",
@@ -277,6 +404,9 @@ export const salesReports = {
     discount_pct: "Discount rate",
     gross_profit: "Gross profit",
     margin_pct: "Margin rate",
+    cogs_after_returns: "Net cost of sales after returns",
+    gross_profit_after_returns: "Gross profit after returns",
+    margin_pct_after_returns: "Gross margin after returns",
     net_collections: "Net collections",
     till_variance: "Till variance",
     item_contribution_pct: "Item contribution",
@@ -314,7 +444,7 @@ export const salesReports = {
     provenance: "Data provenance",
     cashier: "Cashier",
     salesperson: "Salesperson",
-    payment_collector: "Payment collector",
+    payment_collector: "Cashier / payment collector",
     discount_by: "Discounted by",
     void_by: "Voided by",
     approved_by: "Approved by",
@@ -354,6 +484,9 @@ export const salesReports = {
     discountPct: "Total discounts ÷ gross product sales × 100.",
     grossProfit: "Net sales (ex. VAT) − cost of goods sold.",
     marginPct: "Gross profit ÷ net sales (ex. VAT) × 100.",
+    cogsAfterReturns: "Cost of goods sold − cost of goods physically returned to stock, using the stored sale and return snapshots.",
+    grossProfitAfterReturns: "Net sales excluding VAT after returns − net cost of sales after returns.",
+    marginPctAfterReturns: "Gross profit after returns ÷ net sales excluding VAT after returns × 100.",
     netCollections: "Payments in − refunds out.",
     tillVariance: "Counted cash − expected till cash.",
     contributionPct: "Group value ÷ the ungrouped total of the same metric × 100.",
@@ -515,7 +648,9 @@ export const salesReports = {
       dogs: "Dogs",
     },
     uncostedItems:
-      "{count} items have no defined cost — excluded from classification and from the medians, and the figures above overstate the business by their cost",
+      "{count} items have no defined cost — excluded from classification and the medians, and unauditable profit indicators are withheld",
+    incompletePeriod:
+      "Some sales or restocked returns have no trustworthy cost. Period cost, profit and margin are withheld rather than publishing an unauditable profit.",
   },
 
   reconciliation: {

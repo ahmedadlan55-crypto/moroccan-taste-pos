@@ -45,6 +45,7 @@ export interface TrialBalanceRow {
   accountId: string;
   code: string;
   nameAr: string;
+  nameEn?: string;
   type: string;
   parentId: string | null;
   level: number;
@@ -255,6 +256,7 @@ export interface GlLine {
   journalId: string;
   journalNumber: string;
   date: string;
+  createdAt?: string;
   addedBy: string;
   description: string;
   referenceType: string;
@@ -262,13 +264,23 @@ export interface GlLine {
   debit: number;
   credit: number;
   runningBalance: number;
+  source?: { type: string | null; id: string | null };
+  drilldown?: { type: "journal"; id: string; number: string };
 }
 export interface GlSection {
   accountId: string;
   code: string;
   nameAr: string;
+  nameEn: string;
   type: string;
+  level: number;
   parentId: string | null;
+  reportSection: string | null;
+  normalBalance: "debit" | "credit" | null;
+  isContra: boolean;
+  cashFlowActivity: string | null;
+  accountStatus: string | null;
+  isActive: boolean;
   opening: number;
   openingDebit: number;
   openingCredit: number;
@@ -290,8 +302,18 @@ export interface GlLedgerResponse {
     accountCount: number;
     lineCount: number;
   };
+  filters?: {
+    from: string;
+    to: string;
+    status: "posted";
+    scope: string;
+    accType: GlAccountKind;
+    addedBy?: string | null;
+  };
+  pagination?: { bounded: boolean; maxAccounts: number; maxLines: number };
+  generatedAt?: string;
 }
-/** main = a ROOT account · sub = anything that has a parent · both = no filter. */
+/** main = a control/folder account · sub = a posting leaf · both = no filter. */
 export type GlAccountKind = "both" | "main" | "sub";
 
 /**
@@ -300,14 +322,41 @@ export type GlAccountKind = "both" | "main" | "sub";
  * and applies `isMain`) was unreachable from the UI. It is a real parameter
  * now, and it is part of the query key so switching category refetches.
  */
-export function useGlLedger(range: DateRange | null, scope: string, accType: GlAccountKind = "both") {
+export function useGlLedger(
+  range: DateRange | null,
+  scope: string,
+  accType: GlAccountKind = "both",
+  addedBy = "",
+  accountId = "",
+  parentId = "",
+) {
+  const selectedAccount = accountId.trim();
+  const selectedParent = parentId.trim();
   return useQuery({
-    queryKey: ["acc", "gl-ledger", range?.from, range?.to, scope, accType],
+    queryKey: [
+      "acc",
+      "gl-ledger",
+      range?.from,
+      range?.to,
+      scope,
+      accType,
+      addedBy.trim(),
+      selectedAccount,
+      selectedParent,
+    ],
     enabled: !!range,
     queryFn: async () =>
       unwrap(
         await apiClient.get<GlLedgerResponse>("/erp/reports/gl-ledger-multi", {
-          params: { from: range!.from, to: range!.to, scope, accType },
+          params: {
+            from: range!.from,
+            to: range!.to,
+            scope,
+            accType,
+            ...(addedBy.trim() ? { addedBy: addedBy.trim() } : {}),
+            ...(selectedAccount ? { accounts: selectedAccount } : {}),
+            ...(selectedParent ? { parent: selectedParent } : {}),
+          },
         }),
       ),
   });
@@ -480,6 +529,8 @@ export const GL_TYPE_NATURE: Record<GlAccountType, "debit" | "credit"> = {
 // Accounts whose lines require a cost center (P&L). Enforced in the editor.
 export const PNL_TYPES: GlAccountType[] = ["revenue", "expense"];
 
+export type GlAccountStatus = "active" | "blocked" | "archived";
+
 export interface GlAccount {
   id: string;
   code: string;
@@ -497,6 +548,108 @@ export interface GlAccount {
   accountClass: string;
   reportSection: string | null;
   taxNature: string;
+
+  // ── Package H — migration 0028 (`0028_coa_metadata.sql`) columns ──────────
+  // OPTIONAL on purpose. The columns exist in the database, but the row mapper
+  // in routes/erp.js hand-picks fields, so a given deployment may or may not
+  // send them yet. `undefined` therefore means "this server has not surfaced
+  // the column", which is a DIFFERENT statement from `false`, and the model
+  // helpers in coa/coaModel.tsx branch on exactly that distinction (a chart
+  // where NO row carries isSystemRoot falls back to the legacy code set; one
+  // where any row carries it trusts the flag). Never widen these to
+  // non-optional without also fixing that fallback.
+  /** True for the five protected class roots. Replaces the hardcoded 1..5 set. */
+  isSystemRoot?: boolean;
+  /** Row is maintained by a subledger (customers/suppliers/banks) — not hand-editable. */
+  systemManaged?: boolean;
+  /** '1'..'5' — the accounting class of a root, independent of its numbering. */
+  classCode?: string | null;
+  /** Declared normal side. Seeded FROM TYPE, so it does NOT account for contra. */
+  normalBalance?: "debit" | "credit" | null;
+  /** Declared contra account (its natural side is the opposite of its type's). */
+  isContra?: boolean;
+  /** May journal entries be posted directly to this account? */
+  isPostable?: boolean;
+  /** Control (summary) account — a subledger reconciles to it. */
+  isControl?: boolean;
+  /** active | blocked | archived. Richer than the isActive boolean. */
+  status?: GlAccountStatus | null;
+  cashFlowActivity?: string | null;
+  sourceEntityType?: string | null;
+  version?: number | null;
+}
+
+// The list endpoint answers camelCase today, but every one of the 0028 columns
+// is snake_case in the database and a straight `SELECT a.*` passthrough would
+// deliver them that way. Reading BOTH spellings here is the cheap guard: an
+// adapter that silently reads the wrong case does not throw, it returns
+// `undefined` — which in this module reads as "the server has no such column"
+// and quietly reinstates the very fallbacks these columns exist to remove.
+type RawAccount = Record<string, unknown>;
+
+function pickBool(raw: RawAccount, ...keys: string[]): boolean | undefined {
+  for (const k of keys) {
+    const v = raw[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") return v !== "" && v !== "0" && v.toLowerCase() !== "false";
+  }
+  return undefined;
+}
+
+function pickStr(raw: RawAccount, ...keys: string[]): string | null | undefined {
+  for (const k of keys) {
+    const v = raw[k];
+    if (v === undefined) continue;
+    if (v === null) return null;
+    return String(v);
+  }
+  return undefined;
+}
+
+/** Normalize one list row: keeps the legacy contract, adds the 0028 metadata. */
+export function normalizeGlAccount(raw: RawAccount): GlAccount {
+  const num = (v: unknown) => Number(v) || 0;
+  const status = pickStr(raw, "status", "account_status");
+  const normal = pickStr(raw, "normalBalance", "normal_balance");
+  return {
+    id: String(raw.id ?? ""),
+    code: String(raw.code ?? ""),
+    nameAr: String(raw.nameAr ?? raw.name_ar ?? ""),
+    nameEn: String(raw.nameEn ?? raw.name_en ?? ""),
+    type: (raw.type as GlAccountType) ?? "asset",
+    parentId: (pickStr(raw, "parentId", "parent_id") as string | null | undefined) ?? null,
+    level: Number(raw.level) || 1,
+    isActive: pickBool(raw, "isActive", "is_active") ?? true,
+    isFolder: pickBool(raw, "isFolder", "is_folder") ?? false,
+    displayOrder:
+      raw.displayOrder == null && raw.display_order == null
+        ? null
+        : Number(raw.displayOrder ?? raw.display_order),
+    balance: num(raw.balance ?? raw.computed_balance),
+    storedBalance: num(raw.storedBalance ?? raw.stored_balance),
+    movementCount: num(raw.movementCount ?? raw.movement_count),
+    accountClass: String(raw.accountClass ?? raw.account_class ?? "detail"),
+    reportSection: (pickStr(raw, "reportSection", "report_section") as string | null | undefined) ?? null,
+    taxNature: String(raw.taxNature ?? raw.tax_nature ?? "none"),
+    isSystemRoot: pickBool(raw, "isSystemRoot", "is_system_root"),
+    systemManaged: pickBool(raw, "systemManaged", "system_managed"),
+    classCode: pickStr(raw, "classCode", "class_code") as string | null | undefined,
+    normalBalance: normal === "debit" || normal === "credit" ? normal : normal === null ? null : undefined,
+    isContra: pickBool(raw, "isContra", "is_contra"),
+    isPostable: pickBool(raw, "isPostable", "is_postable"),
+    isControl: pickBool(raw, "isControl", "is_control"),
+    status:
+      status === "active" || status === "blocked" || status === "archived"
+        ? status
+        : status === null
+          ? null
+          : undefined,
+    cashFlowActivity: pickStr(raw, "cashFlowActivity", "cash_flow_activity") as string | null | undefined,
+    sourceEntityType: pickStr(raw, "sourceEntityType", "source_entity_type") as string | null | undefined,
+    version: raw.version == null ? undefined : Number(raw.version),
+  };
 }
 
 export interface GlAccountInput {
@@ -506,16 +659,87 @@ export interface GlAccountInput {
   nameEn: string;
   type: GlAccountType;
   parentId: string | null;
-  level: number;
   isFolder: boolean;
   isActive?: boolean;
+  status?: "active" | "blocked" | "archived";
+  reportSection?: string | null;
+  cashFlowActivity?: "operating" | "investing" | "financing" | "non_cash" | null;
+  /** Optimistic concurrency token returned by GET /erp/gl/accounts. */
+  expectedVersion?: number;
+}
+
+export interface StatementSection {
+  id: string;
+  statement: "balance_sheet" | "income_statement" | "cash_flow" | "equity";
+  group: string;
+  nameAr: string;
+  nameEn: string;
+  normalBalance: "debit" | "credit";
+  isContra: boolean;
+  displayOrder: number;
+  cashFlowBucket: string | null;
+}
+
+/** The same section catalog the financial-statement classifier validates. */
+export function useStatementSections() {
+  return useQuery({
+    queryKey: ["acc", "statement-sections"],
+    staleTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const response = unwrap(
+        await apiClient.get<{ success?: boolean; error?: string; sections?: StatementSection[] }>(
+          "/erp/gl/statement-sections",
+        ),
+      );
+      return Array.isArray(response.sections) ? response.sections : [];
+    },
+  });
+}
+
+/** What GET /erp/gl/accounts returned, plus whether the as-of date was honored. */
+export interface GlAccountsResult {
+  accounts: GlAccount[];
+  /** The date the SERVER says these balances are stated at, when it says so. */
+  asOf: string | null;
+  /** True when an as-of date was requested and the server did not confirm it. */
+  asOfIgnored: boolean;
 }
 
 // GET /api/erp/gl/accounts → flat GlAccount[] (server owns balances).
-export function useGlAccounts() {
+//
+// `asOf` is forwarded as a query param. The route does not read it TODAY, so
+// the response is a bare array and the balances are current. That is exactly
+// why the result carries `asOfIgnored`: a date picker whose value silently has
+// no effect is worse than no picker, so the screen shows the discrepancy
+// instead of implying the numbers moved. When the backend starts honoring it
+// (answering `{ asOf, accounts }`), this hook needs no change — it already
+// reads that shape.
+export function useGlAccounts(asOf?: string | null) {
+  const wanted = asOf && asOf.trim() ? asOf.trim() : null;
   return useQuery({
-    queryKey: ["acc", "gl-accounts"],
-    queryFn: async () => apiClient.get<GlAccount[]>("/erp/gl/accounts"),
+    queryKey: ["acc", "gl-accounts", wanted ?? "current"],
+    queryFn: async (): Promise<GlAccountsResult> => {
+      const path = wanted
+        ? `/erp/gl/accounts?asOf=${encodeURIComponent(wanted)}`
+        : "/erp/gl/accounts";
+      const res = await apiClient.get<unknown>(path);
+      if (Array.isArray(res)) {
+        return {
+          accounts: res.map((r) => normalizeGlAccount(r as RawAccount)),
+          asOf: null,
+          asOfIgnored: !!wanted,
+        };
+      }
+      const obj = (res ?? {}) as { accounts?: unknown; rows?: unknown; asOf?: unknown; error?: string; success?: boolean };
+      unwrap(obj as { success?: boolean; error?: string });
+      const list = Array.isArray(obj.accounts) ? obj.accounts : Array.isArray(obj.rows) ? obj.rows : [];
+      const serverAsOf = typeof obj.asOf === "string" ? obj.asOf : null;
+      return {
+        accounts: list.map((r) => normalizeGlAccount(r as RawAccount)),
+        asOf: serverAsOf,
+        asOfIgnored: !!wanted && serverAsOf !== wanted,
+      };
+    },
   });
 }
 
@@ -525,7 +749,7 @@ export function useSaveGlAccount() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: GlAccountInput) =>
-      apiClient.post<{ success: boolean; id: string; error?: string }>("/erp/gl/accounts", input),
+      apiClient.post<{ success: boolean; id: string; error?: string; code?: string }>("/erp/gl/accounts", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
   });
 }
@@ -543,9 +767,9 @@ export function useSetAccountActive() {
         nameEn: account.nameEn,
         type: account.type,
         parentId: account.parentId,
-        level: account.level,
         isFolder: account.isFolder,
         isActive,
+        expectedVersion: account.version ?? undefined,
       } satisfies GlAccountInput),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
   });
@@ -571,6 +795,75 @@ export function useToggleAccountFolder() {
         { isFolder },
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["acc", "gl-accounts"] }),
+  });
+}
+
+// POST /api/erp/gl/accounts/:id/move — audited reparenting with stable account
+// codes. Answers 4xx + { error } on a cycle / class mismatch / root move,
+// so this one CAN reject via HTTP rather than the 200-with-success:false shape.
+export interface MoveAccountInput {
+  id: string;
+  parentId: string | null;
+  /** Codes are stable business identifiers; normal UI moves never renumber. */
+  autoRenumber?: false;
+  expectedVersion?: number;
+}
+export interface MoveAccountResult {
+  success: boolean;
+  error?: string;
+  code?: string;
+  oldCode?: string;
+  newCode?: string;
+  newParentId?: string | null;
+  levelsUpdated?: number;
+  renumbered?: Array<{ id: string; oldCode: string; newCode: string }>;
+}
+export function useMoveGlAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, parentId, expectedVersion }: MoveAccountInput) =>
+      apiClient.post<MoveAccountResult>(`/erp/gl/accounts/${id}/move`, {
+        parentId,
+        autoRenumber: false,
+        expectedVersion,
+      }),
+    // A move rewrites codes across the subtree AND gl_entries.account_code, so
+    // every accounting query that keys off a code is stale — not just the tree.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc"] }),
+  });
+}
+
+// POST /api/erp/gl/accounts/import — additive bulk import. Replacement and
+// deletion are retired; structural changes use their audited routes.
+export interface CoaImportRow {
+  id?: string;
+  code: string;
+  nameAr: string;
+  nameEn?: string;
+  type?: string;
+  parentCode?: string;
+  level?: number;
+  kind?: string;
+  displayOrder?: number | null;
+}
+export interface CoaImportResult {
+  success: boolean;
+  error?: string;
+  inserted?: number;
+  updated?: number;
+  skipped?: number;
+  deleted?: number;
+  codeChanges?: number;
+  parentChanges?: number;
+  errors?: string[];
+  skippedDeletes?: Array<{ id?: string; code?: string; reason?: string }>;
+}
+export function useImportGlAccounts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rows, mode }: { rows: CoaImportRow[]; mode: "update" }) =>
+      apiClient.post<CoaImportResult>("/erp/gl/accounts/import", { rows, mode }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["acc"] }),
   });
 }
 

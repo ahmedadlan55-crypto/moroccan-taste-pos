@@ -29,7 +29,7 @@ async function ensureTracking(exec) {
     version VARCHAR(20) NOT NULL PRIMARY KEY,
     name VARCHAR(120) NOT NULL,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 }
 
 // A db proxy for dry-run: SELECT/SHOW run for real (so existence detection is

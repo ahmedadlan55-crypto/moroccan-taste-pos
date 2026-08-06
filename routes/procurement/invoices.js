@@ -205,7 +205,7 @@ router.post('/:id/approve', requireCapability('supplier_invoices.approve'), asyn
           const [lines] = await conn.query('SELECT account_id, line_total FROM supplier_invoice_lines WHERE invoice_id = ?', [row.id]);
           const byAcc = {};
           for (const l of lines) {
-            let code = '5100';
+            let code = require('../../lib/glPosting').CORE_ACCOUNTS.COGS.code;
             if (l.account_id) {
               const [a] = await conn.query('SELECT code FROM gl_accounts WHERE id = ? LIMIT 1', [l.account_id]);
               if (a.length) code = a[0].code;
@@ -213,7 +213,7 @@ router.post('/:id/approve', requireCapability('supplier_invoices.approve'), asyn
             byAcc[code] = calc.money((byAcc[code] || 0) + Number(l.line_total) - 0);
           }
           // strip VAT from the expense (line_total includes VAT here) — approximate net by subtracting invoice VAT proportionally
-          journalId = await posting.postNonStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), expenseByAccount: { '5100': calc.money(row.subtotal) }, vat: calc.money(row.vat_amount) });
+          journalId = await posting.postNonStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), expenseByAccount: { [require('../../lib/glPosting').CORE_ACCOUNTS.COGS.code]: calc.money(row.subtotal) }, vat: calc.money(row.vat_amount) });
         } else {
           const [agg] = await conn.query('SELECT COALESCE(SUM(matched_amount),0) AS m FROM supplier_invoice_matches WHERE invoice_id = ?', [row.id]);
           let grniClear = calc.money(agg[0].m);

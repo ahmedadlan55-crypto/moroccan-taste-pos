@@ -4,6 +4,7 @@
  */
 'use strict';
 const P = require('../lib/productionEngine');
+const { CORE_ACCOUNTS } = require('../lib/glPosting');
 
 let _p = 0, _f = 0;
 function check(name, cond, extra) {
@@ -69,17 +70,17 @@ check('zero event qty throws', throws(() => P.priceOutputEvent({ wipBalance: 100
 
 console.log('\n═══ productionEngine — GL spec builders ═══');
 const dims = { warehouseId: 'WH1', brandId: 'B1', branchId: 'BR1', journalDate: '2026-07-03', postedBy: 't', referenceId: 'X' };
-let spec = P.glProdIssue(Object.assign({ materialsCost: 300, laborCost: 50, overheadCost: 20, inventoryCode: '1200', description: 'd' }, dims));
-check('issue spec balances (Dr WIP 370 / Cr 1200+5400+5410)', P.specBalances(spec) && spec.entries.length === 6 && spec.referenceType === 'prod_issue', spec.entries);
-check('issue spec WIP debits sum = 370', P.round2(spec.entries.filter((e) => e.accountCode === '1220').reduce((s, e) => s + e.debit, 0)) === 370);
-spec = P.glProdIssue(Object.assign({ materialsCost: 300, laborCost: 0, overheadCost: 0, inventoryCode: '1210', description: 'd' }, dims));
-check('issue spec branch warehouse credits 1210', spec.entries.some((e) => e.accountCode === '1210' && e.credit === 300));
+let spec = P.glProdIssue(Object.assign({ materialsCost: 300, laborCost: 50, overheadCost: 20, inventoryCode: CORE_ACCOUNTS.INVENTORY.code, description: 'd' }, dims));
+check('issue spec records only added labor/overhead (materials stay in Inventory Control)', P.specBalances(spec) && spec.entries.length === 4 && spec.referenceType === 'prod_issue', spec.entries);
+check('issue spec Inventory Control debits added conversion cost = 70', P.round2(spec.entries.filter((e) => e.accountCode === CORE_ACCOUNTS.INVENTORY.code).reduce((s, e) => s + e.debit, 0)) === 70);
+spec = P.glProdIssue(Object.assign({ materialsCost: 300, laborCost: 0, overheadCost: 0, inventoryCode: CORE_ACCOUNTS.INVENTORY.code, description: 'd' }, dims));
+check('materials-only issue is subledger-only', spec.entries.length === 0);
 spec = P.glProdOutput(Object.assign({ fgValue: 500, wasteValue: 100, outputWarehouseId: 'WH2', description: 'd' }, dims));
-check('output spec balances (Dr 1230:500 + 5122:100 / Cr 1220:600)', P.specBalances(spec) && spec.entries.some((e) => e.accountCode === '1230' && e.debit === 500 && e.warehouseId === 'WH2') && spec.entries.some((e) => e.accountCode === '5122' && e.debit === 100) && spec.entries.some((e) => e.accountCode === '1220' && e.credit === 600), spec.entries);
+check('output spec expenses waste / credits one Inventory Control account', P.specBalances(spec) && spec.entries.length === 2 && spec.entries.some((e) => e.accountCode === CORE_ACCOUNTS.WASTE_EXPENSE.code && e.debit === 100) && spec.entries.some((e) => e.accountCode === CORE_ACCOUNTS.INVENTORY.code && e.credit === 100), spec.entries);
 spec = P.glProdOutput(Object.assign({ fgValue: 500, wasteValue: 0, outputWarehouseId: 'WH2', description: 'd' }, dims));
-check('output spec without waste has no 5122 line', !spec.entries.some((e) => e.accountCode === '5122') && P.specBalances(spec));
+check('good output without waste is subledger-only', spec.entries.length === 0 && P.specBalances(spec));
 spec = P.glProdClose(Object.assign({ variance: 25, description: 'd' }, dims));
-check('close spec balances (Dr 5420 / Cr 1220 = 25)', P.specBalances(spec) && spec.entries.some((e) => e.accountCode === '5420' && e.debit === 25) && spec.referenceType === 'prod_close');
+check('close spec balances (Dr production variance / Cr Inventory Control = 25)', P.specBalances(spec) && spec.entries.some((e) => e.accountCode === CORE_ACCOUNTS.PRODUCTION_VARIANCE.code && e.debit === 25) && spec.entries.some((e) => e.accountCode === CORE_ACCOUNTS.INVENTORY.code && e.credit === 25) && spec.referenceType === 'prod_close');
 spec = P.glProdClose(Object.assign({ variance: 0, description: 'd' }, dims));
 check('close spec zero variance → no entries', spec.entries.length === 0);
 

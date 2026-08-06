@@ -66,6 +66,8 @@ const { harness, fixtureFor, emptyResult, REGISTRY } = vi.hoisted(() => {
     return_rate_by_cashier: 2,
     // the administrative sales report's statement / tax / returns / profit lines
     returns_net: 40,
+    returns_cogs: 20,
+    net_product_sales_ex_vat: 960,
     vat_amount: 150,
     fees_total: 10,
     rounding_total: 0.25,
@@ -79,6 +81,9 @@ const { harness, fixtureFor, emptyResult, REGISTRY } = vi.hoisted(() => {
     cogs: 400,
     gross_profit: 600,
     margin_pct: 60,
+    cogs_after_returns: 380,
+    gross_profit_after_returns: 580,
+    margin_pct_after_returns: 60.42,
   };
 
   function values(metrics: string[]): Record<string, number | null> {
@@ -489,5 +494,34 @@ describe.each(PAGES)("$name page", ({ Comp, path, kpiProbes, tableProbe, leafPro
     // The masked KPI reads "—" and its unmasked value never leaks anywhere.
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
     expect(screen.queryAllByText(maskedValue)).toHaveLength(0);
+  }, 20000);
+});
+
+describe("Executive decision workspace", () => {
+  it("puts permitted decision KPIs first and carries the committed scope into a dimension drill", async () => {
+    renderPage(
+      Executive,
+      "/reports/sales/executive?from=2026-07-01&to=2026-07-31&preset=custom&branchId=br1",
+    );
+
+    const kpis = await screen.findByTestId("kpi-row", undefined, { timeout: 5000 });
+    expect(within(kpis).getByText("960.00 ر.س")).toBeInTheDocument();
+    expect(within(kpis).getByText("40")).toBeInTheDocument();
+    expect(within(kpis).getByText("25.00 ر.س")).toBeInTheDocument();
+    // This harness grants no analytics.cost.view capability. Profit and margin
+    // are protected figures, so their absence is the permission contract—not
+    // missing fixture data.
+    expect(within(kpis).queryByText("580.00 ر.س")).not.toBeInTheDocument();
+    expect(within(kpis).queryByText("60.42%")).not.toBeInTheDocument();
+
+    const itemDrill = within(screen.getByTestId("decision-shortcuts")).getByRole("link", {
+      name: /حسب الصنف/,
+    });
+    const target = new URL(itemDrill.getAttribute("href") ?? "", "https://example.test");
+    expect(target.pathname).toBe("/reports/sales/items");
+    expect(target.searchParams.get("view")).toBe("items");
+    expect(target.searchParams.get("from")).toBe("2026-07-01");
+    expect(target.searchParams.get("to")).toBe("2026-07-31");
+    expect(target.searchParams.get("branchId")).toBe("br1");
   }, 20000);
 });

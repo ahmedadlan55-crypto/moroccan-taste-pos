@@ -8,8 +8,8 @@
 //   and drops the filters is not a working link, it is a link to a different
 //   report.
 //
-// Covered: the /reports/sales → executive redirect, the grouped picker (groups
-// ARE the centres) with capability-hidden reports, the per-centre view
+// Covered: the /reports/sales → executive redirect, the five always-visible
+// centres with capability-hidden reports, the per-centre view
 // switcher, retired-segment redirects with the query intact, deep-link denial
 // on cap-gated reports, the auto-drop of filters a report cannot honour, the
 // analytics.view gate, and the unknown-segment state.
@@ -81,37 +81,17 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-const PICKER = "أقسام تحليلات المبيعات";
-
-/**
- * The picker trigger, with an explicit wait budget.
- *
- * findBy* defaults to 1000ms, which is enough when this file runs alone and is
- * NOT enough when the whole suite runs in parallel: the first render of the hub
- * pulls the lazy report chunk and the i18n dictionaries through the transform.
- * A 1s budget made the first test in the file fail depending on machine load —
- * the worst kind of flake, because it passes when you run it alone.
- */
-function findPicker() {
-  return screen.findByRole("button", { name: PICKER }, { timeout: 8000 });
-}
-
-/**
- * The picker is a closed menu — open it and return ITS listbox. Queries must be
- * scoped: the filter bar's native <select>s contribute <option> elements too,
- * so an unscoped getAllByRole("option") counts the period/compare choices.
- */
-async function openPicker() {
-  const trigger = await findPicker();
-  fireEvent.click(trigger);
-  const listbox = await screen.findByRole("listbox", { name: PICKER });
-  return within(listbox);
+function findCenterNav() {
+  // The first render pulls the lazy hub and dictionary chunks through the
+  // transform, so keep the explicit non-flaky budget the old picker used.
+  return screen.findByTestId("sales-center-nav", {}, { timeout: 8000 });
 }
 
 describe("SalesAnalyticsHub — routing", () => {
   it("redirects /reports/sales to the executive centre", async () => {
     renderAt("/reports/sales");
-    expect(await findPicker()).toHaveTextContent("اللوحة التنفيذية");
+    const nav = await findCenterNav();
+    expect(nav.querySelector('[data-center-id="executive"]')).toHaveAttribute("aria-current", "page");
     await waitFor(() =>
       expect(document.querySelector('[data-state="empty"]')).toBeInTheDocument(),
     );
@@ -127,12 +107,14 @@ describe("SalesAnalyticsHub — routing", () => {
   it("a centre with no ?view opens its default report", async () => {
     caps["analytics.employees.view"] = true;
     renderAt("/reports/sales/operations");
-    expect(await findPicker()).toHaveTextContent("الفروع");
+    const switcher = await screen.findByTestId("view-switcher");
+    expect(within(switcher).getByRole("button", { name: "الفروع" })).toHaveAttribute("aria-current", "page");
   });
 
   it("?view selects a report inside the centre", async () => {
     renderAt("/reports/sales/operations?view=hours");
-    expect(await findPicker()).toHaveTextContent("الساعات");
+    const switcher = await screen.findByTestId("view-switcher");
+    expect(within(switcher).getByRole("button", { name: "الساعات" })).toHaveAttribute("aria-current", "page");
   });
 
   it("a ?view belonging to ANOTHER centre is sent to its real home, not silently ignored", async () => {
@@ -239,59 +221,35 @@ describe("SalesAnalyticsHub — capability gates", () => {
     await waitFor(() =>
       expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument(),
     );
-    expect(screen.queryByRole("button", { name: PICKER })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sales-center-nav")).not.toBeInTheDocument();
   });
 
-  it("hides the three cap-gated reports (14 of 17)", async () => {
-    renderAt("/reports/sales/executive");
-    const picker = await openPicker();
-    expect(REPORTS).toHaveLength(17);
-    expect(picker.getAllByRole("option")).toHaveLength(14);
-    expect(picker.queryByRole("option", { name: /أداء الكاشير/ })).not.toBeInTheDocument();
-    expect(picker.queryByRole("option", { name: /الربحية/ })).not.toBeInTheDocument();
-    expect(picker.queryByRole("option", { name: /التسويات/ })).not.toBeInTheDocument();
-  });
-
-  it("shows all 17 reports when every capability is granted", async () => {
+  it("shows the five centres directly, in registry order", async () => {
     caps["analytics.employees.view"] = true;
     caps["analytics.cost.view"] = true;
     caps["analytics.reconciliation.view"] = true;
     renderAt("/reports/sales/executive");
-    const picker = await openPicker();
-    expect(picker.getAllByRole("option")).toHaveLength(17);
-    expect(picker.getByRole("option", { name: /أداء الكاشير/ })).toBeInTheDocument();
-    expect(picker.getByRole("option", { name: /الربحية/ })).toBeInTheDocument();
-  });
-
-  it("groups the picker by CENTRE, in registry order", async () => {
-    caps["analytics.employees.view"] = true;
-    caps["analytics.cost.view"] = true;
-    caps["analytics.reconciliation.view"] = true;
-    renderAt("/reports/sales/executive");
-    const picker = await openPicker();
-    const groups = picker.getAllByRole("group");
-    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual([
+    const nav = await findCenterNav();
+    expect(nav).toHaveClass("grid-cols-3", "xl:grid-cols-5");
+    const buttons = within(nav).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "الملخّص التنفيذي",
       "الأصناف والربحية",
       "التحصيل والمطابقة",
       "التشغيل",
       "الاستكشاف الحر",
     ]);
-    // the open report is the selected option, so the menu reads "you are here"
-    const selected = picker
-      .getAllByRole("option")
-      .filter((o) => o.getAttribute("aria-selected") === "true");
-    expect(selected).toHaveLength(1);
-    expect(selected[0]).toHaveTextContent("اللوحة التنفيذية");
+    expect(buttons.filter((button) => button.getAttribute("aria-current") === "page")).toHaveLength(1);
+    expect(buttons[0]).toHaveAttribute("aria-current", "page");
+    for (const button of buttons) expect(button).toHaveClass("min-h-14");
   });
 
-  it("a deep-link to a cap-gated report renders PermissionDenied (picker stays)", async () => {
+  it("a deep-link to a cap-gated report renders PermissionDenied (centre navigation stays)", async () => {
     renderAt("/reports/sales/items?view=profitability");
     await waitFor(() =>
       expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument(),
     );
-    // the picker is still there so the user can navigate out
-    expect(await findPicker()).toBeInTheDocument();
+    expect(await findCenterNav()).toBeInTheDocument();
   });
 
   it("the view switcher hides a cap-gated report too", async () => {
@@ -309,6 +267,15 @@ describe("SalesAnalyticsHub — capability gates", () => {
 /* ── the view switcher ───────────────────────────────────────────────────── */
 
 describe("the centre's view switcher", () => {
+  it("moves between centres in one click and carries the filter state", async () => {
+    renderAt("/reports/sales/executive?from=2032-03-01&to=2032-03-31&preset=custom");
+    const nav = await findCenterNav();
+    fireEvent.click(within(nav).getByRole("button", { name: "التشغيل" }));
+    await waitFor(() => expect(here()).toContain("/reports/sales/operations"));
+    expect(here()).toContain("from=2032-03-01");
+    expect(here()).toContain("preset=custom");
+  });
+
   it("moves between the reports of one centre, carrying the filter state", async () => {
     renderAt("/reports/sales/operations?from=2032-03-01&to=2032-03-31&preset=custom");
     const switcher = await screen.findByTestId("view-switcher");
@@ -320,7 +287,7 @@ describe("the centre's view switcher", () => {
 
   it("is absent for a centre with a single report — a control that cannot choose", async () => {
     renderAt("/reports/sales/executive");
-    await findPicker();
+    await findCenterNav();
     expect(screen.queryByTestId("view-switcher")).toBeNull();
   });
 });
@@ -340,7 +307,7 @@ describe("filters the routed report cannot honour", () => {
 
   it("leaves a filter the report DOES support completely alone", async () => {
     renderAt("/reports/sales/operations?view=shifts&branchId=B-1");
-    await findPicker();
+    await findCenterNav();
     expect(here()).toContain("branchId=B-1");
     expect(screen.queryByTestId("dropped-filters-notice")).toBeNull();
   });
@@ -364,7 +331,7 @@ describe("filters the routed report cannot honour", () => {
     caps["analytics.employees.view"] = true;
     cleanup();
     renderAt("/reports/sales/operations?cashierId=c1");
-    await findPicker();
+    await findCenterNav();
     expect(here()).toContain("cashierId=c1");
   });
 });
@@ -378,8 +345,8 @@ describe("what a printed report says about itself", () => {
     expect(basis.closest(".print-document"), "basis block is outside the printable area").not.toBeNull();
     // Control: `closest` must be capable of returning null here, or the
     // assertion above proves nothing.
-    const picker = screen.getByRole("button", { name: PICKER });
-    expect(picker.closest(".print-document")).toBeNull();
+    const centerNav = screen.getByTestId("sales-center-nav");
+    expect(centerNav.closest(".print-document")).toBeNull();
   });
 
   it("every report carries it — the disclosure is not per-page and cannot be forgotten", async () => {

@@ -5,13 +5,14 @@
 // WAVE-4 UPDATE: the bar now derives its segment from the URL (save-view /
 // export controls), so renders are wrapped in a MemoryRouter and the
 // permission hook is mocked (export stays hidden: cap not granted here).
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/i18n";
 import { AnalyticsTopBar } from "../components/AnalyticsTopBar";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
+import { apiClient } from "@/shared/api";
 
 vi.mock("@/shared/permissions", () => ({
   useCan: () => false,
@@ -52,7 +53,10 @@ function renderBar(overrides: Partial<AnalyticsFilters> = {}) {
   return { patch, reset };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 /** The basis toggles now live in the inline "more filters" area, and every
  *  control edits a DRAFT — «تطبيق» is what reaches patch(). The assertions
@@ -84,14 +88,43 @@ describe("AnalyticsTopBar — segmented toggles", () => {
   });
 
   it("marks the current basis as checked", () => {
-    // A non-default basis opens the extra-filters area by itself — a scope the
-    // URL carries must never hide behind a collapsed toggle.
     renderBar({ taxIncl: true });
+    // A deep link stays compact; its committed scope remains visible in the
+    // chip summary until the reader chooses to edit it.
+    expect(screen.queryByTestId("more-filters")).not.toBeInTheDocument();
+    expect(screen.getByTestId("active-filter-chips")).toHaveTextContent("شامل الضريبة");
+    openMoreFilters();
     expect(screen.getByRole("radio", { name: "شامل الضريبة" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
     expect(screen.getByRole("radio", { name: "يوم العمل" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("does not offer the unsupported custom comparison window", () => {
+    renderBar();
+    expect(screen.queryByRole("option", { name: /مخصص/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("AnalyticsTopBar — lookup performance", () => {
+  it("defers secondary lookup requests until the advanced filters are opened", async () => {
+    renderBar();
+
+    await waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith("/erp/branches-full", expect.any(Object)),
+    );
+    expect(apiClient.get).not.toHaveBeenCalledWith("/erp/brands", expect.any(Object));
+    expect(apiClient.get).not.toHaveBeenCalledWith("/erp/menu-options", expect.any(Object));
+    expect(apiClient.get).not.toHaveBeenCalledWith("/sales-channels");
+
+    openMoreFilters();
+
+    await waitFor(() => {
+      expect(apiClient.get).toHaveBeenCalledWith("/erp/brands", expect.any(Object));
+      expect(apiClient.get).toHaveBeenCalledWith("/erp/menu-options", expect.any(Object));
+      expect(apiClient.get).toHaveBeenCalledWith("/sales-channels");
+    });
   });
 });
 
@@ -104,8 +137,8 @@ describe("AnalyticsTopBar — active-filter chips", () => {
   it("adds a chip for a non-default filter and removes it via its X", () => {
     const { patch } = renderBar({ channel: ["pos"] });
     const chips = screen.getByTestId("active-filter-chips");
-    expect(chips).toHaveTextContent("قناة البيع: 1");
-    fireEvent.click(screen.getByRole("button", { name: "إزالة الفلتر: قناة البيع: 1" }));
+    expect(chips).toHaveTextContent("قناة البيع: pos");
+    fireEvent.click(screen.getByRole("button", { name: "إزالة الفلتر: قناة البيع: pos" }));
     expect(patch).toHaveBeenCalledWith({ channel: [] });
   });
 

@@ -16,9 +16,13 @@ const harness = require('../tests/helpers/testHarness');
 
 (async () => {
   const dbName = harness.activate();
-  console.log(`Provisioning isolated test database "${dbName}" (this boots server.js once against it)...`);
+  console.log(`Provisioning isolated test database "${dbName}" (legacy schema + numbered migrations)...`);
   await harness.ensureSchema();
-  console.log(`Done. "${dbName}" now has the full schema — subsequent test runs will skip this step.`);
+  // ensureSchema loads the shared migration pool. This convenience process
+  // has no test body that needs it afterwards, so close it explicitly rather
+  // than leaving npm run test:db:setup alive on an idle pooled connection.
+  await require('../db/connection').end();
+  console.log(`Done. "${dbName}" now matches the release schema; reruns are idempotent.`);
 })().catch((e) => {
   console.error('test-db-setup FAILED:', e.message);
   process.exit(1);

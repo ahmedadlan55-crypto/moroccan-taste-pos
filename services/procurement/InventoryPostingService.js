@@ -87,6 +87,7 @@ async function _recordCostHistory(conn, { itemId, before, after, reason, refId, 
 async function applyReceiptStock(conn, { grn, lines, actor }) {
   const movementIds = [], lotIds = [], affectedStock = [];
   let netValue = 0;
+  const valueByWarehouse = {};
 
   for (const ln of lines) {
     const warehouseId = ln.warehouse_id || grn.warehouse_id;
@@ -160,10 +161,12 @@ async function applyReceiptStock(conn, { grn, lines, actor }) {
 
     const wq = await _warehouseQty(conn, warehouseId, ln.item_id);
     affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: baseQty, newQty: wq ? Number(wq.qty) : baseQty });
-    netValue += calc.money(baseQty * baseUnitCost);
+    const lineValue = calc.money(baseQty * baseUnitCost);
+    netValue += lineValue;
+    valueByWarehouse[warehouseId] = calc.money((valueByWarehouse[warehouseId] || 0) + lineValue);
   }
 
-  return { movementIds, lotIds, affectedStock, netValue: calc.money(netValue) };
+  return { movementIds, lotIds, affectedStock, valueByWarehouse, netValue: calc.money(netValue) };
 }
 
 /**

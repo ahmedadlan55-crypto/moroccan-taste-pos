@@ -317,6 +317,26 @@ export const administration = {
   },
 
   // ── Settings ─────────────────────────────────────────────────────────────
+  // Danger zone — erase purchasing and goods-receipt data. Irreversible, so:
+  // preview first, then a hand-typed confirmation.
+  purge: {
+    title: "Delete purchasing and receiving data",
+    subtitle: "Erases purchase orders, requisitions, goods receipts, supplier invoices and returns, and unwinds the stock those receipts added along with their journal entries.",
+    warning: "This cannot be undone. Take a database backup first.",
+    previewBtn: "Preview what will be deleted",
+    checking: "Checking…",
+    dialogTitle: "Deletion preview",
+    dialogDesc: "{count} record(s) will be deleted. Nothing has been deleted yet.",
+    nothingToDelete: "There is no purchasing data to delete.",
+    irreversible: "This is permanent. Review the figures below before continuing.",
+    stockRows: "Stock rows to be unwound",
+    glRows: "Linked journal entries to be deleted",
+    typeToConfirm: "Type {word} to confirm",
+    confirmBtn: "Delete permanently",
+    deleting: "Deleting…",
+    doneToast: "{count} record(s) deleted",
+    failed: "The deletion could not be completed",
+  },
   settings: {
     title: "Settings",
     subtitle: "Company, tax and printed-invoice settings.",

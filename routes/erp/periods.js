@@ -87,7 +87,7 @@ router.get('/periods/check', requireCapability('finance.gl.view'), async (req, r
   }
 });
 
-async function _statusAt(conn, date, brandId, branchId) {
+async function _statusAt(conn, date, brandId, branchId, opts = {}) {
   // v6.4.1 — defensive: an early deployment created accounting_periods
   // without brand_id/branch_id, then the v6.2.0 createTableIfMissing was
   // a no-op. The addColumnIfMissing in server.js backfills the columns,
@@ -99,11 +99,12 @@ async function _statusAt(conn, date, brandId, branchId) {
        WHERE start_date <= ? AND end_date >= ?
          AND (brand_id IS NULL OR brand_id = ? OR ? = '')
          AND (branch_id IS NULL OR branch_id = ? OR ? = '')
-       ORDER BY status DESC LIMIT 1`,
+       ORDER BY status DESC LIMIT 1${opts.lock ? ' FOR SHARE' : ''}`,
       [date, date, brandId || '', brandId || '', branchId || '', branchId || '']
     );
     return rows.length ? rows[0].status : 'open';
   } catch (e) {
+    if (opts.strict) throw e;
     // Schema mismatch or table missing — treat as no enforcement
     if (process.env.NODE_ENV !== 'production') {
       console.warn('[periods._statusAt] degraded to open:', e.message);
@@ -153,11 +154,19 @@ async function _transitionStatus(req, res, target, fromStates) {
       [id, label, bounds.start, bounds.end, brandId, branchId]
     );
 
-    // Transition check
-    const [cur] = await db.query('SELECT status FROM accounting_periods WHERE id = ?', [id]);
-    if (!cur.length) return res.json({ success: false, error: 'period not found' });
+    const wantsForce = req.body && req.body.force === true;
+    const reason = String((req.body && req.body.reason) || '').trim();
+    const mayOverride = wantsForce
+      ? await requireCapability.hasCapability(req.user, 'finance.periods.override_lock').catch(() => false)
+      : false;
+    const salesPosting = require('./sales-posting');
+
+    await db.withTransaction(async (conn) => {
+    // Transition check + period lock make queue stranding and state change one unit.
+    const [cur] = await conn.query('SELECT status FROM accounting_periods WHERE id = ? FOR UPDATE', [id]);
+    if (!cur.length) { const e = new Error('period not found'); e.status = 404; throw e; }
     if (fromStates && fromStates.length && fromStates.indexOf(cur[0].status) < 0) {
-      return res.json({ success: false, error: 'illegal transition from ' + cur[0].status });
+      const e = new Error('illegal transition from ' + cur[0].status); e.status = 409; throw e;
     }
 
     // ── «ترحيل المبيعات» guard ──────────────────────────────────────────
@@ -167,45 +176,43 @@ async function _transitionStatus(req, res, target, fromStates) {
     // review state, and reopen must never be blocked.
     if (target === 'closed' || target === 'locked') {
       try {
-        await require('./sales-posting').assertNoUnpostedSales(db, {
+        await salesPosting.assertNoUnpostedSales(conn, {
           from: bounds.start, to: bounds.end, brandId, branchId });
       } catch (guardErr) {
         if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
           // Override needs force AND the capability AND a reason. What is left
           // behind becomes `stranded` rather than being deleted, so a forced
           // close never makes unposted revenue disappear quietly.
-          const wantsForce = req.body && req.body.force === true;
-          const reason = String((req.body && req.body.reason) || '').trim();
-          const mayOverride = await requireCapability
-            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
           if (!wantsForce || !mayOverride || reason.length < 10) {
-            return res.status(409).json({
-              success: false,
-              error: 'UNPOSTED_SALES_IN_PERIOD',
-              message: guardErr.message,
-              unpostedCount: guardErr.unpostedCount,
-              firstDay: guardErr.firstDay,
-              lastDay: guardErr.lastDay,
-              // The screen deep-links straight to what is blocking the close.
-              link: '/accounting/sales-posting?from=' + (guardErr.firstDay || '') +
-                    '&to=' + (guardErr.lastDay || ''),
-              overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
-            });
+            throw guardErr;
           }
-          const stranded = await require('./sales-posting').strandUnposted(db,
-            { from: bounds.start, to: bounds.end });
+          const stranded = await salesPosting.strandUnposted(conn,
+            { from: bounds.start, to: bounds.end, brandId, branchId });
           console.warn('[periods] FORCED close of ' + id + ' by ' + username +
             ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
         } else { throw guardErr; }
       }
     }
-    await db.query(
+    if (target === 'open') {
+      await salesPosting.recoverStranded(conn,
+        { from: bounds.start, to: bounds.end, brandId, branchId });
+    }
+    await conn.query(
       `UPDATE accounting_periods SET status = ?, closed_by = ?, closed_at = NOW(), closing_notes = ? WHERE id = ?`,
       [target, username, notes, id]
     );
+    });
     res.json({ success: true, id, status: target });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    if (e && e.code === 'UNPOSTED_SALES_IN_PERIOD') {
+      return res.status(409).json({
+        success: false, error: e.code, message: e.message,
+        unpostedCount: e.unpostedCount, firstDay: e.firstDay, lastDay: e.lastDay,
+        link: '/accounting/sales-posting?from=' + (e.firstDay || '') + '&to=' + (e.lastDay || ''),
+        overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
+      });
+    }
+    res.status(e && e.status || 500).json({ success: false, error: e.message });
   }
 }
 
@@ -250,7 +257,10 @@ async function assertPeriodOpen(conn, date, brandId, branchId) {
   // whenever the prior month was closed, and slipped into a month that was
   // supposed to be finished whenever it was not. See lib/accountingDate.js.
   const d = acctDate.toAccountingDate(date);
-  const status = await _statusAt(c, d, brandId, branchId);
+  // Lock the matching period row for the duration of the caller's transaction.
+  // A concurrent close takes FOR UPDATE on the same row, so either the sale
+  // captures before the close or it sees the closed state — never between.
+  const status = await _statusAt(c, d, brandId, branchId, { lock: true, strict: true });
   // Same list glPosting blocks on — imported, not restated.
   //
   // These two guards used to disagree: this one blocked only {closed, locked}

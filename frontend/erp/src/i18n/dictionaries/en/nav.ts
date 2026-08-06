@@ -117,7 +117,7 @@ export const nav = {
     "wf-approval-flows": "Approval Flows",
     "wf-action-log": "Action Log",
     // reports
-    "rp-sales": "Sales Reports",
+    "rp-sales": "Sales Decision Center",
     "rp-inventory": "Inventory Reports",
     "rp-purchasing": "Purchasing Reports",
     "rp-financial": "Financial Reports",

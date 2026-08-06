@@ -38,6 +38,22 @@ catch (_) { analyticsProjection = { safeProject: async () => {}, projectReturn: 
 
 const money = calc.money;
 const qty = calc.qty;
+
+function _nonNegativeCost(value, label) {
+  const n = value == null || value === '' ? 0 : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw err('VALIDATION_ERROR', `تكلفة مرتجع غير صالحة (${label || 'سطر'})`);
+  }
+  return money(n);
+}
+
+function _nonNegativeRate(value, label) {
+  const n = value == null || value === '' ? 0 : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw err('VALIDATION_ERROR', `تكلفة وحدة مرتجع غير صالحة (${label || 'مكوّن'})`);
+  }
+  return calc.rate(n);
+}
 function genId() { return 'SRET-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 function lineId() { return 'SRETL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 function cnId() { return 'CN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
@@ -92,7 +108,7 @@ async function create(conn, data, actor) {
     const fraction = soldQty > 0 ? returnQty / soldQty : 0;
     const net = money(Number(ol.net_amount) * fraction);
     const vat = money(Number(ol.vat_amount) * fraction);
-    const cost = money(Number(ol.cost_snapshot) * fraction);
+    const cost = money(_nonNegativeCost(ol.cost_snapshot, ol.id) * fraction);
     const baseQty = qty(Number(ol.base_qty) * fraction);
     // Whether the goods physically come back. Not derivable from the item: only
     // the person holding it knows. Absent ⇒ false, matching the column default.
@@ -133,16 +149,20 @@ async function create(conn, data, actor) {
         }
       }
     }
-    const components = origComps.map((c) => ({
-      seq: c.component_seq, source: c.source, invItemId: c.inv_item_id, invItemName: c.inv_item_name,
-      // Component-level warehouse: the header's is NULL on every live return and
-      // one line's components can span warehouses.
-      warehouseId: c.warehouse_id || rl.warehouseId || ol.warehouse_id || original.warehouse_id || null,
-      restoredBaseQty: qty(Number(c.deducted_base_qty) * fraction),
-      unitCode: c.unit_code, conversionFactor: c.conversion_factor,
-      unitCostSnapshot: c.unit_cost_snapshot, totalCost: money(Number(c.total_cost) * fraction),
-      projectionVersion: c.projection_version,
-    }));
+    const components = origComps.map((c) => {
+      const label = `${ol.id}:${c.component_seq}`;
+      return {
+        seq: c.component_seq, source: c.source, invItemId: c.inv_item_id, invItemName: c.inv_item_name,
+        // Component-level warehouse: the header's is NULL on every live return and
+        // one line's components can span warehouses.
+        warehouseId: c.warehouse_id || rl.warehouseId || ol.warehouse_id || original.warehouse_id || null,
+        restoredBaseQty: qty(Number(c.deducted_base_qty) * fraction),
+        unitCode: c.unit_code, conversionFactor: c.conversion_factor,
+        unitCostSnapshot: _nonNegativeRate(c.unit_cost_snapshot, label),
+        totalCost: money(_nonNegativeCost(c.total_cost, label) * fraction),
+        projectionVersion: c.projection_version,
+      };
+    });
     computed.push({
       originalLineId: ol.id, itemId: ol.item_id, menuId: ol.menu_id, description: ol.description,
       enteredUnitId: ol.entered_unit_id, enteredUnitCode: ol.entered_unit_code,
@@ -218,7 +238,7 @@ async function create(conn, data, actor) {
  */
 async function _restore(conn, row, lines, actor, direction = 1) {
   const wanted = lines.filter((l) => Number(l.restock) === 1);
-  const out = { restoredCost: 0, affectedStock: [], cogsByWarehouse: {} };
+  const out = { restoredCost: 0, affectedStock: [], cogsByWarehouse: {}, cogsByLine: {} };
   if (!wanted.length) return out;                                  // no_restock ⇒ zero stock, zero COGS
 
   const [comps] = await conn.query(
@@ -239,12 +259,13 @@ async function _restore(conn, row, lines, actor, direction = 1) {
             `مكوّن بلا صنف أو مستودع في السطر ${l.id} — لا يمكن إعادة المخزون (component_seq ${c.component_seq})`);
         }
         if (!(Number(c.restored_base_qty) > 0)) continue;           // a zero-qty component moves nothing
-        moves.push({ itemId: c.inv_item_id, itemName: c.inv_item_name || l.description || '',
-          warehouseId: c.warehouse_id, baseQty: qty(c.restored_base_qty), cost: money(c.total_cost || 0) });
+        moves.push({ returnLineId: l.id, itemId: c.inv_item_id, itemName: c.inv_item_name || l.description || '',
+          warehouseId: c.warehouse_id, baseQty: qty(c.restored_base_qty),
+          cost: _nonNegativeCost(c.total_cost, `${l.id}:${c.component_seq}`) });
       }
     } else if (l.item_id && l.warehouse_id && Number(l.base_qty) > 0) {
-      moves.push({ itemId: l.item_id, itemName: l.description || '', warehouseId: l.warehouse_id,
-        baseQty: qty(l.base_qty), cost: money(l.cost_snapshot || 0) });
+      moves.push({ returnLineId: l.id, itemId: l.item_id, itemName: l.description || '', warehouseId: l.warehouse_id,
+        baseQty: qty(l.base_qty), cost: _nonNegativeCost(l.cost_snapshot, l.id) });
     } else {
       throw err('VALIDATION_ERROR',
         `السطر ${l.id} مطلوب إعادته للمخزون لكن لا توجد له لقطة مكوّنات ولا صنف/مستودع مباشر`);
@@ -273,10 +294,31 @@ async function _restore(conn, row, lines, actor, direction = 1) {
     await recomputeInvItemStock(conn, m.itemId);
     out.restoredCost += m.cost;
     out.cogsByWarehouse[m.warehouseId] = money((out.cogsByWarehouse[m.warehouseId] || 0) + m.cost);
+    out.cogsByLine[m.returnLineId] = money((out.cogsByLine[m.returnLineId] || 0) + m.cost);
     out.affectedStock.push({ itemId: m.itemId, warehouseId: m.warehouseId, qty: m.baseQty });
   }
   out.restoredCost = money(out.restoredCost);
   return out;
+}
+
+/**
+ * Freeze the exact per-line amount included in the COGS reversal. This runs in
+ * the same transaction as stock restoration and GL posting. Every finalized
+ * line receives a value: non-restock and zero-cost lines are 0; NULL remains the
+ * honest pre-post state for drafts.
+ */
+async function _persistReversedCosts(conn, returnId, lines, cogsByLine) {
+  if (!lines.length) return;
+  const params = [];
+  const cases = lines.map((l) => {
+    params.push(l.id, _nonNegativeCost((cogsByLine && cogsByLine[l.id]) || 0, l.id));
+    return 'WHEN ? THEN ?';
+  }).join(' ');
+  params.push(returnId);
+  await conn.query(
+    `UPDATE sales_return_lines
+        SET cogs_reversed_amount = CASE id ${cases} ELSE cogs_reversed_amount END
+      WHERE return_id = ?`, params);
 }
 
 async function approve(id, ctx) {
@@ -387,7 +429,8 @@ async function post(id, ctx) {
       //    (a burger); what left the shelf were its components (bun, patty). The old
       //    code tested l.warehouse_id, a column that did not exist, so it skipped
       //    every line on every return — restock and the COGS reversal have never run.
-      const { restoredCost, affectedStock, cogsByWarehouse } = await _restore(conn, row, lines, ctx.actor || '');
+      const { restoredCost, affectedStock, cogsByWarehouse, cogsByLine } = await _restore(conn, row, lines, ctx.actor || '');
+      await _persistReversedCosts(conn, id, lines, cogsByLine);
 
       // 6) GL — revenue + VAT reversal + refund leg; cost reversal only for what
       //    physically came back, split per warehouse so the inventory legs land on
@@ -558,4 +601,4 @@ async function list(params = {}) {
   return { data: rows, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
 }
 
-module.exports = { create, approve, post, reverse, cancel, getWithLines, list };
+module.exports = { create, approve, post, reverse, cancel, getWithLines, list, _restore };

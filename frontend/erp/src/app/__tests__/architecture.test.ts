@@ -31,6 +31,17 @@ describe("navigation manifest integrity", () => {
     expect(dupes).toEqual([]);
   });
 
+  it("homes the sales decision center with sales documents and gates it on analytics", () => {
+    const sales = NAV.find((group) => group.id === "sales");
+    const reports = NAV.find((group) => group.id === "reports");
+    expect(sales?.items[0]).toMatchObject({
+      id: "rp-sales",
+      path: "/reports/sales",
+      cap: "analytics.view",
+    });
+    expect(reports?.items.some((item) => item.id === "rp-sales")).toBe(false);
+  });
+
   it("every nav item has a capability from the ONE catalog", () => {
     const caps = new Set<string>(ALL_CAPS);
     const offenders = NAV_ITEMS.filter((i) => !i.cap || !caps.has(i.cap));

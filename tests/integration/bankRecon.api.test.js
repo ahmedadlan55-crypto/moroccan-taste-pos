@@ -50,7 +50,7 @@ async function main() {
     const FEE = 'BR-FEE-' + sfx, cFEE = '9F' + sfx;
     const CASH = 'BR-CASH-' + sfx, cCASH = '1101' + sfx;
     for (const [id, code, type] of [[BANK, cBANK, 'asset'], [OTHER, cOTHER, 'revenue'], [FEE, cFEE, 'expense'], [CASH, cCASH, 'asset']]) {
-      await j('POST', '/erp/gl/accounts', T.admin, { id, code, nameAr: id, type, parentId: null, level: 1 });
+      await j('POST', '/erp/gl/accounts', T.admin, { id, code, nameAr: id, type, parentId: null });
       accts.push(id);
     }
     // bank account linked to BANK gl

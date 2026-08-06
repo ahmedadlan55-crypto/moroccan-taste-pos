@@ -3758,19 +3758,19 @@ router.post('/stocktakes', requireCapability('inventory.stocktake.create'), asyn
         const entries = [];
         if (totalGainCost > 0) {
           const g = Math.round(totalGainCost * 100) / 100;
-          entries.push({ accountCode: '1200', debit: g, credit: 0,
+          entries.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: g, credit: 0,
             description: 'Inventory surplus (stocktake)',
             branchId: branchId || null, brandId: brandId || null, warehouseId: warehouseId || null });
-          entries.push({ accountCode: '4910', debit: 0, credit: g,
+          entries.push({ accountCode: gl.CORE_ACCOUNTS.STOCK_GAIN.code, debit: 0, credit: g,
             description: 'Stock count gain',
             branchId: branchId || null, brandId: brandId || null });
         }
         if (totalLossCost > 0) {
           const l = Math.round(totalLossCost * 100) / 100;
-          entries.push({ accountCode: '5300', debit: l, credit: 0,
+          entries.push({ accountCode: gl.CORE_ACCOUNTS.STOCK_VARIANCE.code, debit: l, credit: 0,
             description: 'Inventory shortage (stocktake)',
             branchId: branchId || null, brandId: brandId || null });
-          entries.push({ accountCode: '1200', debit: 0, credit: l,
+          entries.push({ accountCode: gl.CORE_ACCOUNTS.INVENTORY.code, debit: 0, credit: l,
             description: 'Inventory reduction (stocktake)',
             branchId: branchId || null, brandId: brandId || null, warehouseId: warehouseId || null });
         }

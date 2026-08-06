@@ -1034,6 +1034,76 @@ async function autoInitDB() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COA_BOOT_REPAIR — boot DIAGNOSES the chart of accounts, it does not rewrite it
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The chart drifted because the server REWROTE it on every start. Seven
+// separate boot blocks re-parented accounts, renumbered codes, renamed the
+// payables control account, created ~25 accounts and posted a real journal —
+// all unconditionally, all before anyone had looked at the chart. An operator
+// who fixed a parent by hand watched the next restart put it back, so the
+// chart could never converge and the "repair" logs became background noise
+// nobody read.
+//
+// The blocks are NOT deleted. They encode real, hard-won knowledge about how
+// this chart broke and how to unbreak it, and deleting them would throw that
+// away. They are GATED instead:
+//
+//   COA_BOOT_REPAIR=1  → unchanged behaviour. An operator asks for the repair,
+//                        watches it, and turns it off again.
+//   anything else      → every block runs its DETECTION query and prints what
+//                        it WOULD have changed (a count plus a short sample),
+//                        then leaves the row alone.
+//
+// So the information is not lost — it stops being a mutation and becomes a
+// diagnostic. `[coa-drift]` in the boot log is now the list of things a human
+// has to decide about, instead of the list of things the server already did.
+//
+// The comparison is deliberately strict (`=== '1'`): '0', 'false', 'true',
+// 'yes' and an empty string all mean OFF. A repair that rewrites posted
+// history's structure should require someone to type exactly the documented
+// value, not to guess at a truthiness convention.
+//
+// It is read per call, not captured in a module constant, so a test (or a
+// script that loads server.js) can flip it without re-requiring the module.
+function coaBootRepairEnabled() {
+  return process.env.COA_BOOT_REPAIR === '1';
+}
+
+// The diagnostic voice of every guarded block. One tag, so `grep coa-drift` on
+// a boot log is the whole drift report.
+function coaDrift(tag, message) {
+  console.log('[coa-drift] ' + tag + ' — ' + message + ' · SKIPPED (set COA_BOOT_REPAIR=1 to apply)');
+}
+
+// A short, readable sample of the rows a block would have touched. Counts
+// alone tell you something drifted; the sample tells you WHAT, which is the
+// difference between a log line and a diagnosis.
+function coaSample(rows, n = 5) {
+  return rows.slice(0, n)
+    .map((r) => String(r.code || r.id) + ' «' + String(r.name_ar || r.name_en || '') + '»')
+    .join(' · ') + (rows.length > n ? ' … +' + (rows.length - n) + ' more' : '');
+}
+
+// READ-ONLY counterpart of addColumnIfMissing: same INFORMATION_SCHEMA probe
+// and the same log-and-continue contract (a probe failure must never take the
+// server down), but it only ANSWERS the question. Used to decide whether a
+// block can key off a column a migration may not have applied yet.
+async function coaHasColumn(table, column) {
+  try {
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      [table, column]
+    );
+    return cols.length > 0;
+  } catch (e) {
+    console.log(`[DB] column probe warning (${table}.${column}):`, e.message.substring(0, 120));
+    return false;
+  }
+}
+
 // ─── Idempotent schema migrations ───
 // Checks if a column exists on a table; if not, adds it.
 async function addColumnIfMissing(table, column, definition) {
@@ -1294,6 +1364,15 @@ async function runMigrations() {
 
   // Unify the two payables accounts and backfill the party. One-shot, gated,
   // resumable — the owner runs nothing.
+  //
+  // COA_BOOT_REPAIR guard (enforced inside lib/partyDimension/bootstrap.js,
+  // which turns each step into a report when the flag is off). This one was
+  // the sharpest of the seven: it renamed a control account, deactivated
+  // another, created ~25 accounts via ensureCoreAccounts, and POSTED A REAL
+  // JOURNAL — a live accounting document — as a side effect of starting the
+  // process. The settings key is written here only when the flag is on, for
+  // the same reason as the two blocks below: a diagnostic run must not spend
+  // the one-shot.
   const PARTY_KEY = 'PartyDimensionBootstrap_v1';
   try {
     const [done] = await db.query(
@@ -1302,14 +1381,17 @@ async function runMigrations() {
       const out = await require('./lib/partyDimension/bootstrap')
         .bootstrap(db, require('./lib/glPosting'), (m) => console.log(m));
       const r = out.reclassified || {};
-      console.log('[party] bootstrap done — reclassified ' + (r.moved || 0) + ' supplier(s)' +
+      console.log('[party] bootstrap ' + (coaBootRepairEnabled() ? 'done' : 'DIAGNOSED (COA_BOOT_REPAIR off)') +
+        ' — reclassified ' + (r.moved || 0) + ' supplier(s)' +
         (r.unallocated ? ', unallocated ' + r.unallocated : '') +
         (r.journal ? ' (JE ' + r.journal + ')' : '') +
         ' · backfilled ' + ((out.backfill && out.backfill.filled) || 0) + ' line(s)' +
         ' · unattributed ' + ((out.backfill && out.backfill.unattributed) || 0));
-      await db.query(
-        "INSERT INTO settings (setting_key, setting_value) VALUES (?, '1') " +
-        "ON DUPLICATE KEY UPDATE setting_value = '1'", [PARTY_KEY]);
+      if (coaBootRepairEnabled()) {
+        await db.query(
+          "INSERT INTO settings (setting_key, setting_value) VALUES (?, '1') " +
+          "ON DUPLICATE KEY UPDATE setting_value = '1'", [PARTY_KEY]);
+      }
     }
   } catch (e) { console.error('[party] bootstrap skipped:', e.message.substring(0, 160)); }
 
@@ -1988,8 +2070,9 @@ async function runMigrations() {
   // Action log
   try { await db.query("CREATE INDEX idx_log_txn_actor ON transaction_steps_log (transaction_id, action_by, action_type)"); } catch(e) {}
   try { await db.query("CREATE INDEX idx_log_actor_step ON transaction_steps_log (action_by, workflow_definition_id, action_type)"); } catch(e) {}
-  // Replies pagination
-  try { await db.query("CREATE INDEX idx_replies_txn_created ON transaction_replies (transaction_id, created_at DESC)"); } catch(e) {}
+  // Replies pagination is added immediately after transaction_replies is
+  // created below. Keeping it here made an empty-DB first boot swallow
+  // ER_NO_SUCH_TABLE, then add the index only on the second identical boot.
   // SLA enforcement
   try { await db.query("CREATE INDEX idx_txn_due ON transactions (due_date, status)"); } catch(e) {}
 
@@ -2145,6 +2228,13 @@ async function runMigrations() {
   // V3.1: rich attachment metadata + ensure utf8mb4 on existing deploys
   await addColumnIfMissing('transaction_replies', 'attachment_name', "VARCHAR(255) DEFAULT NULL");
   await addColumnIfMissing('transaction_replies', 'attachment_mime', "VARCHAR(100) DEFAULT NULL");
+  // Must follow CREATE TABLE above. This guard also upgrades long-lived DBs
+  // without relying on a second server restart.
+  await addIndexIfMissing(
+    'transaction_replies',
+    'idx_replies_txn_created',
+    'transaction_id, created_at DESC'
+  );
   // V3.1 FORCE utf8mb4 on each Arabic-bearing text column individually.
   // This is more reliable than CONVERT TO TABLE which can fail silently or
   // partially. We MODIFY each column with explicit charset/collation.
@@ -3578,16 +3668,54 @@ async function runMigrations() {
 
   // v5.10.5 — Self-heal inventory misclassification once at boot. Any
   // user-created "مخزون / منتجات تامة / WIP" account whose ancestry leads
-  // to code 12 (الأصول الثابتة) instead of 112 (المخزون) is re-parented.
+  // to a legacy fixed-assets branch instead of 100300 (المخزون) is re-parented.
   // Idempotent + safe on cold start (silently skips when COA isn't seeded).
+  //
+  // COA_BOOT_REPAIR guard. `_repairInventoryClassification` UPDATEs parent_id
+  // on every boot; re-parenting on a NAME MATCH is exactly the class of rule
+  // that makes accounts appear to migrate on their own, so it must be asked
+  // for. The detection below is a read-only re-implementation of the helper's
+  // own predicate rather than a call into it: the helper lives in
+  // routes/erp.js, which this package does not own and which has no dry-run
+  // mode. It is kept deliberately identical in shape (name regex · ancestor
+  // is code 12 · code does not already start with the inventory group) so the
+  // count it reports is the count the repair would move.
   try {
-    const erpRouter = require('./routes/erp');
-    if (erpRouter && typeof erpRouter._repairInventoryClassification === 'function') {
-      const r = await erpRouter._repairInventoryClassification(db);
-      if (r && r.ok) {
-        console.log(`[migrate] inventory-classification: ok (${r.repaired.length} accounts repaired)`);
-      } else if (r && r.reason) {
-        console.log(`[migrate] inventory-classification: skipped (${r.reason})`);
+    if (!coaBootRepairEnabled()) {
+      const [grp] = await db.query("SELECT id FROM gl_accounts WHERE code = '100300' LIMIT 1");
+      if (!grp.length) {
+        coaDrift('inventory-classification', 'no inventory group 100300 in the chart — nothing to classify');
+      } else {
+        const [assets] = await db.query(
+          "SELECT id, code, name_ar, parent_id FROM gl_accounts WHERE type = 'asset'");
+        const byId = Object.fromEntries(assets.map((a) => [a.id, a]));
+        const ancestorCode = (id, depth = 0) => {
+          if (depth > 10) return null;
+          const a = byId[id]; if (!a) return null;
+          if (a.code === '12') return '12';
+          if (a.code === '100300') return '100300';
+          if (!a.parent_id) return a.code;
+          return ancestorCode(a.parent_id, depth + 1);
+        };
+        const inventoryRegex = /(مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material)/i;
+        const would = assets.filter((a) =>
+          inventoryRegex.test(a.name_ar || '') &&
+          a.code !== '100300' && !String(a.code).startsWith('100300') &&
+          ancestorCode(a.parent_id) === '12');
+        if (would.length) {
+          coaDrift('inventory-classification',
+            'would re-parent ' + would.length + ' inventory-named account(s) from a legacy fixed-assets branch to 100300 · ' + coaSample(would));
+        }
+      }
+    } else {
+      const erpRouter = require('./routes/erp');
+      if (erpRouter && typeof erpRouter._repairInventoryClassification === 'function') {
+        const r = await erpRouter._repairInventoryClassification(db);
+        if (r && r.ok) {
+          console.log(`[migrate] inventory-classification: ok (${r.repaired.length} accounts repaired)`);
+        } else if (r && r.reason) {
+          console.log(`[migrate] inventory-classification: skipped (${r.reason})`);
+        }
       }
     }
   } catch(e) { console.warn('[migrate] inventory-classification: error', e.message); }
@@ -5054,75 +5182,57 @@ async function runMigrations() {
   await addColumnIfMissing('audit_log', 'device_model', 'VARCHAR(120)');
   await addColumnIfMissing('audit_log', 'device_os',    'VARCHAR(80)');
 
-  // v5.11.14 — One-time relocation of legacy auto-created accounts whose
-  // parent_id points to the WRONG branch in the v5.11.8 IFRS template.
-  // Earlier versions of CORE_ACCOUNTS (lib/glPosting.js) and
-  // /gl/sync-inventory put inventory accounts under code 112 (which is
-  // "الذمم المدينة" / AR in the new chart) and AR under 113 (Inventory) —
-  // exactly the swap the user reported as "ذمم تطبيقات تحت المخزون".
-  // Idempotent: only relocates rows whose parent is currently wrong.
+  // Keep the single operational Inventory Control account under the governed
+  // 100300 folder. Obsolete 1210/1220/1230/category accounts are retired by
+  // numbered migration 0034; boot must never re-parent or renumber them.
   try {
-    const [r112] = await db.query("SELECT id FROM gl_accounts WHERE code = '112' LIMIT 1");
-    const [r113] = await db.query("SELECT id FROM gl_accounts WHERE code = '113' LIMIT 1");
-    const [r116] = await db.query("SELECT id FROM gl_accounts WHERE code = '116' LIMIT 1");
-    if (r112.length && r113.length && r116.length) {
-      const id112 = r112[0].id, id113 = r113[0].id, id116 = r116[0].id;
-      // Inventory legacy codes (1200/1210/1220/1230) → parent 113 (Inventory)
-      const [u1] = await db.query(
-        "UPDATE gl_accounts SET parent_id = ?, level = 4 " +
-        "WHERE code IN ('1200','1210','1220','1230') AND (parent_id != ? OR parent_id IS NULL)",
-        [id113, id113]
-      );
-      if (u1.affectedRows) console.log('[v5.11.14] Moved', u1.affectedRows, 'legacy inventory rows to parent 113');
-      // AR legacy code (1150) → parent 112 (AR)
-      const [u2] = await db.query(
-        "UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE code = '1150' AND (parent_id != ? OR parent_id IS NULL)",
-        [id112, id112]
-      );
-      if (u2.affectedRows) console.log('[v5.11.14] Moved', u2.affectedRows, 'legacy AR rows to parent 112');
-      // Input VAT legacy code (1290) → parent 116 (Input VAT)
-      const [u3] = await db.query(
-        "UPDATE gl_accounts SET parent_id = ?, level = 4 WHERE code = '1290' AND (parent_id != ? OR parent_id IS NULL)",
-        [id116, id116]
-      );
-      if (u3.affectedRows) console.log('[v5.11.14] Moved', u3.affectedRows, 'legacy input-VAT rows to parent 116');
-      // Auto-created inventory categories from /gl/sync-inventory: rows
-      // named "مخزون %" with codes like 11201, 11202... that should be
-      // under 113. Re-code them to 113NN AND reparent them.
-      const [stuck] = await db.query(
-        "SELECT id, code, name_ar FROM gl_accounts " +
-        "WHERE name_ar LIKE 'مخزون %' AND code REGEXP '^112[0-9]+$' AND parent_id != ?",
-        [id113]
-      );
-      for (const row of stuck) {
-        const [last] = await db.query(
-          "SELECT code FROM gl_accounts WHERE code REGEXP '^113[0-9]{2}$' ORDER BY code DESC LIMIT 1"
-        );
-        let n = 0;
-        if (last.length) n = parseInt(String(last[0].code).slice(3), 10) || 0;
-        const newCode = '113' + String(n + 1).padStart(2, '0');
-        try {
+    const [folders] = await db.query(
+      "SELECT id, level FROM gl_accounts WHERE code = '100300' LIMIT 1");
+    if (folders.length) {
+      const [drift] = await db.query(
+        "SELECT id, code, name_ar FROM gl_accounts WHERE code = '1200' AND (parent_id != ? OR parent_id IS NULL)",
+        [folders[0].id]);
+      if (!coaBootRepairEnabled()) {
+        if (drift.length) coaDrift('inventory-control',
+          'Inventory Control 1200 belongs under governed folder 100300 · ' + coaSample(drift));
+      } else {
+        if (drift.length) {
           await db.query(
-            "UPDATE gl_accounts SET code = ?, parent_id = ?, level = 4 WHERE id = ?",
-            [newCode, id113, row.id]
-          );
-          console.log('[v5.11.14] Relocated "' + row.name_ar + '" from ' + row.code + ' → ' + newCode);
-        } catch(e) { /* code collision: leave as-is, won't break anything */ }
+            "UPDATE gl_accounts SET parent_id = ?, level = ? WHERE code = '1200'",
+            [folders[0].id, Math.max(2, Number(folders[0].level || 1) + 1)]);
+          console.log('[inventory-control] moved 1200 under 100300');
+        }
       }
     }
-  } catch (e) { console.log('[v5.11.14] Legacy CoA relocation skipped:', e.message.substring(0, 120)); }
+  } catch (e) { console.log('[inventory-control] placement check skipped:', e.message.substring(0, 120)); }
 
   // V5.7.18 — One-time backfill: gl_entries.account_name was being saved
   //   as empty string by glPosting.js (now fixed). For all existing rows
   //   with an empty account_name, copy the gl_accounts.name_ar via JOIN.
   //   Idempotent — only updates rows that ARE empty, so reruns are no-ops.
+  //
+  // COA_BOOT_REPAIR guard. This is the mildest block of the seven — it fills a
+  // blank label and can only ever run once per row — but it WRITES TO POSTED
+  // JOURNAL LINES on every boot, and boot is the wrong place to decide that.
+  // The snapshot it copies is taken from today's gl_accounts.name_ar, so a
+  // row backfilled after an account was renamed gets the NEW name stamped
+  // onto an OLD journal. That is a judgement call, not a no-op, so it is now
+  // counted and reported instead of applied silently.
   try {
-    const [r] = await db.query(
-      `UPDATE gl_entries e
-         JOIN gl_accounts ga ON ga.id = e.account_id
-          SET e.account_name = COALESCE(NULLIF(ga.name_ar,''), NULLIF(ga.name_en,''), e.account_code)
-        WHERE e.account_name IS NULL OR e.account_name = ''`);
-    if (r && r.affectedRows) console.log('[V5.7.18] Backfilled', r.affectedRows, 'gl_entries.account_name rows');
+    if (!coaBootRepairEnabled()) {
+      const [[blank]] = await db.query(
+        "SELECT COUNT(*) AS n FROM gl_entries WHERE account_name IS NULL OR account_name = ''");
+      if (Number(blank.n) > 0) {
+        coaDrift('V5.7.18', 'would backfill account_name on ' + blank.n + ' posted journal line(s)');
+      }
+    } else {
+      const [r] = await db.query(
+        `UPDATE gl_entries e
+           JOIN gl_accounts ga ON ga.id = e.account_id
+            SET e.account_name = COALESCE(NULLIF(ga.name_ar,''), NULLIF(ga.name_en,''), e.account_code)
+          WHERE e.account_name IS NULL OR e.account_name = ''`);
+      if (r && r.affectedRows) console.log('[V5.7.18] Backfilled', r.affectedRows, 'gl_entries.account_name rows');
+    }
   } catch (e) { /* table may not exist yet on fresh installs — ignore */ }
 
   // Workflow step routing flags — role-based employee resolution rules
@@ -6103,20 +6213,30 @@ async function runMigrations() {
       vat_category CHAR(1) NOT NULL DEFAULT 'S',
       notes VARCHAR(300) NULL,
       sort INT NOT NULL DEFAULT 0,
+      combo_choices_json TEXT NULL,
       INDEX idx_pol_order (order_id)
     ) ENGINE=InnoDB
   `);
+  // The POS router used to own this upgrade lazily. On an empty database its
+  // module-level ensure runs before this table exists, so the ALTER failed and
+  // the column appeared only after the next boot. Keep the router fallback for
+  // old deployments, but make the canonical boot path converge immediately.
+  await addColumnIfMissing('pos_order_lines', 'combo_choices_json', 'TEXT NULL');
   await createTableIfMissing('pos_payments', `
     CREATE TABLE pos_payments (
       id VARCHAR(50) PRIMARY KEY,
       order_id VARCHAR(40) NOT NULL,
-      method VARCHAR(20) NOT NULL,
+      method VARCHAR(50) NOT NULL,
       amount DECIMAL(12,2) NOT NULL,
       ref VARCHAR(100) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_pp_order (order_id)
     ) ENGINE=InnoDB
   `);
+  // Owner-defined payment-method names exceed the original 20-char budget.
+  // modifyColumnDefinition is idempotent and upgrades existing databases in
+  // this same first migration pass instead of waiting for routes/pos-v2.js.
+  await modifyColumnDefinition('pos_payments', 'method', 'VARCHAR(50) NOT NULL');
 
   // ── Phase U — per-line frozen UoM snapshot columns (runs AFTER all v2 line
   // tables above exist). NULL-safe: legacy rows keep NULL and behave as base. ──
@@ -7289,9 +7409,47 @@ async function runMigrations() {
   // we silently lost the migration and roots 3/4 stayed as leaves in
   // the UI. Now done in two explicit steps with NO try/catch so any
   // failure shows up in server logs.
+  //
+  // ── WHY THIS BLOCK IS *NOT* BEHIND COA_BOOT_REPAIR ──────────────────────
+  //
+  // It is the one exception among the boot-time chart writers, and the reason
+  // is what it writes. Every other block moves an account (parent_id), renames
+  // it, renumbers it, creates it or posts money. This one only sets DERIVED
+  // PRESENTATION FLAGS on rows that already exist:
+  //
+  //   * `display_order` (above) is backfilled ONLY where it is NULL, to the
+  //     row's current position in the code-sorted view. It is additive, it
+  //     converges after one run, and it cannot move an account or relabel
+  //     posted money. Gating it would leave a fresh install with a chart that
+  //     has no order at all.
+  //   * `is_folder = 1 where the row has children` is not a repair, it is a
+  //     restatement of a fact the data already asserts: an account WITH
+  //     children is a folder by definition. There is no drift to preserve.
+  //
+  // ── WHAT WAS ACTUALLY WRONG HERE, AND IS NOW FIXED ─────────────────────
+  //
+  // The root force-set. `code IN ('1','2','3','4','5')` is true in dev and
+  // FALSE IN PRODUCTION, where the roots are 100000..500000 — so in prod this
+  // has always matched zero rows and the log has always cheerfully reported
+  // "0 root accounts (1-5)". Worse, on a chart that later grows a real
+  // posting account numbered '5', it would silently promote it to a folder.
+  //
+  // Migration 0028 added `is_system_root`, which marks the genuine roots by
+  // structure (parentless AND the canonical account of its type) rather than
+  // by a numbering scheme that differs per environment. Key off that when the
+  // column is present; fall back to the literal codes only on a database that
+  // has not run 0028 yet, so an un-migrated dev box still gets its roots.
   try {
-    const [r1] = await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5')");
-    console.log('[v5.10.43] is_folder enforced for ' + (r1.affectedRows || 0) + ' root accounts (1-5)');
+    const hasSystemRoot = await coaHasColumn('gl_accounts', 'is_system_root');
+    let r1;
+    if (hasSystemRoot) {
+      [r1] = await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE is_system_root = 1 AND COALESCE(is_folder,0) = 0");
+      console.log('[v5.10.43] is_folder enforced for ' + (r1.affectedRows || 0) + ' system root account(s) (is_system_root = 1)');
+    } else {
+      [r1] = await db.query("UPDATE gl_accounts SET is_folder = 1 WHERE code IN ('1','2','3','4','5')");
+      console.log('[v5.10.43] is_folder enforced for ' + (r1.affectedRows || 0) +
+        ' root accounts (1-5) — legacy fallback, gl_accounts.is_system_root absent (run migration 0028)');
+    }
 
     const [parents] = await db.query("SELECT DISTINCT parent_id AS pid FROM gl_accounts WHERE parent_id IS NOT NULL");
     const ids = parents.map(p => p.pid).filter(Boolean);
@@ -7589,6 +7747,13 @@ async function runMigrations() {
   //
   // Runs once, gated on a settings key, and is a no-op on a chart that never
   // had the defect.
+  //
+  // COA_BOOT_REPAIR guard. The settings key means this runs once, not that it
+  // is safe to run unasked: it CREATES account `115` when the chart lacks it,
+  // and re-parents anything whose NAME looks like custody. Note where the
+  // guard sits — the settings key is written INSIDE the repair branch. Writing
+  // it in diagnostic mode would mark the repair "done" without doing it, and
+  // the one-shot would be spent forever.
   try {
     const [done] = await db.query(
       "SELECT setting_value FROM settings WHERE setting_key = 'CustodyOutOfInventory_v1' LIMIT 1");
@@ -7602,37 +7767,50 @@ async function runMigrations() {
           WHERE (a.name_ar LIKE '%عهدة%' OR a.name_ar LIKE '%عهد %' OR a.name_ar LIKE '%سلفة%'
                  OR a.name_ar LIKE '%سلف %' OR a.name_en LIKE '%custody%' OR a.name_en LIKE '%advance%')
             AND (p.code = '113' OR p.code LIKE '113%')`);
-      if (cands.length) {
-        // Resolve (or create) the custody group 115 without importing the
-        // route module here — boot must not depend on router load order.
-        let groupId = null;
-        const [g] = await db.query("SELECT id FROM gl_accounts WHERE code = '115' LIMIT 1");
-        if (g.length) groupId = g[0].id;
-        else {
-          const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
-          groupId = 'GL-115';
-          await db.query(
-            `INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_folder, report_section)
-             VALUES (?,?,?,?,?,?,1,?)`,
-            [groupId, '115', 'العهد والسلف', 'asset', p11.length ? p11[0].id : null, p11.length ? 3 : 2, 'receivables']);
+      if (!coaBootRepairEnabled()) {
+        if (cands.length) {
+          const [g115] = await db.query("SELECT id FROM gl_accounts WHERE code = '115' LIMIT 1");
+          coaDrift('custody-fix', 'would move ' + cands.length +
+            ' custody/advance account(s) out of the inventory subtree to 115' +
+            (g115.length ? '' : ' (and would CREATE 115 العهد والسلف, which is absent)') +
+            ' · ' + coaSample(cands));
         }
-        let moved = 0;
-        for (const c of cands) {
-          if (c.id === groupId) continue;       // never re-parent the group into itself
-          await db.query(
-            "UPDATE gl_accounts SET parent_id = ?, report_section = 'receivables' WHERE id = ?",
-            [groupId, c.id]);
-          console.log('[custody-fix] ' + c.code + ' «' + (c.name_ar || '') + '» : ' +
-                      (c.parent_code || '?') + ' (مخزون) → 115 العهد والسلف');
-          moved++;
+        // The one-shot key is NOT written here. Marking the repair "done"
+        // without doing it would spend it forever.
+      } else {
+        if (cands.length) {
+          // Resolve (or create) the custody group 115 without importing the
+          // route module here — boot must not depend on router load order.
+          let groupId = null;
+          const [g] = await db.query("SELECT id FROM gl_accounts WHERE code = '115' LIMIT 1");
+          if (g.length) groupId = g[0].id;
+          else {
+            const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11' LIMIT 1");
+            groupId = 'GL-115';
+            await db.query(
+              `INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_folder, report_section)
+               VALUES (?,?,?,?,?,?,1,?)`,
+              [groupId, '115', 'العهد والسلف', 'asset', p11.length ? p11[0].id : null, p11.length ? 3 : 2, 'receivables']);
+          }
+          let moved = 0;
+          for (const c of cands) {
+            if (c.id === groupId) continue;       // never re-parent the group into itself
+            await db.query(
+              "UPDATE gl_accounts SET parent_id = ?, report_section = 'receivables' WHERE id = ?",
+              [groupId, c.id]);
+            console.log('[custody-fix] ' + c.code + ' «' + (c.name_ar || '') + '» : ' +
+                        (c.parent_code || '?') + ' (مخزون) → 115 العهد والسلف');
+            moved++;
+          }
+          // Depth changed for everything that moved.
+          try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+          console.log('[custody-fix] relocated ' + moved + ' custody account(s) out of the inventory subtree');
         }
-        // Depth changed for everything that moved.
-        try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
-        console.log('[custody-fix] relocated ' + moved + ' custody account(s) out of the inventory subtree');
+        // Only a run that actually did the work may claim the one-shot.
+        await db.query(
+          "INSERT INTO settings (setting_key, setting_value) VALUES ('CustodyOutOfInventory_v1','1') " +
+          "ON DUPLICATE KEY UPDATE setting_value = '1'");
       }
-      await db.query(
-        "INSERT INTO settings (setting_key, setting_value) VALUES ('CustodyOutOfInventory_v1','1') " +
-        "ON DUPLICATE KEY UPDATE setting_value = '1'");
     }
   } catch (e) { console.error('[custody-fix]', e.message); }
 
@@ -7672,10 +7850,21 @@ async function runMigrations() {
   // If `112` holds posted entries, this REFUSES to rename it and logs the
   // balance instead: reclassifying money that has already been posted is an
   // accountant's journal entry, not a migration's UPDATE.
+  //
+  // COA_BOOT_REPAIR guard. Same reasoning as the custody relocation: the
+  // settings key makes it one-shot, not consented-to. It re-parents on a NAME
+  // match and RENAMES a control account, and the one-shot key is written only
+  // on the branch that actually did the work — marking it done in diagnostic
+  // mode would burn the repair without performing it.
   try {
     const [done] = await db.query(
       "SELECT setting_value FROM settings WHERE setting_key = 'InventoryDuplicateMerge_v1' LIMIT 1");
-    if (!done.length) {
+    const [modernInventoryFolders] = await db.query(
+      "SELECT id FROM gl_accounts WHERE code = '100300' LIMIT 1");
+    // This repair belongs only to pre-template charts. Once the governed
+    // 100300 folder exists, migration 0034 owns retirement and mapping; the
+    // legacy 112→113 heuristic must never reshape the modern chart.
+    if (!done.length && !modernInventoryFolders.length) {
       const [a112] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '112' LIMIT 1");
       const [a113] = await db.query("SELECT id, code, name_ar FROM gl_accounts WHERE code = '113' LIMIT 1");
       if (a112.length && a113.length) {
@@ -7686,32 +7875,49 @@ async function runMigrations() {
         if (/مخزون/.test(nm112)) {
           const [kids] = await db.query(
             "SELECT id, code, name_ar FROM gl_accounts WHERE parent_id = ?", [id112]);
-          let moved = 0;
-          for (const k of kids) {
-            if (!/مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material/i.test(k.name_ar || '')) continue;
-            await db.query(
-              "UPDATE gl_accounts SET parent_id = ?, report_section = 'inventory' WHERE id = ?", [id113, k.id]);
-            console.log('[inv-merge] ' + k.code + ' «' + (k.name_ar || '') + '» : 112 → 113 (' + (a113[0].name_ar || '') + ')');
-            moved++;
-          }
+          // The candidate set, resolved once and shared by both modes so the
+          // diagnostic can never describe a different set than the repair moves.
+          const inv = kids.filter((k) =>
+            /مخزون|منتجات تامة|منتجات تحت التشغيل|finished good|wip|raw material/i.test(k.name_ar || ''));
           const [[cnt]] = await db.query(
             "SELECT COUNT(*) AS n FROM gl_entries WHERE account_id = ?", [id112]);
-          if (Number(cnt.n) === 0) {
-            await db.query(
-              "UPDATE gl_accounts SET name_ar = 'ذمم العملاء', report_section = 'receivables' WHERE id = ?", [id112]);
-            console.log('[inv-merge] 112 renamed «' + nm112 + '» → «ذمم العملاء» (no posted entries — safe)');
+          if (!coaBootRepairEnabled()) {
+            coaDrift('inv-merge', 'a duplicate inventory group exists at 112 «' + nm112 + '» — would move ' +
+              inv.length + ' child account(s) to 113' + (inv.length ? ' · ' + coaSample(inv) : '') +
+              (Number(cnt.n) === 0
+                ? ', then rename 112 → «ذمم العملاء» (it holds no posted lines)'
+                : ', and would KEEP the name of 112: it holds ' + cnt.n + ' posted line(s)'));
           } else {
-            console.warn('[inv-merge] 112 «' + nm112 + '» KEPT: it carries ' + cnt.n +
-              ' posted entries. Renaming it would relabel posted money. It needs a ' +
-              'reclassification journal entry approved by an accountant — not a migration.');
+            let moved = 0;
+            for (const k of inv) {
+              await db.query(
+                "UPDATE gl_accounts SET parent_id = ?, report_section = 'inventory' WHERE id = ?", [id113, k.id]);
+              console.log('[inv-merge] ' + k.code + ' «' + (k.name_ar || '') + '» : 112 → 113 (' + (a113[0].name_ar || '') + ')');
+              moved++;
+            }
+            if (Number(cnt.n) === 0) {
+              await db.query(
+                "UPDATE gl_accounts SET name_ar = 'ذمم العملاء', report_section = 'receivables' WHERE id = ?", [id112]);
+              console.log('[inv-merge] 112 renamed «' + nm112 + '» → «ذمم العملاء» (no posted entries — safe)');
+            } else {
+              console.warn('[inv-merge] 112 «' + nm112 + '» KEPT: it carries ' + cnt.n +
+                ' posted entries. Renaming it would relabel posted money. It needs a ' +
+                'reclassification journal entry approved by an accountant — not a migration.');
+            }
+            try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
+            console.log('[inv-merge] moved ' + moved + ' inventory account(s) from 112 to 113');
           }
-          try { await require('./lib/coa/tree').recomputeLevels(db); } catch (_) {}
-          console.log('[inv-merge] moved ' + moved + ' inventory account(s) from 112 to 113');
         }
       }
-      await db.query(
-        "INSERT INTO settings (setting_key, setting_value) VALUES ('InventoryDuplicateMerge_v1','1') " +
-        "ON DUPLICATE KEY UPDATE setting_value = '1'");
+      // Only a run that actually did the work may claim the one-shot; a
+      // diagnostic run that wrote this key would retire the repair unperformed.
+      if (coaBootRepairEnabled()) {
+        await db.query(
+          "INSERT INTO settings (setting_key, setting_value) VALUES ('InventoryDuplicateMerge_v1','1') " +
+          "ON DUPLICATE KEY UPDATE setting_value = '1'");
+      }
+    } else if (!done.length && modernInventoryFolders.length) {
+      coaDrift('inv-merge', 'legacy 112→113 repair retired because governed inventory folder 100300 exists');
     }
   } catch (e) { console.error('[inv-merge]', e.message); }
 

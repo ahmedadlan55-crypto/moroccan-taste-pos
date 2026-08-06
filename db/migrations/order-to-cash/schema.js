@@ -17,6 +17,57 @@ const MONEY = 'DECIMAL(14,2)';
 const QTY = 'DECIMAL(16,4)';
 const RATE = 'DECIMAL(18,6)';
 
+/**
+ * Populate the amount that actually entered the SalesReturnCOGS journal for
+ * finalized legacy returns.
+ *
+ * The return-line cost snapshot is not necessarily that amount: POS menu lines
+ * restore their frozen inventory components and each component is rounded to
+ * money scale before posting. A partial return can therefore carry a 0.01 line
+ * snapshot while two 0.01 components contribute 0.02 to GL. This backfill uses
+ * the same population as SalesReturnService._restore(): positive-quantity
+ * components first, otherwise the direct inventory line. When a real COGS
+ * journal proves the posting, its non-restock lines are explicitly zero because
+ * they never reverse COGS. A legacy return with no proven journal is not touched
+ * at all, so every one of its lines stays NULL (unknown rather than invented).
+ *
+ * Only NULL rows are touched, so a restart cannot rewrite a value persisted by
+ * the posting transaction. Draft/approved/cancelled rows stay NULL: no COGS
+ * reversal has happened for them.
+ */
+async function backfillReversedCogs(db, log = () => {}) {
+  const [r] = await db.query(
+    `UPDATE sales_return_lines rl
+       JOIN sales_returns sr ON sr.id = rl.return_id
+       JOIN gl_journals gj
+         ON gj.id = sr.cogs_journal_id
+        AND gj.reference_type = 'SalesReturnCOGS'
+        AND gj.reference_id = sr.id
+        SET rl.cogs_reversed_amount = CASE
+          WHEN COALESCE(rl.restock, 0) <> 1 THEN 0
+          WHEN EXISTS (
+            SELECT 1 FROM sales_return_line_components c
+             WHERE c.return_line_id = rl.id
+          ) THEN COALESCE((
+            SELECT SUM(CASE
+              WHEN c.restored_base_qty > 0
+               AND c.inv_item_id IS NOT NULL
+               AND c.warehouse_id IS NOT NULL
+              THEN c.total_cost ELSE 0 END)
+              FROM sales_return_line_components c
+             WHERE c.return_line_id = rl.id
+          ), 0)
+          WHEN rl.item_id IS NOT NULL
+           AND rl.warehouse_id IS NOT NULL
+           AND rl.base_qty > 0 THEN rl.cost_snapshot
+          ELSE 0
+        END
+      WHERE sr.status IN ('posted','reversed')
+        AND rl.cogs_reversed_amount IS NULL`);
+  if (r && r.affectedRows) log(`  ~ sales_return_lines.cogs_reversed_amount backfilled (${r.affectedRows})`);
+  return Number((r && r.affectedRows) || 0);
+}
+
 async function apply(db, log = () => {}) {
   // ── 1. ar_documents — the single AR ledger (invoice | debit_note | credit_note)
   await H.createTable(db, 'ar_documents', `
@@ -172,6 +223,7 @@ async function apply(db, log = () => {}) {
       status ENUM('draft','approved','posted','reversed','cancelled') NOT NULL DEFAULT 'draft',
       credit_note_id ${ID} NULL,
       journal_id ${ID} NULL,
+      cogs_journal_id ${ID} NULL,
       reversal_journal_id ${ID} NULL,
       version INT NOT NULL DEFAULT 1,
       idempotency_key VARCHAR(120) NULL,
@@ -210,6 +262,7 @@ async function apply(db, log = () => {}) {
       vat_amount ${MONEY} NOT NULL DEFAULT 0,
       gross_amount ${MONEY} NOT NULL DEFAULT 0,
       cost_snapshot ${MONEY} NOT NULL DEFAULT 0,
+      cogs_reversed_amount ${MONEY} NULL,
       lot_allocations_json TEXT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY ix_retl_ret (return_id),
@@ -362,6 +415,11 @@ async function apply(db, log = () => {}) {
     await H.addColumn(db, 'sales_return_lines', 'restock_reason', 'VARCHAR(300) NULL', log);
     await H.addColumn(db, 'sales_return_lines', 'restock_by', 'VARCHAR(80) NULL', log);
     await H.addColumn(db, 'sales_return_lines', 'restock_at', 'DATETIME NULL', log);
+    // Exact cost that reached the return COGS journal. Nullable until the return
+    // posts; 0 is a real finalized value (not restocked / zero-cost restock).
+    // Reading this column keeps analytics at the return-line fact grain and
+    // avoids joining component rows into every profitability request.
+    await H.addColumn(db, 'sales_return_lines', 'cogs_reversed_amount', `${MONEY} NULL`, log);
   }
 
   // The return's own component snapshot, mirroring ar_document_line_components.
@@ -447,6 +505,16 @@ async function apply(db, log = () => {}) {
     // journal was unreferenced by the document that caused it.
     await H.addColumn(db, 'sales_returns', 'cogs_journal_id', `${ID} NULL`, log);
   }
+  // Historical values are only knowable when the return itself points at a
+  // real SalesReturnCOGS journal. Older returns traversed a dead restock branch,
+  // so deriving a positive amount from their snapshots alone would fabricate a
+  // COGS reversal that never reached the ledger. Unproven rows deliberately
+  // remain NULL (unknown), rather than being rewritten as zero or a guess.
+  if (await H.tableExists(db, 'sales_return_lines') &&
+      await H.tableExists(db, 'sales_return_line_components') &&
+      await H.tableExists(db, 'gl_journals')) {
+    await backfillReversedCogs(db, log);
+  }
 
   // ── 14. ZATCA hash chain — a real, lockable head for O2C documents
   // ZatcaDocumentService computed previousHash from MAX(created_at) over
@@ -524,4 +592,4 @@ async function apply(db, log = () => {}) {
   return true;
 }
 
-module.exports = { apply };
+module.exports = { apply, backfillReversedCogs };

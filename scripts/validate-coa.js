@@ -1,12 +1,15 @@
 // Comprehensive COA numbering validator.
 // Checks:
-//   1. Every child's code starts with its parent's code (strict hierarchy)
+//   1. Every child stays inside its parent's declared numeric namespace
 //   2. Every child's level = parent's level + 1
 //   3. parentCode points to an existing account (no orphans)
 //   4. No duplicate codes
 //   5. Root accounts have empty parentCode + level 1
 //   6. Folders contain children; leaves don't
 //   7. Account type matches parent type
+//   8. Canonical template is bilingual and follows the app's six-digit policy
+//   9. Exactly five IFRS presentation classes are present. This is an internal
+//      governance policy, not a claim that Saudi regulation mandates a code set.
 const fs = require('fs');
 const path = require('path');
 
@@ -18,27 +21,30 @@ const errors = [];
 
 // Pass 1: build index + duplicate detection
 data.forEach((a, i) => {
+  if (!/^\d{6}$/.test(String(a.code || ''))) {
+    errors.push(`[CODE-FORMAT] code "${a.code}" must be exactly six numeric digits in the canonical template`);
+  }
+  if (!String(a.nameAr || '').trim()) errors.push(`[NAME-AR] "${a.code}" is missing its Arabic name`);
+  if (!String(a.nameEn || '').trim()) errors.push(`[NAME-EN] "${a.code}" is missing its English name`);
+  if (!Number.isInteger(a.level) || a.level < 1 || a.level > 4) {
+    errors.push(`[LEVEL-RANGE] "${a.code}" has level ${a.level}; canonical depth is 1..4`);
+  }
   if (byCode[a.code]) {
     errors.push(`[DUP] code "${a.code}" appears at index ${byCode[a.code]._idx} and ${i}`);
   }
   byCode[a.code] = Object.assign({ _idx: i }, a);
 });
 
-// Pass 2: parent existence + group-prefix + level + type
-// v5.10.84 — Updated for the 6-digit GGMMPP format. The literal
-// "code starts with parent code" rule from the old prefix-based design
-// no longer applies (e.g. 100200 doesn't start with 100000 because the
-// MM digits differ). Instead we check that child & parent share the
-// same GG (first 2 digits = group code) — that's the structural
-// invariant of the new standard.
-function _stripTrailingZeros(s) { return String(s || '').replace(/0+$/, ''); }
+// Pass 2: parent existence + numeric namespace + level + type. The governed
+// six-digit policy uses one significant digit per hierarchy level:
+// X00000 → XY0000 → XYZ000 → XYZW00. Parent links remain authoritative;
+// this prefix rule catches a child attached to the wrong presentation family.
 data.forEach((a, i) => {
   // Root check
   if (!a.parentCode) {
     if (a.level !== 1) errors.push(`[LEVEL] root "${a.code}" has level ${a.level}, expected 1`);
-    // Roots must end in all-zeros for the GGMMPP convention
-    if (String(a.code).length === 6 && !/^(10|20|30|40|50)0000$/.test(String(a.code))) {
-      errors.push(`[ROOT-FORMAT] root "${a.code}" should be GG0000 (10/20/30/40/50 + 0000)`);
+    if (!/^[1-5]00000$/.test(String(a.code))) {
+      errors.push(`[ROOT-FORMAT] root "${a.code}" should be X00000 (100000..500000)`);
     }
     return;
   }
@@ -48,11 +54,12 @@ data.forEach((a, i) => {
     errors.push(`[ORPHAN] "${a.code}" (${a.nameAr}) parentCode="${a.parentCode}" does NOT exist`);
     return;
   }
-  // GG-prefix rule — child and parent must share the first 2 digits (group)
+  // A level-N parent owns its first N significant digits.
   const childCode  = String(a.code || '');
   const parentCode = String(a.parentCode || '');
-  if (childCode.length >= 2 && parentCode.length >= 2 && childCode.substr(0, 2) !== parentCode.substr(0, 2)) {
-    errors.push(`[GROUP] "${a.code}" (${a.nameAr}) is under parent "${a.parentCode}" (${p.nameAr}) but GG differs`);
+  const namespace = parentCode.slice(0, p.level);
+  if (namespace && !childCode.startsWith(namespace)) {
+    errors.push(`[CHILD-PREFIX] "${a.code}" (${a.nameAr}) is outside parent "${a.parentCode}" namespace "${namespace}"`);
   }
   // Level rule
   if (a.level !== (p.level || 0) + 1) {
@@ -81,24 +88,48 @@ data.forEach(a => {
   }
 });
 
-// Pass 4: code prefix sanity for top-level numbering convention
-// Standard: 1=Assets, 2=Liabilities, 3=Equity, 4=Revenue, 5=COGS, 6=OpEx
+// Pass 4: this product's code-prefix policy. It is deliberately stated as an
+// internal convention: IFRS/SOCPA govern recognition and presentation, not a
+// universal Saudi account-numbering sequence.
 const typeByFirstDigit = {
   '1': 'asset',
   '2': 'liability',
   '3': 'equity',
   '4': 'revenue',
-  '5': 'expense',  // COGS
-  '6': 'expense',  // OpEx
-  '7': 'expense'   // Other (or revenue)
+  '5': 'expense'
 };
 data.forEach(a => {
   const first = String(a.code).charAt(0);
   const expected = typeByFirstDigit[first];
-  if (expected && a.type !== expected && !(first === '7')) {
+  if (expected && a.type !== expected) {
     errors.push(`[CONVENTION] "${a.code}" (${a.nameAr}) starts with ${first} → expected type "${expected}" but got "${a.type}"`);
   }
 });
+
+// The five roots and their terms are part of this product's accounting
+// policy. In particular, "الالتزامات" is used consistently with the
+// statement-of-financial-position language instead of the older "الخصوم".
+const ROOT_POLICY = {
+  '100000': { type: 'asset', nameAr: 'الأصول', nameEn: 'Assets' },
+  '200000': { type: 'liability', nameAr: 'الالتزامات', nameEn: 'Liabilities' },
+  '300000': { type: 'equity', nameAr: 'حقوق الملكية', nameEn: 'Equity' },
+  '400000': { type: 'revenue', nameAr: 'الإيرادات', nameEn: 'Revenue' },
+  '500000': { type: 'expense', nameAr: 'المصروفات', nameEn: 'Expenses' },
+};
+const roots = data.filter((a) => !a.parentCode);
+if (roots.length !== 5) errors.push(`[ROOT-COUNT] expected exactly 5 canonical roots, found ${roots.length}`);
+for (const [code, wanted] of Object.entries(ROOT_POLICY)) {
+  const row = byCode[code];
+  if (!row || row.parentCode) {
+    errors.push(`[ROOT-POLICY] canonical root ${code} is missing or is not a root`);
+    continue;
+  }
+  for (const key of ['type', 'nameAr', 'nameEn']) {
+    if (row[key] !== wanted[key]) {
+      errors.push(`[ROOT-POLICY] ${code}.${key} is "${row[key]}"; expected "${wanted[key]}"`);
+    }
+  }
+}
 
 // Output
 console.log('═══════════════════════════════════════════════════════════════');

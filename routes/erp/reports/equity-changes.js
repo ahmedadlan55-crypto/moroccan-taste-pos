@@ -51,6 +51,7 @@ const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
+const classify = require('../../../lib/coa/classify');
 const bs = require('./balance-sheet'); // router + shared helpers (exports)
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -61,8 +62,7 @@ const EQUITY_BUCKETS = [
   { key: 'capital',  label: 'رأس المال',              isContra: false },
   { key: 'retained', label: 'الأرباح المحتجزة',        isContra: false },
   { key: 'drawings', label: 'المسحوبات',               isContra: true  },
-  { key: 'reserves', label: 'الاحتياطيات',             isContra: false },
-  { key: 'zakat',    label: 'مخصص الزكاة الشرعية',     isContra: false }
+  { key: 'reserves', label: 'الاحتياطيات',             isContra: false }
 ];
 
 // Dispatch the REAL /reports/balance-sheet-ifrs handler in-process and
@@ -116,7 +116,10 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
 
     // ── 1) Per LEAF equity account: opening split + period movement ──
     const [accRows] = await db.query(
-      `SELECT a.id, a.code, a.name_ar, a.name_en, a.report_section,
+      // PACKAGE G — project type + the stored classification columns so the
+      // shared classifier can report provenance instead of guessing silently.
+      `SELECT a.id, a.code, a.name_ar, a.name_en, a.report_section, a.type,
+              a.normal_balance, a.is_contra, a.status,
               COALESCE(SUM(CASE WHEN DATE(j.journal_date) <  ? THEN e.debit  ELSE 0 END), 0) AS open_d,
               COALESCE(SUM(CASE WHEN DATE(j.journal_date) <  ? THEN e.credit ELSE 0 END), 0) AS open_c,
               COALESCE(SUM(CASE WHEN DATE(j.journal_date) >= ? THEN e.debit  ELSE 0 END), 0) AS per_d,
@@ -127,7 +130,8 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
         WHERE j.status = 'posted' AND DATE(j.journal_date) <= ?
           AND a.type = 'equity'
           AND ${LEAF}
-        GROUP BY a.id, a.code, a.name_ar, a.name_en, a.report_section
+        GROUP BY a.id, a.code, a.name_ar, a.name_en, a.report_section, a.type,
+                 a.normal_balance, a.is_contra, a.status
         ORDER BY ${coaTree.ORDER_BY('a')}`,
       [from, from, from, from, to]
     );
@@ -179,6 +183,9 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
     );
 
     // ── Bucketize with the balance sheet's OWN classifier + contra flip ──
+    // PACKAGE G — accounts whose bucket came from the code prefix rather than
+    // from a stored report_section. Reported, never hidden.
+    const unmapped = [];
     const byKey = {};
     const buckets = EQUITY_BUCKETS.map(b => {
       const bucket = { key: b.key, label: b.label, isContra: b.isContra, accounts: [], opening: 0, closing: 0 };
@@ -198,7 +205,9 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
       // EXACT mirror of balance-sheet-ifrs: report_section first, code
       // prefix fallback; the pushToGroup() flip applies when the target
       // group is contra (equity → only 'drawings').
-      const cls = bs.classifyByReportSection(a.report_section) || bs.classifyEquity(a.code);
+      const stored = bs.classifyByReportSection(a.report_section);
+      if (!stored) unmapped.push(classify.unmappedRow(a, classify.sectionOf(a)));
+      const cls = stored || bs.classifyEquity(a.code);
       const isContra = bs.CONTRA_GROUP_KEYS.has(cls[1]);
       // A mis-sectioned equity account (report_section pointing at an
       // asset/liability bucket) still counts toward totEq on the balance
@@ -280,7 +289,9 @@ router.get('/reports/equity-changes', requireCapability('finance.reports.view'),
       reconciliation: {
         bsTotEq: r2(bsTotEq),
         matches: Math.abs(totalClosing - bsTotEq) < 0.01
-      }
+      },
+      // PACKAGE G — equity accounts bucketed from a code-prefix guess.
+      unmapped
     });
   } catch (e) {
     console.error('[erp/reports/equity-changes] failed:', e && (e.code || e.message));

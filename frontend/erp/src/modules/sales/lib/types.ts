@@ -75,6 +75,11 @@ export interface Invoice {
   document_number: string;
   document_type: "invoice" | "debit_note" | "credit_note";
   source_type: string;
+  /** List-view enrichment from InvoiceService; optional on detail responses. */
+  branch_name?: string | null;
+  branch_name_en?: string | null;
+  cashier_name?: string | null;
+  channel?: string | null;
   customer_id?: string | null;
   customer_name?: string | null;
   issue_date: string;

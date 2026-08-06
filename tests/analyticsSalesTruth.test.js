@@ -88,6 +88,16 @@ const dim = (id) => DIMENSIONS.find((d) => d.id === id);
   const cogs = metric('cogs');
   check('returns_cogs is capability-gated exactly like cogs',
     rc && cogs && rc.requiresCap === cogs.requiresCap, rc && rc.requiresCap);
+
+  const reversed = metric('returns_cogs_reversed');
+  check('returns_cogs_reversed exists on the RETURN fact',
+    reversed && reversed.fact === 'return', reversed && reversed.fact);
+  check('profitability reads the exact amount persisted by the GL posting transaction',
+    reversed && reversed.sql === 'SUM(rl.cogs_reversed_amount)', reversed && reversed.sql);
+  check('profitability never re-derives reversed COGS from the rounded line snapshot',
+    reversed && !/restock|cost_snapshot/.test(reversed.sql), reversed && reversed.sql);
+  check('returns_cogs_reversed is capability-gated exactly like cogs',
+    reversed && cogs && reversed.requiresCap === cogs.requiresCap, reversed && reversed.requiresCap);
 }
 
 // ── 5. A zero cost must be MEASURABLE, not just invisible ──────────────────
@@ -111,6 +121,15 @@ const dim = (id) => DIMENSIONS.find((d) => d.id === id);
   // It must be additive: a derived metric would need an equation and would not
   // survive the ROLLUP total row the planner appends.
   check('uncosted_net is additive', un && un.kind === 'additive', un && un.kind);
+
+  const unreturned = metric('uncosted_returns_net');
+  check('uncosted_returns_net exists on the RETURN fact',
+    unreturned && unreturned.fact === 'return', unreturned && unreturned.fact);
+  check('uncosted return exposure counts restocked zero-cost OR unproven-COGS lines',
+    unreturned && /rl\.restock/.test(unreturned.sql) &&
+      /rl\.cogs_reversed_amount IS NULL/.test(unreturned.sql) &&
+      /COALESCE\(rl\.cost_snapshot, 0\) = 0/.test(unreturned.sql) &&
+      /rl\.net_amount/.test(unreturned.sql), unreturned && unreturned.sql);
 }
 
 // ── 6. A statement may not add figures from different tax bases ────────────

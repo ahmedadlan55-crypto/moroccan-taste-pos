@@ -623,21 +623,17 @@ function _glCodeFor(parentCode, seed) {
 }
 
 /**
- * The cash parent in whichever COA template this install actually has:
- *   '1101' (النقدية — the routes/cash.js convention this storage belongs to)
- * → '111'  (Cash and Bank — the v5.11.8 IFRS template in lib/glPosting)
- * → '1110' (النقدية — the CORE account ensureCoreAccounts always seeds)
- * → '11'   (last resort ancestor).
- * ensureCoreAccounts runs first so the '1110' rung is guaranteed to exist even
- * on a chart that has never been seeded — otherwise a fresh install would take
- * the coa_not_seeded path and a cashier could not record a movement at all.
+ * Resolve the canonical cash control account. The till is operational detail;
+ * it must never create a separate general-ledger account or infer a parent from
+ * a legacy prefix. ensureCoreAccounts provides the canonical 111100 account on
+ * old installations until migration 0036 has rebuilt the complete chart.
  * Returns { id, code, level } or null.
  */
 async function _cashParentAccount(conn) {
   try { await glPosting.ensureCoreAccounts(conn); } catch (e) {
     console.warn('[shifts] ensureCoreAccounts before till movement failed:', e.message);
   }
-  for (const code of ['1101', '111', '1110', '11']) {
+  for (const code of [glPosting.CORE_ACCOUNTS.CASH.code]) {
     const [r] = await conn.query('SELECT id, code, level FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
     if (r.length) return { id: r[0].id, code: r[0].code, level: Number(r[0].level) || 3 };
   }
@@ -651,37 +647,10 @@ async function _ensureCashBoxGl(conn, boxId) {
   const [r] = await conn.query('SELECT id, name, code, gl_account_id FROM cash_boxes WHERE id = ? LIMIT 1', [boxId]);
   if (!r.length) throw _mvErr('الصندوق غير موجود · Cash box not found', 500, 'cash_box_missing');
   const box = r[0];
-  if (box.gl_account_id) {
-    const [g] = await conn.query('SELECT id, code FROM gl_accounts WHERE id = ? LIMIT 1', [box.gl_account_id]);
-    if (g.length) return { id: g[0].id, code: g[0].code };
-  }
   const parent = await _cashParentAccount(conn);
   if (!parent) throw _mvErr('شجرة الحسابات غير مهيأة · Chart of accounts not initialised', 500, 'coa_not_seeded');
-  const accId = ('GL-CB-' + String(boxId)).slice(0, 50);
-  let accCode = _glCodeFor(parent.code, String(box.code || boxId));
-  const [clash] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [accCode]);
-  if (clash.length) {
-    if (clash[0].id === accId) {
-      // Already minted for this box by an earlier movement — reuse it.
-      await conn.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [accId, boxId]);
-      return { id: accId, code: accCode };
-    }
-    accCode = _glCodeFor(parent.code, String(boxId) + '#' + accId);
-  }
-  await conn.query(
-    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-    [accId, accCode, String(box.name || accCode).slice(0, 200), 'asset', parent.id, parent.level + 1]);
-  // INSERT IGNORE downgrades EVERY error to a warning — including a value that
-  // does not fit the column. Read the row back and fail loudly if the code the
-  // journal is about to reference is not actually resolvable; a silent
-  // "حساب غير موجود" on a code we just wrote is the exact bug this guards.
-  const [written] = await conn.query('SELECT id, code FROM gl_accounts WHERE id = ? LIMIT 1', [accId]);
-  if (!written.length || written[0].code !== accCode) {
-    throw _mvErr('تعذّر إنشاء حساب الصندوق في شجرة الحسابات · Could not create the cash-box GL account',
-      500, 'cash_box_gl_failed');
-  }
-  await conn.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [accId, boxId]);
-  return { id: accId, code: accCode };
+  await conn.query('UPDATE cash_boxes SET gl_account_id = ? WHERE id = ?', [parent.id, boxId]);
+  return { id: parent.id, code: parent.code };
 }
 
 /**
@@ -696,21 +665,11 @@ async function _ensureCashBoxGl(conn, boxId) {
  * and the bookkeeper reclassifies it from a balance that is visibly non-zero.
  */
 async function _ensureTillContraAccount(conn) {
-  const parent = await _cashParentAccount(conn);
-  if (!parent) throw _mvErr('شجرة الحسابات غير مهيأة · Chart of accounts not initialised', 500, 'coa_not_seeded');
-  const code = _glCodeFor(parent.code, 'TILL');
+  const code = glPosting.CORE_ACCOUNTS.PAYMENT_CLEARING.code;
   const [r] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
   if (r.length) return { id: r[0].id, code: r[0].code };
-  const id = 'GL-TILL-ADJ';
-  await conn.query(
-    'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,1)',
-    [id, code, 'نقدية بالطريق — حركات الدرج', 'asset', parent.id, parent.level + 1]);
-  const [written] = await conn.query('SELECT id, code FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
-  if (!written.length) {
-    throw _mvErr('تعذّر إنشاء حساب حركات الدرج · Could not create the till-movement contra account',
-      500, 'till_contra_gl_failed');
-  }
-  return { id: written[0].id, code: written[0].code };
+  throw _mvErr('حساب تسوية المدفوعات 111300 غير موجود · Payment clearing account is missing',
+    500, 'till_contra_gl_failed');
 }
 
 /** Voucher number in the SAME sequence the ERP cash module uses, so a movement

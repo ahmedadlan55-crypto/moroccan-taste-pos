@@ -76,8 +76,8 @@ async function main() {
   try {
     check('server up', await waitUp(240));
 
-    await j('POST', '/erp/gl/accounts', { id: A, code: A, nameAr: A, type: 'asset', parentId: null, level: 1 });
-    await j('POST', '/erp/gl/accounts', { id: B, code: B, nameAr: B, type: 'asset', parentId: null, level: 1 });
+    await j('POST', '/erp/gl/accounts', { id: A, code: A, nameAr: A, type: 'asset', parentId: null });
+    await j('POST', '/erp/gl/accounts', { id: B, code: B, nameAr: B, type: 'asset', parentId: null });
 
     const beforeA = await balanceOf(A);
     check('read initial balance', beforeA !== null, { beforeA });

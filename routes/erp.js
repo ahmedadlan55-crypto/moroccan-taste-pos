@@ -1,15 +1,26 @@
 const router = require('express').Router();
 const db = require('../db/connection');
-const { ensureCoreAccounts, nextFlatJournalNumber } = require('../lib/glPosting');
+const { ensureCoreAccounts, nextFlatJournalNumber, CORE_ACCOUNTS } = require('../lib/glPosting');
 // v5.11.1 — official 150-account COA template (mirrored from the Excel
 // the user attached). Loaded once at boot, used by /gl/seed-from-template
 // to seed or refresh the chart of accounts in one click.
 const COA_TEMPLATE = require('../db/coa-template.json');
 // v5.11.3 — developer-only guard for destructive journal endpoints.
-const { guardDeveloper } = require('../lib/transactionGuards');
+// guardBreakGlass fences the one endpoint that deletes the whole ledger.
+const { guardDeveloper, guardBreakGlass } = require('../lib/transactionGuards');
 // FC-P1 — fine-grained GL capability guard (permissions_v3). Fails closed.
 const requireCapability = require('../middleware/requireCapability');
 const coaTree = require('../lib/coa/tree');
+const coaClassify = require('../lib/coa/classify');
+// Package D — the ONE write gate for the chart of accounts. Every mutation of
+// gl_accounts that used to live inline in this file (the upsert, /move,
+// /:id/folder, DELETE) now runs its guards, its version check and its audit
+// row inside lib/coa/service.js, so the four writers can no longer know four
+// different subsets of the rules.
+const coaService = require('../lib/coa/service');
+// Additive-only importer. Every request returns through this module before the
+// quarantined historical implementation later in the handler can execute.
+const coaImport = require('../lib/coa/import');
 // Phase 0 (Contracts & Safety) — managerial RBAC for warehouse master-data
 // mutations (a warehouse with movement may never be hard-deleted) and for the
 // legacy warehouse_transfers stock-moving endpoints.
@@ -24,6 +35,42 @@ function _actor(req) {
   return (req.user && (req.user.username || req.user.name)) || '';
 }
 
+// Package D — the single failure path for every chart-of-accounts mutation.
+//
+// Every COA handler below used to answer a rejected write with **HTTP 200 and
+// `{success:false}`**. A 200 is a promise that the request was carried out, so
+// every HTTP-level consumer — a proxy, a retry policy, a monitoring probe, a
+// test asserting `res.ok`, a `fetch` wrapper that only throws on !ok — read a
+// refused write as a completed one. The status now comes from the thrown
+// error's own `httpStatus` (see lib/coa/service.js ERROR_STATUS), and a
+// stable machine-readable `code` travels with it so a client can branch on the
+// REASON without matching Arabic prose. `success:false` and `error` stay, so
+// the existing frontend keeps working unchanged.
+function _coaFail(res, e, where) {
+  const mapped = coaService.toHttpError(e);
+  if (mapped.httpStatus >= 500) {
+    console.error('[coa/' + (where || 'write') + '] UNEXPECTED:', (e && e.stack) || e);
+  } else {
+    console.warn('[coa/' + (where || 'write') + '] ' + mapped.code + ': ' + mapped.error);
+  }
+  const body = { success: false, code: mapped.code, error: mapped.error };
+  if (mapped.details) body.details = mapped.details;
+  return res.status(mapped.httpStatus).json(body);
+}
+
+// Context every COA mutation needs: WHO (from the JWT, never the body), from
+// WHERE, and the optimistic-concurrency token the caller is betting on.
+function _coaCtx(req) {
+  return {
+    actor: _actor(req),
+    ip: req.ip || req.headers['x-forwarded-for'] || '',
+    expectedVersion: (req.body && req.body.expectedVersion) !== undefined
+      ? req.body.expectedVersion
+      : undefined,
+  };
+}
+
+
 // FC-P1 — server-side journal-line validation shared by create + edit. Every
 // posting line must reference an EXISTING, ACTIVE, LEAF (postable) account, so
 // a client can never post to a header/group or a deactivated account. Returns
@@ -33,15 +80,20 @@ async function _validateJournalLines(conn, entries) {
   for (const e of (entries || [])) {
     const accId = e.accountId || e.account_id || null;
     if (!accId) continue; // balance/min-lines checks cover empty lines elsewhere
+    // Package D — the postability rule lives in ONE place now. This site used
+    // to check is_active + childless and nothing else, so a childless account
+    // flagged is_folder=1 was postable here while the trial balance refused to
+    // count it, and migration 0028's 'blocked' status (refuse new postings,
+    // keep the account visible) had no effect at all on the posting path.
     const [rows] = await q.query(
-      `SELECT a.is_active,
+      `SELECT a.is_active, a.is_folder, a.status,
               (NOT EXISTS (SELECT 1 FROM gl_accounts c WHERE c.parent_id = a.id)) AS is_leaf
          FROM gl_accounts a WHERE a.id = ? LIMIT 1`,
       [accId]
     );
     if (!rows.length) return 'حساب غير موجود في أحد السطور';
-    if (!(rows[0].is_active === 1 || rows[0].is_active === true)) return 'لا يمكن الترحيل إلى حساب معطَّل';
-    if (!Number(rows[0].is_leaf)) return 'لا يمكن الترحيل إلى حساب رئيسي (اختر حسابًا فرعيًا)';
+    const problem = coaService.postabilityProblem(rows[0], { hasChildren: !Number(rows[0].is_leaf) });
+    if (problem) return problem.message;
   }
   return null;
 }
@@ -134,7 +186,8 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
                 JOIN gl_journals j ON j.id = e.journal_id
                WHERE e.account_id = a.id AND j.status = 'posted') AS computed_balance
         FROM gl_accounts a
-       ORDER BY COALESCE(a.display_order, 99999), a.code`);
+       WHERE COALESCE(a.company_id, 'CO-MAIN') = ?
+       ORDER BY COALESCE(a.display_order, 99999), a.code`, [coaService.LEDGER_COMPANY_ID]);
     res.json(rows.map(a => ({
       id: a.id, code: a.code, nameAr: a.name_ar, nameEn: a.name_en,
       type: a.type, parentId: a.parent_id, level: a.level,
@@ -149,7 +202,27 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
       // Sheet legend can show which Saudi-tax bucket each account hits.
       accountClass:  a.account_class || 'detail',
       reportSection: a.report_section || null,
-      taxNature:     a.tax_nature || 'none'
+      taxNature:     a.tax_nature || 'none',
+      // 0028 — the columns that let the UI STATE what an account is instead of
+      // inferring it. Without them the tree falls back to guessing roots from
+      // the code set ['1'..'5'], which is simply wrong in production where the
+      // roots are 100000..500000, and a contra account reads as abnormal
+      // because its normal side had to be derived from `type`. The client
+      // normalizer tolerates their absence; only sending them makes it exact.
+      companyId:         coaService.LEDGER_COMPANY_ID,
+      normalBalance:     a.normal_balance || null,
+      isContra:          !!a.is_contra,
+      contraOfAccountId: a.contra_of_account_id || null,
+      isPostable:        a.is_postable == null ? null : !!a.is_postable,
+      isControl:         !!a.is_control,
+      cashFlowActivity:  a.cash_flow_activity || null,
+      status:            a.status || (a.is_active ? 'active' : 'archived'),
+      version:           a.version == null ? null : Number(a.version),
+      isSystemRoot:      !!a.is_system_root,
+      systemManaged:     !!a.system_managed,
+      classCode:         a.class_code || null,
+      sourceEntityType:  a.source_entity_type || null,
+      sourceEntityId:    a.source_entity_id || null,
     })));
   } catch (e) {
     // v7.5 — was res.json([]): a DB fault rendered as "the chart of accounts
@@ -159,44 +232,50 @@ router.get('/gl/accounts', requireCapability('finance.gl.view'), async (req, res
   }
 });
 
-// v5.10.40 — toggle is_folder on an account. Refuses to demote a folder
-// that still has children (data integrity).
+// v5.10.40 — toggle is_folder on an account.
+//
+// Package D — was three HTTP 200 + {success:false} answers (missing account,
+// root demotion, still-has-children) and a hardcoded root test on codes
+// '1'..'5' that is FALSE in production, where the roots are 100000..500000 —
+// so the "you cannot demote a root" guard protected nothing at all there.
+// `is_system_root` (migration 0028) travels with the row instead of with a
+// numbering scheme. The promotion direction is now guarded too: turning an
+// account that already CARRIES journal entries into a folder hides real
+// postings behind a header account.
 router.post('/gl/accounts/:id/folder', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
-    const { isFolder } = req.body;
-    const want = !!isFolder;
-    const [rows] = await db.query('SELECT id, code FROM gl_accounts WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.json({ success: false, error: 'الحساب غير موجود' });
-    // Block demotion of root accounts (codes 1-5) — they must always be folders
-    if (!want && ['1','2','3','4','5'].indexOf(rows[0].code) >= 0) {
-      return res.json({ success: false, error: 'لا يمكن تحويل حساب رئيسي إلى ورقة' });
+    const { isFolder } = req.body || {};
+    // An absent flag used to mean "demote": a bodyless POST silently turned a
+    // folder into a leaf. It is now a 400, not a mutation.
+    if (isFolder === undefined || isFolder === null) {
+      return _coaFail(res, new coaService.CoaError('IS_FOLDER_REQUIRED', 'قيمة isFolder مطلوبة (true/false)'), 'folder');
     }
-    if (!want) {
-      const [kids] = await db.query('SELECT id FROM gl_accounts WHERE parent_id = ? LIMIT 1', [req.params.id]);
-      if (kids.length) return res.json({ success: false, error: 'لا يمكن إلغاء الفولدر — احذف الأبناء أولاً' });
-    }
-    await db.query('UPDATE gl_accounts SET is_folder = ? WHERE id = ?', [want ? 1 : 0, req.params.id]);
-    res.json({ success: true, id: req.params.id, isFolder: want });
+    const out = await coaService.setFolder(req.params.id, !!isFolder, _coaCtx(req));
+    res.json({ success: true, id: out.id, isFolder: out.isFolder, version: out.version });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
+    _coaFail(res, e, 'folder');
   }
 });
 
-// v5.10.48 — bulk import COA from an Excel file. Match priority:
-//   (1) by internal `id` (column "المعرف (لا تحذف)" in the export) —
-//       this is THE way to avoid duplicates when codes change in Excel,
-//       and the way structural edits (rename/reparent) actually take
-//       effect on the existing row instead of creating a sibling.
-//   (2) by `code` if id is missing (legacy / hand-built files).
-//   (3) otherwise INSERT new.
-//
-// Side effects we keep consistent in the same transaction:
-//   - When a row's code changes, gl_entries.account_code gets the new
-//     code so reports and ledger views don't go stale.
-//   - codeMap is updated as we go, so children reparented to a renamed
-//     parent resolve to the right id within the same batch.
+// Additive-only bulk import. Existing accounts match by immutable id (or by
+// an unambiguous code when id is absent), and may update bilingual names only.
+// New rows require a real parent and are inserted topologically. Renumbering,
+// reparenting, retyping, folder conversion and replacement/deletion are
+// explicitly rejected and the whole file is atomic.
 router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'), async (req, res) => {
   const { rows } = req.body || {};
+  const requestedMode = String((req.body && req.body.mode) || 'update').toLowerCase();
+  try {
+    const result = await coaImport.importAccounts(rows, _coaCtx(req), requestedMode);
+    return res.json({ success: true, mode: 'update', ...result });
+  } catch (e) {
+    return _coaFail(res, e, 'import');
+  }
+
+  /* RETIRED AND UNREACHABLE: both paths above return. The historical block
+   * below remains temporarily for blame/history, but its FK-disable, delete,
+   * reparent and renumber statements cannot receive an HTTP request. */
+  async function retiredUnsafeImporter() { // never called; scheduled for mechanical deletion
   // v5.10.55 — mode controls destructive semantics:
   //   'update'  (default): upsert only. Accounts in DB but not in the
   //                        file are left alone. Safe.
@@ -691,252 +770,160 @@ router.post('/gl/accounts/import', requireCapability('finance.accounts.manage'),
     console.error('[gl/accounts/import] FAILED:', e.message);
     res.status(500).json({ success: false, error: e.message });
   }
+  }
 });
 
-// v5.10.50 — atomic dedupe: for each group {keepId, deleteIds[]} re-parent
-// any children of the deletees to the keeper, refuse to delete any account
-// that has gl_entries rows (would orphan the journal), then DELETE the
-// rest. Reports counts so the UI can tell the user exactly what happened.
+// Central statement-section catalog for the account form.  The browser must
+// not carry a private copy: a value accepted by the UI and rejected by the
+// report engine (or vice versa) is how accounts become silently unmapped.
+router.get('/gl/statement-sections', requireCapability('finance.gl.view'), async (req, res) => {
+  res.json({
+    success: true,
+    sections: coaClassify.SECTION_CATALOG.map((section) => ({
+      id: section.id,
+      statement: section.statement,
+      group: section.group,
+      nameAr: section.nameAr,
+      nameEn: section.nameEn,
+      normalBalance: section.normalBalance,
+      isContra: section.isContra,
+      displayOrder: section.displayOrder,
+      cashFlowBucket: section.cfBucket,
+    })),
+  });
+});
+
+// Retired: this legacy endpoint bypassed the governed CoA write gate and could
+// reparent/delete across companies without cycle, depth, root, version or
+// audit checks. Duplicate remediation now requires an explicit migration
+// manifest reviewed as a data migration; a public HTTP dedupe writer is not a
+// safe accounting primitive.
 router.post('/gl/accounts/dedupe', requireCapability('finance.accounts.manage'), async (req, res) => {
-  const { groups } = req.body || {};
-  if (!Array.isArray(groups) || !groups.length) {
-    return res.status(400).json({ success: false, error: 'لا توجد مجموعات للحذف' });
-  }
-  let deleted = 0, reparented = 0;
-  const skipped = [];
-  try {
-    await db.withTransaction(async (conn) => {
-      for (const g of groups) {
-        const keepId = String(g.keepId || '').trim();
-        const delIds = Array.isArray(g.deleteIds) ? g.deleteIds.map(String) : [];
-        if (!keepId || !delIds.length) continue;
-        // Ensure keepId actually exists
-        const [keepRows] = await conn.query('SELECT id FROM gl_accounts WHERE id = ?', [keepId]);
-        if (!keepRows.length) { skipped.push({ id: keepId, reason: 'keep-not-found' }); continue; }
-        for (const did of delIds) {
-          if (did === keepId) continue;
-          // Refuse to delete if account has any gl_entries (would orphan
-          // posted journal lines). User must merge entries manually.
-          const [entries] = await conn.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [did]);
-          if (entries.length) { skipped.push({ id: did, reason: 'has-journal-entries' }); continue; }
-          // Re-parent any children of the deletee to the keeper.
-          const [kids] = await conn.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [did]);
-          if (kids.length) {
-            await conn.query('UPDATE gl_accounts SET parent_id = ? WHERE parent_id = ?', [keepId, did]);
-            reparented += kids.length;
-          }
-          // Refuse if a journal HEADER references it as account_id (rare,
-          // but defensive) — none of our journals reference accounts at
-          // header level so this is a no-op in practice.
-          await conn.query('DELETE FROM gl_accounts WHERE id = ?', [did]);
-          deleted++;
-          console.log('[gl/accounts/dedupe] deleted ' + did + ' (kept ' + keepId + ', reparented ' + kids.length + ' children)');
-        }
-      }
-    });
-    res.json({ success: true, deleted, reparented, skipped });
-  } catch (e) {
-    console.error('[gl/accounts/dedupe] FAILED:', e.message);
-    res.status(500).json({ success: false, error: e.message });
-  }
+  return _coaFail(res, new coaService.CoaError(
+    'COA_DEDUPE_RETIRED',
+    'تم إيقاف الدمج المباشر للحسابات؛ استخدم manifest ترحيل محاسبي معتمد',
+  ), 'dedupe');
 });
 
 // v5.10.45 — move an account under a new parent and (optionally) renumber
 // its code based on the new parent's existing children. When renumbering,
 // every descendant's code is rewritten with the new prefix in the same
 // transaction, and gl_entries.account_code (denormalized) is kept in sync.
-// Refuses to make an account its own ancestor (cycle protection).
+//
+// Package D — the body of this route moved VERBATIM in behaviour (same
+// renumbering arithmetic, same code-prefix descendant selection, same
+// response fields) into lib/coa/service.js#moveAccountTx, and gained the
+// guards it never had: type compatibility with the class root, the depth cap
+// measured against the moving SUBTREE's height, a target that can actually
+// hold children, an optimistic-concurrency check, and an audit row. Its root
+// protection was `code in ('1'..'5')` — dev's numbering, not production's —
+// and is now `is_system_root`.
+//
+// It also stops answering 400 for everything: a missing account is a 404, a
+// concurrent edit is a 409, a rule violation is a 422, and an unexpected
+// fault is a 500 instead of being dressed up as a client mistake.
 router.post('/gl/accounts/:id/move', requireCapability('finance.accounts.manage'), async (req, res) => {
-  const { id } = req.params;
-  const { parentId, autoRenumber } = req.body || {};
-  const willRenumber = !!autoRenumber;
   try {
-    const result = await db.withTransaction(async (conn) => {
-      const [accRows] = await conn.query('SELECT id, code, parent_id, level FROM gl_accounts WHERE id = ?', [id]);
-      if (!accRows.length) throw new Error('الحساب غير موجود');
-      const acc = accRows[0];
-      if (['1','2','3','4','5'].indexOf(String(acc.code)) >= 0) {
-        throw new Error('لا يمكن نقل حساب رئيسي (الجذور 1-5)');
-      }
-
-      let newParent = null;
-      if (parentId) {
-        const [pRows] = await conn.query('SELECT id, code, level FROM gl_accounts WHERE id = ?', [parentId]);
-        if (!pRows.length) throw new Error('الأب الجديد غير موجود');
-        newParent = pRows[0];
-        if (newParent.id === id) throw new Error('لا يمكن جعل الحساب أبًا لنفسه');
-        // Cycle check: walk up parentId's chain — if we hit `id`, abort.
-        let walkerId = newParent.id, hops = 0; const seen = new Set();
-        while (walkerId && hops < 50) {
-          if (seen.has(walkerId)) break;
-          seen.add(walkerId);
-          if (walkerId === id) throw new Error('لا يمكن نقل الحساب تحت أحد أبنائه');
-          const [up] = await conn.query('SELECT parent_id FROM gl_accounts WHERE id = ?', [walkerId]);
-          if (!up.length || !up[0].parent_id) break;
-          walkerId = up[0].parent_id;
-          hops++;
-        }
-      }
-
-      // Compute new code (and cascade to descendants) when autoRenumber=true
-      const renumbered = [];
-      let newCode = acc.code;
-      if (willRenumber && newParent) {
-        const [siblings] = await conn.query(
-          'SELECT code FROM gl_accounts WHERE parent_id = ? ORDER BY code',
-          [newParent.id]);
-        if (!siblings.length) {
-          newCode = (Number(newParent.level) >= 3) ? (newParent.code + '01') : (newParent.code + '1');
-        } else {
-          const last = siblings[siblings.length - 1].code;
-          const suffix = last.substring(newParent.code.length);
-          const nextNum = parseInt(suffix, 10) + 1;
-          newCode = newParent.code + String(nextNum).padStart(suffix.length || 1, '0');
-        }
-
-        // Cascade rename: every descendant whose code starts with the
-        // moving account's old code gets its prefix rewritten to newCode.
-        const oldPrefix = acc.code;
-        const [descRows] = await conn.query(
-          'SELECT id, code FROM gl_accounts WHERE code LIKE ? AND id != ?',
-          [oldPrefix + '%', id]);
-        for (const d of descRows) {
-          if (!String(d.code).startsWith(oldPrefix)) continue;
-          const newDescCode = newCode + d.code.substring(oldPrefix.length);
-          const [clash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newDescCode, d.id]);
-          if (clash.length) throw new Error('تعارض كود: ' + newDescCode + ' موجود مسبقًا');
-          await conn.query('UPDATE gl_accounts SET code = ? WHERE id = ?', [newDescCode, d.id]);
-          await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newDescCode, d.id]);
-          renumbered.push({ id: d.id, oldCode: d.code, newCode: newDescCode });
-        }
-      }
-
-      // Apply main update
-      const [mainClash] = await conn.query('SELECT id FROM gl_accounts WHERE code = ? AND id != ?', [newCode, id]);
-      if (mainClash.length) throw new Error('تعارض كود: ' + newCode + ' موجود مسبقًا');
-      await conn.query(
-        'UPDATE gl_accounts SET code = ?, parent_id = ? WHERE id = ?',
-        [newCode, parentId || null, id]);
-      await conn.query('UPDATE gl_entries SET account_code = ? WHERE account_id = ?', [newCode, id]);
-      renumbered.push({ id, oldCode: acc.code, newCode });
-
-      // Levels are DERIVED, and a move changes the depth of the whole subtree.
-      // This route used to set the moved node's own level and stop, so every
-      // descendant kept the depth it had under its old parent — the codes
-      // cascaded (above) but the levels did not. Re-deriving the subtree inside
-      // the same transaction is the only way a move can leave the chart
-      // self-consistent.
-      const levels = await coaTree.recomputeLevels(conn, { rootId: id });
-
-      console.log('[gl/move] ' + acc.code + ' -> ' + newCode + ' under ' + (newParent ? newParent.code : 'root') + ' (renumbered ' + renumbered.length + ', levels ' + levels.updated + ')');
-      return { renumbered, oldCode: acc.code, newCode, newParentId: parentId || null, levelsUpdated: levels.updated };
-    });
+    const { parentId, autoRenumber, expectedVersion } = req.body || {};
+    const result = await coaService.moveAccount(
+      req.params.id, { parentId: parentId || null, autoRenumber: !!autoRenumber, expectedVersion },
+      _coaCtx(req)
+    );
+    console.log('[gl/move] ' + result.oldCode + ' -> ' + result.newCode +
+      ' under ' + (result.newParentId || 'root') +
+      ' (renumbered ' + result.renumbered.length + ', levels ' + result.levelsUpdated + ')');
     res.json({ success: true, ...result });
   } catch (e) {
-    console.error('[gl/move] FAILED:', e.message);
-    res.status(400).json({ success: false, error: e.message });
+    _coaFail(res, e, 'move');
   }
 });
 
+// Package D — "what would this move do?", answered BEFORE anything is written.
+//
+// A move renumbers a whole subtree and rewrites gl_entries.account_code with
+// it; there is no undo. This runs the identical guard set and the identical
+// renumbering arithmetic as /move, issues SELECTs only, and returns every rule
+// violation at once in `blockers` instead of surfacing one per failed attempt.
+router.post('/gl/accounts/:id/move/preview', requireCapability('finance.accounts.manage'), async (req, res) => {
+  try {
+    const { parentId, autoRenumber } = req.body || {};
+    const preview = await coaService.previewMove(
+      req.params.id, parentId || null, { autoRenumber: !!autoRenumber }
+    );
+    res.json({ success: true, preview });
+  } catch (e) {
+    _coaFail(res, e, 'move/preview');
+  }
+});
+
+// Upsert one account.
+//
+// Package D — this handler had four defects that a green test suite could not
+// see, because nothing here ever returned a status code:
+//
+//   1. It destructured `level` from the body and then IGNORED it. Silently.
+//      To every client that sent one, that read exactly like acceptance —
+//      and `level` is DERIVED (lib/coa/tree.js#recomputeLevels is its only
+//      writer). A field that does nothing must be REFUSED, not swallowed:
+//      it is now a 400 with code LEVEL_NOT_ACCEPTED.
+//   2. It wrote `parent_id` with NO existence check, NO cycle check and NO
+//      type check. Only /move checked cycles — so the one endpoint that
+//      cannot create a cycle was guarded and this one, which can (on its
+//      UPDATE branch), was not. One POST could orphan an account under a
+//      parent id that does not exist, or hang a revenue account off Assets.
+//   3. Its catch-all answered **HTTP 200 with {success:false}**.
+//   4. No version check and no audit row — two people editing the same
+//      account last-write-wins in silence, and the ledger's own skeleton
+//      changed with nothing written to audit_logs.
+//
+// Response fields are unchanged (`success`, `id`); `version` is additive.
 router.post('/gl/accounts', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
-    const { id, code, nameAr, nameEn, type, parentId, level, isFolder, isActive } = req.body;
-    // v5.10.46 — accept explicit isFolder flag from the frontend modal so
-    // L1/L2 main accounts get is_folder=1 even before any child is added.
-    const hasFolderFlag = (typeof isFolder === 'boolean');
-    const folderInt = hasFolderFlag ? (isFolder ? 1 : 0) : null;
-    // FC-P1 — is_active is written ATOMICALLY inside the INSERT/UPDATE below
-    // (E1 previously used a separate statement, which could leave a new account
-    // active on partial failure). Legacy callers omit isActive → COALESCE keeps
-    // the stored value on UPDATE and defaults to active (1) on INSERT.
-    const hasActiveFlag = (typeof isActive === 'boolean');
-    const activeInt = hasActiveFlag ? (isActive ? 1 : 0) : null;
-
-    if (id) {
-      const [existing] = await db.query('SELECT id FROM gl_accounts WHERE id = ?', [id]);
-      // `level` is DERIVED — the request body's value is deliberately ignored.
-      // It used to be written straight through as `level || 1`, so the client
-      // decided how deep an account was; a stale or hand-crafted payload could
-      // put a level-4 account at level 1 and the trial balance would report a
-      // mismatch nobody could explain. `recomputeLevels` below is the only
-      // writer, and it derives from the actual parent chain.
-      if (existing.length) {
-        if (hasFolderFlag) {
-          await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_folder=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, folderInt, activeInt, id]
-          );
-        } else {
-          await db.query(
-            'UPDATE gl_accounts SET code=?, name_ar=?, name_en=?, type=?, parent_id=?, is_active=COALESCE(?, is_active) WHERE id=?',
-            [code, nameAr, nameEn || '', type, parentId || null, activeInt, id]
-          );
-        }
-        // The parent may have changed, which moves this node AND every
-        // descendant to a new depth.
-        await coaTree.recomputeLevels(db, { rootId: id });
-        return res.json({ success: true, id });
-      }
-    }
-
-    const newId = id || 'GL-' + Date.now();
-    const newActive = hasActiveFlag ? activeInt : 1; // new accounts default active
-    // Insert at a placeholder depth, then derive — same reason as above.
-    if (hasFolderFlag) {
-      await db.query(
-        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_folder, is_active) VALUES (?,?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, folderInt, newActive]
-      );
-    } else {
-      await db.query(
-        'INSERT INTO gl_accounts (id, code, name_ar, name_en, type, parent_id, level, is_active) VALUES (?,?,?,?,?,?,?,?)',
-        [newId, code, nameAr, nameEn || '', type, parentId || null, coaTree.DEPTH_BASE, newActive]
-      );
-    }
-    await coaTree.recomputeLevels(db, { rootId: newId });
-
-    // v5.10.46 — auto-promote the parent to a folder when a child is
-    // inserted under it at L3+ (parent.level >= 2 means new child is L3+).
-    // This mirrors what _coaForceFolderConsistency does at deep-repair
-    // time, but applies it to the insert hot-path so the user sees the
-    // parent flip to folder immediately, without needing to run repair.
-    if (parentId) {
-      try {
-        const [parentRows] = await db.query('SELECT level, is_folder FROM gl_accounts WHERE id = ?', [parentId]);
-        if (parentRows.length && Number(parentRows[0].level) >= 2 && !parentRows[0].is_folder) {
-          await db.query('UPDATE gl_accounts SET is_folder = 1 WHERE id = ?', [parentId]);
-          console.log('[gl/accounts] auto-promoted parent ' + parentId + ' to folder (child at L' + ((Number(parentRows[0].level)||1) + 1) + ')');
-        }
-      } catch (e) {
-        console.error('[gl/accounts] auto-promote parent failed:', e.message);
-      }
-    }
-
-    res.json({ success: true, id: newId });
+    const out = await coaService.upsertAccount(req.body || {}, _coaCtx(req));
+    res.json({ success: true, id: out.id, version: out.version, created: out.created });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    _coaFail(res, e, 'accounts');
   }
 });
 
-// Delete GL account
+// Delete GL account.
+//
+// Package D — all three exits (has children / has entries / unexpected) were
+// HTTP 200 + {success:false}. They are now 422 / 422 / 500, each with a code,
+// and the delete runs inside a transaction that also refuses a system root
+// and writes its audit row BEFORE the row disappears (logAuditTx does not
+// swallow failures, so an unrecordable delete rolls back instead of
+// happening unrecorded).
 router.delete('/gl/accounts/:id', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
-    // Check if account has children
-    const [children] = await db.query('SELECT id FROM gl_accounts WHERE parent_id = ?', [req.params.id]);
-    if (children.length) return res.json({ success: false, error: 'لا يمكن حذف حساب لديه حسابات فرعية' });
-    // Check if account has journal entries
-    const [entries] = await db.query('SELECT id FROM gl_entries WHERE account_id = ? LIMIT 1', [req.params.id]);
-    if (entries.length) return res.json({ success: false, error: 'لا يمكن حذف حساب مستخدم في قيود محاسبية' });
-    await db.query('DELETE FROM gl_accounts WHERE id = ?', [req.params.id]);
+    await coaService.deleteAccount(req.params.id, _coaCtx(req));
     res.json({ success: true });
-  } catch (e) { res.json({ success: false, error: e.message }); }
+  } catch (e) {
+    _coaFail(res, e, 'delete');
+  }
+});
+
+// Package D — close an account WITHOUT destroying its history. This is the
+// correct answer for an account that has postings: DELETE refuses it (422
+// HAS_ENTRIES) because removing it would strand journal lines, but leaving it
+// selectable in every picker forever is not an answer either. Archiving sets
+// status='archived' + is_active=0 + is_postable=0, so historical reports still
+// balance and nothing new can be posted to it.
+router.post('/gl/accounts/:id/archive', requireCapability('finance.accounts.manage'), async (req, res) => {
+  try {
+    const out = await coaService.archiveAccount(req.params.id, _coaCtx(req));
+    res.json({ success: true, id: out.id, status: out.status, version: out.version });
+  } catch (e) {
+    _coaFail(res, e, 'archive');
+  }
 });
 
 // v5.11.1 — expose the official template as a static resource so the
-// frontend can fetch it once and feed it through the existing import
-// flow (preview modal + replace-mode + cascade rename). 150 accounts,
-// 6 IFRS-aligned roots: Assets / Liabilities / Equity / Revenue /
-// COGS / Operating & Admin Expenses.
+// frontend can fetch it once and feed it through the safe additive/update
+// import flow.  The canonical policy currently contains 224 bilingual rows
+// below five presentation-class roots.  IFRS/SOCPA govern recognition and
+// presentation; the six-digit numbering is this product's governance policy,
+// not a claim that Saudi regulation prescribes a universal account code set.
 router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), async (req, res) => {
   res.json({ success: true, accounts: COA_TEMPLATE });
 });
@@ -951,7 +938,9 @@ router.get('/gl/coa-template', requireCapability('finance.accounts.manage'), asy
 // v7.5 SECURITY — every seed/repair endpoint below rewrites the chart of
 // accounts (and some create journals). They were reachable with ANY
 // authenticated token. Same capability as the other COA mutations above.
-router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'), async (req, res) => {
+router.post('/gl/coa/wipe-and-seed',
+  guardBreakGlass('محو دليل الحسابات وإعادة بذره'),
+  requireCapability('finance.accounts.manage'), async (req, res) => {
   const phrase = (req.body && req.body.confirmPhrase) || '';
   if (phrase !== 'WIPE-COA-CONFIRMED') {
     return res.status(400).json({ success: false, error: 'تأكيد ناقص أو خاطئ' });
@@ -1024,6 +1013,20 @@ router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'
         //   40 → IS Revenue, 50 → IS Expense (incl. COGS).
         // The MM digit (positions 3-4) maps to the report_section bucket.
         if (/^\d{6}$/.test(c)) {
+          // Leaf-level exceptions where one control group contains multiple
+          // statement/tax concepts. These must outrank the broad MM mapping.
+          if (c === '100250') return 'allowance_doubtful';
+          if (c === '100451') return 'input_vat';
+          if (c === '100700' || c === '100701') return 'rou';
+          if (c === '100702') return 'acc_dep';
+          if (c === '200301') return 'output_vat';
+          if (c === '200302') return 'net_vat';
+          if (c === '200303') return 'gosi';
+          if (c === '200304') return 'withholding';
+          if (c === '200305') return 'zakat';
+          if (c === '200401' || c === '200431') return 'short_term_debt';
+          if (c === '200402') return 'long_term_debt';
+          if (c === '200430' || c === '200432') return 'lease_obligation';
           const gg = c.substr(0, 2);
           const mm = c.substr(2, 2);
           if (gg === '10') {
@@ -1092,7 +1095,7 @@ router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'
         if (c.startsWith('31'))                   return 'capital';
         if (c.startsWith('32'))                   return 'retained';
         if (c.startsWith('33'))                   return 'drawings';
-        if (c === '343' || c.startsWith('343'))   return 'zakat';
+        if (c === '343' || c.startsWith('343'))   return 'reserves';
         if (c.startsWith('34'))                   return 'reserves';
         if (c === '6244')                         return 'zakat_paid';
         if (c.startsWith('624'))                  return 'gov_fees';
@@ -1104,10 +1107,15 @@ router.post('/gl/coa/wipe-and-seed', requireCapability('finance.accounts.manage'
       function _deriveTaxNature(code) {
         const c = String(code || '');
         // v5.10.84 — Saudi/International standard: VAT lives under 2003xx
-        // (Output VAT Payable). The simplified CoA doesn't carry separate
-        // input-VAT / GOSI / Withholding / EOSB / Zakat accounts — those
-        // can be added by extending MM under group 20 / 50 as needed.
-        if (/^\d{6}$/.test(c) && c.startsWith('2003')) return 'vat_output';
+        // but the control group also carries GOSI, withholding and Zakat;
+        // classify the leaf, never the whole group as output VAT.
+        if (c === '100451') return 'vat_input';
+        if (c === '200301') return 'vat_output';
+        if (c === '200302') return 'vat_output';
+        if (c === '200303') return 'gosi';
+        if (c === '200304') return 'withholding';
+        if (c === '200305') return 'zakat';
+        if (c === '200500' || c === '200501') return 'eosb';
         // ── Legacy fallback (pre-v5.10.84) ──
         if (c.startsWith('116'))                return 'vat_input';
         if (c.startsWith('2131') || c === '213') return 'vat_output';
@@ -1145,6 +1153,30 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
     const [existing] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     if (existing[0].cnt > 0) return res.json({ success: true, msg: 'already seeded' });
 
+    // The historical inline cafe chart below is retained only as migration
+    // evidence. New databases must be born from the governed bilingual
+    // six-digit template, whose inventory section contains exactly one
+    // posting leaf (1200) under 100300.
+    let seeded = 0;
+    for (const a of COA_TEMPLATE) {
+      await db.query(
+        `INSERT INTO gl_accounts
+           (id, code, name_ar, name_en, type, parent_id, level, is_active,
+            is_folder, is_postable, balance, report_section, cash_flow_activity,
+            normal_balance, is_contra, system_managed)
+         VALUES (?,?,?,?,?,?,?,1,?,?,0,?,?,?,?,1)`,
+        [a.code, a.code, a.nameAr, a.nameEn || null, a.type,
+         a.parentCode || null, a.level, a.kind === 'folder' ? 1 : 0,
+         a.kind === 'folder' ? 0 : 1, a.reportSection || null,
+         a.cashFlowActivity || null,
+         (a.type === 'asset' || a.type === 'expense') ? 'debit' : 'credit',
+         a.isContra ? 1 : 0]
+      );
+      seeded++;
+    }
+    return res.json({ success: true, count: seeded, source: 'governed-coa-template' });
+
+    /* istanbul ignore next -- unreachable pre-governance seed retained for forensic history */
     const accounts = [
       // ═══ 1 الأصول ═══
       {code:'1',name:'الأصول',type:'asset',parent:null,level:1},
@@ -1340,18 +1372,15 @@ router.post('/gl/seed', requireCapability('finance.accounts.manage'), async (req
 // never a historical accident to be cleaned up once — it was a standing
 // contradiction between two migrations.
 //
-// `113` wins, and not by preference: `lib/glPosting.js` is the authority that
-// actually WRITES journals — every sale, purchase, waste entry and till
-// movement — and its CORE_ACCOUNTS parents 1200/1210/1220/1230 under `113`
-// with the header map at :44-45 (112 = AR · 113 = Inventory · 115 = Custody).
-// server.js:4893 already agrees with it. This helper was the only dissenter.
-const INVENTORY_GROUP_CODE = '113';
+// The governed six-digit chart has one Inventory folder (100300) and one
+// posting leaf (1200). Warehouse/category/product detail is never a GL node.
+const INVENTORY_GROUP_CODE = '113000';
 
 async function _repairInventoryClassification(db) {
   const repaired = [];
   // Resolve the inventory group. It is NEVER created here: creating a group
   // from a repair helper is exactly how the second one appeared. If the chart
-  // has no `113`, this reports that and does nothing — a missing group is a
+  // has no `100300`, this reports that and does nothing — a missing group is a
   // seeding problem, not something a classification pass should paper over.
   const [pInv] = await db.query('SELECT id FROM gl_accounts WHERE code = ?', [INVENTORY_GROUP_CODE]);
   const target112Id = pInv.length ? pInv[0].id : null;
@@ -1417,6 +1446,11 @@ router.post('/gl/repair-inventory-classification', requireCapability('finance.ac
 //     skipped:  [{ id, code, nameAr, reason }]   // for human review
 //   }
 router.post('/gl/repair-classification', requireCapability('finance.accounts.manage'), async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    code: 'LEGACY_COA_REPAIR_RETIRED',
+    error: 'تم إيقاف الإصلاح القائم على كلمات أسماء الحسابات؛ استخدم قالب دليل الحسابات والترحيل المعتمد.'
+  });
   try {
     // Keyword → preferred parent code map (ordered: most-specific first)
     // Each entry: [regex, parentCode, label]
@@ -1711,6 +1745,11 @@ async function _repairCoaByPrefix(db) {
 router._repairCoaByPrefix = _repairCoaByPrefix;
 
 router.post('/gl/repair-tree-by-prefix', requireCapability('finance.accounts.manage'), async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    code: 'LEGACY_COA_REPAIR_RETIRED',
+    error: 'تم إيقاف إعادة بناء الشجرة من بادئات الأرقام القديمة.'
+  });
   try {
     const r = await _repairCoaByPrefix(db);
     res.json({
@@ -2224,6 +2263,11 @@ async function _coaRecomputeBalances(db) {
 // become visible. If a step throws, the transaction rolls back and the
 // HTTP response includes the actual error message + the step that failed.
 router.post('/gl/deep-repair', requireCapability('finance.accounts.manage'), async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    code: 'LEGACY_COA_REPAIR_RETIRED',
+    error: 'تم إيقاف الإصلاح العميق القديم لأنه يعيد تصنيف الحسابات آليًا.'
+  });
   let lastStep = 'init';
   try {
     const result = await db.withTransaction(async (conn) => {
@@ -2679,6 +2723,7 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     const [p] = await db.query('SELECT * FROM accounting_periods WHERE id=?', [req.params.id]);
     if (!p.length) return res.json({ success:false, error:'الفترة غير موجودة' });
     const period = p[0];
+    let closeTransitionCommitted = false;
 
     // ── «ترحيل المبيعات» guard ────────────────────────────────────────────
     // The SECOND close implementation. routes/erp/periods.js carries the same
@@ -2689,16 +2734,26 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
     // trial balance that looks finished and is wrong. Only on a real close —
     // `soft_closed` is a review state, and reopening must never be blocked.
     if (status === 'closed' && period.status !== 'closed') {
+      const wantsForce = req.body && req.body.force === true;
+      const reason = String((req.body && req.body.reason) || '').trim();
+      const mayOverride = wantsForce
+        ? await requireCapability.hasCapability(req.user, 'finance.periods.override_lock').catch(() => false)
+        : false;
+      const salesPosting = require('./erp/sales-posting');
       try {
-        await require('./erp/sales-posting').assertNoUnpostedSales(db, {
+        await db.withTransaction(async (conn) => {
+        const [[lockedPeriod]] = await conn.query(
+          'SELECT * FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
+        if (!lockedPeriod) { const e = new Error('period not found'); e.status = 404; throw e; }
+        await salesPosting.assertNoUnpostedSales(conn, {
           from: period.start_date, to: period.end_date,
           brandId: period.brand_id, branchId: period.branch_id });
+        await conn.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
+          [status, username || '', req.params.id]);
+        });
+        closeTransitionCommitted = true;
       } catch (guardErr) {
         if (guardErr && guardErr.code === 'UNPOSTED_SALES_IN_PERIOD') {
-          const wantsForce = req.body && req.body.force === true;
-          const reason = String((req.body && req.body.reason) || '').trim();
-          const mayOverride = await requireCapability
-            .hasCapability(req.user, 'finance.periods.override_lock').catch(() => false);
           if (!wantsForce || !mayOverride || reason.length < 10) {
             return res.status(409).json({
               success: false, error: 'UNPOSTED_SALES_IN_PERIOD',
@@ -2710,8 +2765,16 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
               overrideRequires: 'force=true + finance.periods.override_lock + reason (10+ chars)',
             });
           }
-          const stranded = await require('./erp/sales-posting').strandUnposted(db,
-            { from: period.start_date, to: period.end_date });
+          const stranded = await db.withTransaction(async (conn) => {
+            await conn.query('SELECT id FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
+            const n = await salesPosting.strandUnposted(conn, {
+              from: period.start_date, to: period.end_date,
+              brandId: period.brand_id, branchId: period.branch_id });
+            await conn.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
+              [status, username || '', req.params.id]);
+            return n;
+          });
+          closeTransitionCommitted = true;
           console.warn('[period.lock] FORCED close of ' + req.params.id + ' by ' + username +
             ' — ' + stranded + ' sale(s) marked stranded · reason: ' + reason);
         } else { throw guardErr; }
@@ -2737,11 +2800,19 @@ router.post('/periods/:id/lock', requireCapability('finance.periods.manage'), as
           // Don't block the reopen — the user can still post manual reversals.
         }
       }
-      await db.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
-        [status, req.params.id]);
+      await db.withTransaction(async (conn) => {
+        await conn.query('SELECT id FROM accounting_periods WHERE id=? FOR UPDATE', [req.params.id]);
+        await conn.query('UPDATE accounting_periods SET status=?, closed_by=NULL, closed_at=NULL WHERE id=?',
+          [status, req.params.id]);
+        await require('./erp/sales-posting').recoverStranded(conn, {
+          from: period.start_date, to: period.end_date,
+          brandId: period.brand_id, branchId: period.branch_id });
+      });
     } else {
-      await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
-        [status, username||'', req.params.id]);
+      if (!closeTransitionCommitted) {
+        await db.query('UPDATE accounting_periods SET status=?, closed_by=?, closed_at=NOW() WHERE id=?',
+          [status, username||'', req.params.id]);
+      }
       // v5.10.61 — Generate closing entries only on the open→closed transition
       // (NOT on open→soft_closed; soft-close is a review state, not a final).
       if (status === 'closed' && period.status !== 'closed') {
@@ -3280,6 +3351,11 @@ router.post('/gl/repair', requireCapability('finance.accounts.manage'), async (r
 // Repair: create GL entries for old custody topups that have no journal
 // Fix: restructure to 5 main accounts (merge old 6 into 5)
 router.post('/gl/fix-tree', requireCapability('finance.accounts.manage'), async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    code: 'LEGACY_COA_REPAIR_RETIRED',
+    error: 'تم إيقاف أداة إصلاح الشجرة القديمة؛ الشجرة تُدار عبر القالب والترحيلات المعتمدة.'
+  });
   try {
     let fixed = 0;
 
@@ -3344,24 +3420,19 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 
       // Find custody user GL account
       let custAccId = null;
-      const [custAccRows] = await db.query("SELECT id, code FROM gl_accounts WHERE name_ar LIKE ? AND code LIKE '1130%'", ['عهدة ' + (t.user_name||'').substring(0,20) + '%']);
+      const [custAccRows] = await db.query(
+        'SELECT id, code FROM gl_accounts WHERE code = ? AND is_active = 1 LIMIT 1',
+        [CORE_ACCOUNTS.EMPLOYEE_ADVANCES.code]);
       if (custAccRows.length) custAccId = custAccRows[0].id;
       if (!custAccId) {
-        // Create it
-        const parentId = 'GL-1130';
-        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-          [parentId, '1130', 'عهد الموظفين', 'asset', null, 3]);
-        const [children] = await db.query("SELECT code FROM gl_accounts WHERE code LIKE '1130%' AND code != '1130' ORDER BY code DESC LIMIT 1");
-        let nextCode = '11301';
-        if (children.length) nextCode = '1130' + String((parseInt(children[0].code.replace('1130',''))||0)+1);
-        custAccId = 'GL-' + nextCode;
-        await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-          [custAccId, nextCode, 'عهدة ' + (t.user_name||''), 'asset', parentId, 4]);
+        throw new Error('CUSTODY_CONTROL_ACCOUNT_MISSING');
       }
 
       // Find a default cash account for old topups (11101)
       let cashAccId = null;
-      const [cashAcc] = await db.query("SELECT id FROM gl_accounts WHERE code = '11101' OR (code LIKE '1110%' AND type='asset') ORDER BY code LIMIT 1");
+      const [cashAcc] = await db.query(
+        'SELECT id FROM gl_accounts WHERE code = ? AND is_active = 1 LIMIT 1',
+        [CORE_ACCOUNTS.CASH.code]);
       if (cashAcc.length) cashAccId = cashAcc[0].id;
 
       if (!custAccId) continue;
@@ -3430,7 +3501,7 @@ router.post('/gl/repair-topups', requireCapability('finance.gl.post'), async (re
 //   • missingCoreAccounts: required core accounts (CASH/INVENTORY/COGS…) absent
 router.get('/gl/diagnose', requireCapability('finance.accounts.manage'), async (req, res) => {
   try {
-    const CORE_CODES = ['1110','1120','1150','1200','2100','2210','3100','4100','5100','5200','5300'];
+    const CORE_CODES = Array.from(new Set(Object.values(CORE_ACCOUNTS).map((row) => row.code)));
 
     const [accs] = await db.query('SELECT COUNT(*) AS cnt FROM gl_accounts');
     const [jrns] = await db.query('SELECT COUNT(*) AS cnt, status FROM gl_journals GROUP BY status');
@@ -3859,166 +3930,14 @@ router.get('/inventory-valuation', async (req, res) => {
   }
 });
 
-// v5.10.88 — Resolve the inventory CoA parent. Priority:
-//   1. settings.inventory_coa_parent_id (if the row exists in gl_accounts)
-//   2. Auto-detect: '100300' (GGMMPP) → '113' (legacy) → '112' (older)
-// Returns { id, code, level, name_ar, source } or null if nothing matches.
-async function _resolveInventoryParent(opts) {
-  opts = opts || {};
-  if (!opts.ignoreSetting) {
-    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
-    const savedId = pset.length ? String(pset[0].setting_value || '') : '';
-    if (savedId) {
-      const [row] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE id = ? LIMIT 1', [savedId]);
-      if (row.length) return Object.assign({}, row[0], { source: 'setting' });
-    }
-  }
-  // Auto-detect — prefer GGMMPP, then legacy fallbacks
-  for (const code of ['100300', '113', '112']) {
-    const [r] = await db.query('SELECT id, code, name_ar, level, type FROM gl_accounts WHERE code = ? LIMIT 1', [code]);
-    if (r.length) return Object.assign({}, r[0], { source: 'auto-detect' });
-  }
-  return null;
-}
-
-// v5.10.88 — GET /inventory-coa-parent
-// Returns the resolved parent + the raw setting (if any) so the UI
-// can show a mismatch banner when the saved id no longer resolves.
-// Query param ?reset=1 ignores the setting and runs auto-detect only.
-router.get('/inventory-coa-parent', async (req, res) => {
-  try {
-    const ignoreSetting = String(req.query.reset || '') === '1';
-    const [pset] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_id' LIMIT 1");
-    const savedId = pset.length ? String(pset[0].setting_value || '') : null;
-    const [pcode] = await db.query("SELECT setting_value FROM settings WHERE setting_key = 'inventory_coa_parent_code' LIMIT 1");
-    const savedCode = pcode.length ? String(pcode[0].setting_value || '') : null;
-    const resolved = await _resolveInventoryParent({ ignoreSetting });
-    let childrenCount = 0;
-    if (resolved && resolved.id) {
-      const [kids] = await db.query('SELECT COUNT(*) AS n FROM gl_accounts WHERE parent_id = ?', [resolved.id]);
-      childrenCount = Number(kids[0].n) || 0;
-    }
-    res.json({
-      success: true,
-      settingId: savedId,
-      settingCode: savedCode,
-      resolved: resolved ? {
-        id: resolved.id,
-        code: resolved.code,
-        nameAr: resolved.name_ar,
-        level: resolved.level,
-        type: resolved.type,
-        childrenCount: childrenCount
-      } : null,
-      source: resolved ? resolved.source : null
-    });
-  } catch (e) {
-    res.json({ success: false, error: e.message });
-  }
-});
-
-// v5.10.88 — Sync inventory CoA accounts. Reads its parent from
-// settings via _resolveInventoryParent so the owner can re-target
-// the auto-numbering through the UI. Sub-account codes follow the
-// parent's prefix style:
-//   • 6-digit GGMMPP parent (e.g. 100300) → 1003 PP slots
-//     (100310, 100320, 100330, 100340, …). Used by the v5.10.85+
-//     Saudi/International standard CoA.
-//   • 3-digit legacy parent (e.g. 113) → 113xx 2-digit suffix
-//     (11301, 11302, …) preserved for backward-compat.
+// Compatibility tombstone: inventory detail belongs to the stock subledger
+// and dimensions. This endpoint must never create or mutate GL accounts.
 router.post('/gl/sync-inventory', requireCapability('finance.accounts.manage'), async (req, res) => {
-  try {
-    let parent = await _resolveInventoryParent();
-    // Fall back: if nothing resolved, create '113' under '11' (legacy)
-    if (!parent) {
-      const [p11] = await db.query("SELECT id FROM gl_accounts WHERE code = '11'");
-      const parentId = 'GL-113';
-      await db.query('INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-        [parentId, '113', 'المخزون', 'asset', p11.length ? p11[0].id : null, 3]);
-      parent = { id: parentId, code: '113', name_ar: 'المخزون', level: 3, type: 'asset', source: 'created' };
-    }
-
-    const parentId = parent.id;
-    const parentCode = String(parent.code || '');
-    const parentLevel = Number(parent.level || 2);
-    const childLevel = parentLevel + 1;
-
-    // Determine code template for new children based on parent style
-    // GGMMPP (6 digits): siblings of 100310/100320/…  use PP slot iteration
-    //                    on the parent's first 4 chars (1003) + 2-digit PP
-    // Legacy (3 chars):  '113' + 2-digit suffix → 11301, 11302, …
-    const isGgmmpp = /^\d{6}$/.test(parentCode);
-    const childPrefix = isGgmmpp ? parentCode.substr(0, 4) : parentCode;
-    const childCodeRegex = isGgmmpp
-      ? '^' + childPrefix + '[0-9]{2}$'
-      : '^' + childPrefix + '[0-9]{2}$';
-
-    // Get inventory categories
-    const [cats] = await db.query('SELECT DISTINCT category FROM inv_items WHERE active = 1 AND category IS NOT NULL AND category != ""');
-    let created = 0;
-
-    const [existing] = await db.query(
-      "SELECT code, name_ar FROM gl_accounts WHERE code REGEXP ? ORDER BY code",
-      [childCodeRegex]
-    );
-    const existingNames = existing.map(e => (e.name_ar || '').toLowerCase());
-
-    for (const cat of cats) {
-      const catName = 'مخزون ' + cat.category;
-      if (existingNames.includes(catName.toLowerCase())) continue;
-
-      // Next code in the child-prefix range
-      const [lastChild] = await db.query(
-        "SELECT code FROM gl_accounts WHERE code REGEXP ? ORDER BY code DESC LIMIT 1",
-        [childCodeRegex]
-      );
-      let nextCode;
-      if (lastChild.length) {
-        const suffix = lastChild[0].code.substr(childPrefix.length);
-        const num = parseInt(suffix, 10) || 0;
-        nextCode = childPrefix + String(num + 1).padStart(2, '0');
-      } else {
-        nextCode = childPrefix + '01';
-      }
-      const id = 'GL-' + nextCode;
-      await db.query(
-        'INSERT IGNORE INTO gl_accounts (id, code, name_ar, type, parent_id, level) VALUES (?,?,?,?,?,?)',
-        [id, nextCode, catName, 'asset', parentId, childLevel]
-      );
-
-      // Update balance with current stock value for this category
-      const [catItems] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [cat.category]);
-      const catValue = Number(catItems[0].val) || 0;
-      if (catValue > 0) await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [catValue, id]);
-      existingNames.push(catName.toLowerCase());
-      created++;
-    }
-
-    // Update ALL existing inventory sub-account balances (perpetual sync).
-    // We match descendants of the resolved parent, not a hardcoded prefix.
-    const [allInvAccounts] = await db.query(
-      "SELECT id, name_ar FROM gl_accounts WHERE parent_id = ? AND id <> ?",
-      [parentId, parentId]
-    );
-    for (const acc of allInvAccounts) {
-      const catName = (acc.name_ar || '').replace(/^مخزون\s*/, '');
-      if (catName) {
-        const [catVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE category = ? AND active = 1', [catName]);
-        await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(catVal[0].val) || 0, acc.id]);
-      }
-    }
-
-    // Update parent balance (total of all active inventory)
-    const [totalVal] = await db.query('SELECT SUM(stock * cost) AS val FROM inv_items WHERE active = 1');
-    await db.query('UPDATE gl_accounts SET balance = ? WHERE id = ?', [Number(totalVal[0].val) || 0, parentId]);
-
-    res.json({
-      success: true,
-      categoriesCreated: created,
-      totalCategories: cats.length,
-      parent: { id: parentId, code: parentCode, source: parent.source }
-    });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  return res.status(410).json({
+    success: false,
+    code: 'INVENTORY_COA_SYNC_RETIRED',
+    error: 'يستخدم النظام حساب مراقبة مخزون واحد؛ التفاصيل متاحة في تقارير وحركات المخزون.',
+  });
 });
 
 // ─── Financial Reports ───

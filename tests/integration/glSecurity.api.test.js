@@ -10,15 +10,20 @@
  *   4. server-validated — a line on a non-leaf or inactive account → 400; a
  *      bad-type / oversize attachment → 400.
  *
- * Spawns its own server (PORT 3241) against the .env DB. Creates a handful of
- * GLSEC-* accounts + journals and deletes them at the end (self-cleaning).
+ * Runs only against testHarness's local `*_test` database. It creates one
+ * disposable fixture root directly (normal clients are correctly forbidden
+ * from creating another ledger root), then creates all ordinary accounts via
+ * the governed HTTP endpoint and deletes the fixtures at the end.
  */
 'use strict';
 
-const { spawn } = require('child_process');
-const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..', '..');
+// Activate the local-only isolated database before db/connection is loaded.
+// The harness rejects managed/remote database variables and supplies a
+// deterministic JWT key for fresh worktrees that intentionally have no .env.
+const harness = require('../helpers/testHarness');
+harness.activate();
 // Tier A.2 corrective gate — used ONLY for fixture-reclamation cleanup
 // (below), never for HTTP calls (those still go through the spawned
 // server via api()). The mgrCreate journal below is a REAL journal that
@@ -30,18 +35,12 @@ const ROOT = path.join(__dirname, '..', '..');
 // business operation — same pattern trialBalance.api.test.js already uses.
 const db = require(path.join(ROOT, 'db', 'connection'));
 
-const ENV = {};
-for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
-  const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
-  if (m) ENV[m[1]] = m[2];
-}
 const jwt = require(path.join(ROOT, 'node_modules', 'jsonwebtoken'));
-const PORT = 3241;
-const BASE = `http://127.0.0.1:${PORT}`;
+let BASE = '';
 
 const T = {
-  admin:    jwt.sign({ id: 1, username: 'admin', role: 'admin', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
-  manager:  jwt.sign({ id: 900201, username: 'glsec_mgr', role: 'manager', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  admin:    jwt.sign({ id: 1, username: 'admin', role: 'admin', tokenVersion: 1 }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+  manager:  jwt.sign({ id: 900201, username: 'glsec_mgr', role: 'manager', tokenVersion: 1 }, process.env.JWT_SECRET, { expiresIn: '1h' }),
   // Tier A.2 corrective gate — a SECOND manager identity, distinct from the
   // one that creates the journal below. lib/glTransitions.js now enforces
   // maker/checker (self-approval denied) on the single-id /approve route —
@@ -49,22 +48,14 @@ const T = {
   // with the SAME user that created the journal would now be correctly
   // refused; this checker identity is what makes "approve → ok" a true
   // statement again, instead of accidentally asserting a security hole.
-  manager2: jwt.sign({ id: 900203, username: 'glsec_mgr2', role: 'manager', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
-  cashier:  jwt.sign({ id: 900202, username: 'glsec_cash', role: 'cashier', tokenVersion: 1 }, ENV.JWT_SECRET, { expiresIn: '1h' }),
+  manager2: jwt.sign({ id: 900203, username: 'glsec_mgr2', role: 'manager', tokenVersion: 1 }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+  cashier:  jwt.sign({ id: 900202, username: 'glsec_cash', role: 'cashier', tokenVersion: 1 }, process.env.JWT_SECRET, { expiresIn: '1h' }),
 };
 
 let _p = 0, _f = 0;
 function check(name, cond, extra) {
   if (cond) { _p++; console.log('  ✅', name); }
   else { _f++; console.log('  ❌', name, extra != null ? '→ ' + JSON.stringify(extra) : ''); }
-}
-
-async function waitUp(secs) {
-  for (let i = 0; i < secs; i++) {
-    try { const r = await fetch(BASE + '/api/version'); if (r.ok) return true; } catch (_) {}
-    await new Promise((z) => setTimeout(z, 1000));
-  }
-  return false;
 }
 
 function api(method, pathname, tok, body) {
@@ -86,47 +77,77 @@ async function j(method, pathname, tok, body) {
 async function main() {
   console.log('\n═══ GL security contract (RBAC · JWT actor · immutable · validation) ═══\n');
 
-  const child = spawn(process.execPath, ['server.js'], {
-    cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'development' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let childLog = '';
-  child.stdout.on('data', (d) => { childLog += d; });
-  child.stderr.on('data', (d) => { childLog += d; });
-
+  let server = null;
+  let directRootId = null;
   const madeAccounts = [];
   const madeJournals = [];
 
   try {
-    check('server up', await waitUp(240));
+    await harness.ensureSchema();
+
+    // Normal clients are correctly forbidden from creating a sixth ledger
+    // root. Create one disposable class-1 root directly in the isolated DB,
+    // then exercise all ordinary account writes through the governed API.
+    let baseCode = null;
+    for (let candidate = 198000; candidate <= 199990; candidate += 10) {
+      const candidateCodes = Array.from({ length: 6 }, (_, i) => String(candidate + i));
+      const [used] = await db.query(
+        'SELECT code FROM gl_accounts WHERE company_id = ? AND code IN (?,?,?,?,?,?) LIMIT 1',
+        ['CO-MAIN', ...candidateCodes]
+      );
+      if (!used.length) { baseCode = candidate; break; }
+    }
+    if (baseCode == null) throw new Error('No free six-digit GLSEC fixture code range');
+
+    directRootId = `GLSEC-ROOT-${Date.now()}-${process.pid}`;
+    await db.query(
+      'INSERT INTO gl_accounts ' +
+      '(id, code, name_ar, name_en, type, parent_id, level, is_folder, is_active, status, ' +
+      'company_id, normal_balance, is_contra, report_section, cash_flow_activity, tax_nature, ' +
+      'is_postable, version, is_system_root, system_managed, class_code, balance) ' +
+      "VALUES (?,?,?,?,?,NULL,1,1,1,'active','CO-MAIN','debit',0,'cash',NULL,'none',0,1,0,0,'1',0)",
+      [directRootId, String(baseCode), 'جذر اختبار أمان الأستاذ', 'GL security test root', 'asset']
+    );
+
+    server = await harness.spawnServer({
+      timeoutMs: 120000,
+      extraEnv: { NODE_ENV: 'development', RATE_LIMIT_MAX: '1000000' },
+    });
+    BASE = `http://127.0.0.1:${server.port}`;
+    check('isolated test server up', true);
 
     // ── Fixtures (admin) ─────────────────────────────────────────────────────
-    // Two active leaves, one inactive leaf, and a parent made non-leaf by a child.
-    // NOTE: gl_accounts.code is a short column, so ids are long/unique but the
-    // `code` we send is a short per-account token.
-    const sfx = String(Date.now()).slice(-5);
-    const A = 'GLSEC-A-' + sfx, cA = '9A' + sfx;
-    const B = 'GLSEC-B-' + sfx, cB = '9B' + sfx;
-    const INACT = 'GLSEC-I-' + sfx, cI = '9I' + sfx;
-    const PARENT = 'GLSEC-P-' + sfx, cP = '9P' + sfx;
-    const CHILD = 'GLSEC-C-' + sfx, cC = '9C' + sfx;
-    for (const [id, code, extra] of [
-      [A, cA, {}], [B, cB, {}], [INACT, cI, { isActive: false }], [PARENT, cP, { isFolder: true }],
-    ]) {
+    // Two active leaves, one inactive leaf, and a folder with a child. Codes
+    // obey the canonical six-digit class-1 policy; service-generated IDs are
+    // captured from each successful HTTP response.
+    const codeOf = {};
+    async function createFixture(key, offset, extra) {
+      const code = String(baseCode + offset);
       const r = await j('POST', '/erp/gl/accounts', T.admin, {
-        id, code, nameAr: id, type: 'asset', parentId: null, level: 1, ...extra,
+        code,
+        nameAr: `حساب اختبار ${key}`,
+        nameEn: `GL security ${key}`,
+        type: 'asset',
+        parentId: directRootId,
+        reportSection: 'cash',
+        ...(extra || {}),
       });
-      madeAccounts.push(id);
-      if (r.data && r.data.success === false) check('fixture account ' + id, false, r.data);
+      if (!(r.status === 200 && r.data && r.data.success === true && r.data.id)) {
+        check('fixture account ' + key, false, r);
+        throw new Error(`Failed to create governed fixture account ${key}`);
+      }
+      codeOf[r.data.id] = code;
+      madeAccounts.push(r.data.id);
+      return r.data.id;
     }
-    // child under PARENT → PARENT becomes non-leaf
-    await j('POST', '/erp/gl/accounts', T.admin, { id: CHILD, code: cC, nameAr: CHILD, type: 'asset', parentId: PARENT, level: 2 });
-    madeAccounts.push(CHILD);
+    const A = await createFixture('A', 1);
+    const B = await createFixture('B', 2);
+    const INACT = await createFixture('INACTIVE', 3, { isActive: false });
+    const PARENT = await createFixture('PARENT', 4, { isFolder: true });
+    await createFixture('CHILD', 5, { parentId: PARENT });
 
     // reverse resolves accounts by CODE (lib/glPosting), so entries must carry
     // the real account code, not the id.
-    const codeOf = { [A]: cA, [B]: cB, [INACT]: cI, [PARENT]: cP };
     const balanced = (dAcc, cAcc) => ([
       { accountId: dAcc, accountCode: codeOf[dAcc], accountName: dAcc, debit: 100, credit: 0 },
       { accountId: cAcc, accountCode: codeOf[cAcc], accountName: cAcc, debit: 0, credit: 100 },
@@ -200,7 +221,6 @@ async function main() {
 
   } catch (e) {
     check('no exception', false, e && e.message);
-    console.log(childLog.slice(-2000));
   } finally {
     // cleanup — direct SQL for journals (this is fixture reclamation, not a
     // business operation; the API's DELETE correctly REFUSES a posted
@@ -209,11 +229,21 @@ async function main() {
     // on the `db` require above), then accounts via the API.
     for (const id of madeJournals) {
       try { await db.query('DELETE FROM gl_entries WHERE journal_id = ?', [id]); } catch (_) {}
+    }
+    for (const id of madeJournals.slice().reverse()) {
       try { await db.query('DELETE FROM gl_journals WHERE id = ?', [id]); } catch (_) {}
     }
-    for (const id of madeAccounts.reverse()) { try { await api('DELETE', '/erp/gl/accounts/' + id, T.admin); } catch (_) {} }
+    for (const id of madeAccounts.slice().reverse()) {
+      try { if (server) await api('DELETE', '/erp/gl/accounts/' + id, T.admin); } catch (_) {}
+      // If the server failed before HTTP cleanup, still reclaim only this
+      // test's own rows from the isolated database.
+      try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [id]); } catch (_) {}
+    }
+    if (directRootId) {
+      try { await db.query('DELETE FROM gl_accounts WHERE id = ?', [directRootId]); } catch (_) {}
+    }
+    if (server) server.kill();
     try { await db.end(); } catch (_) {}
-    child.kill('SIGKILL');
   }
 
   console.log(`\n─── ${_p} passed, ${_f} failed ───\n`);

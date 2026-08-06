@@ -2,7 +2,10 @@ import type { ColumnDef } from "./types";
 
 function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  let s = String(value);
+  // Prevent spreadsheet formula injection from labels/descriptions while
+  // preserving genuine numeric cells (including negative numbers).
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   // Quote when the value contains a delimiter, quote, or newline (RFC 4180).
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;

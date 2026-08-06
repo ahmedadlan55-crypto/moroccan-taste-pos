@@ -67,6 +67,10 @@ export const NAV: NavGroup[] = [
     id: "sales",
     label: "nav.groups.sales",
     items: [
+      // Sales decisions belong beside the documents they explain. The analytics
+      // hub keeps its /reports/sales URL (saved links and exports depend on it),
+      // but its navigation home is Sales and its gate matches the hub/API.
+      { id: "rp-sales", path: "/reports/sales", label: "nav.items.rp-sales", icon: "BarChart3", cap: "analytics.view", module: "reports", subRoutes: true },
       { id: "sl-invoices", path: "/sales/invoices", label: "nav.items.sl-invoices", icon: "FileText", cap: "invoices.view", module: "sales" },
       { id: "sl-returns", path: "/sales/returns", label: "nav.items.sl-returns", icon: "Undo2", cap: "returns.view", module: "sales" },
       { id: "sl-payments", path: "/sales/payments", label: "nav.items.sl-payments", icon: "Banknote", cap: "payments.view", module: "sales" },
@@ -153,7 +157,15 @@ export const NAV: NavGroup[] = [
     id: "accounting",
     label: "nav.groups.accounting",
     items: [
-      { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "accounting.view", module: "accounting" },
+      // Package H corrective gate — same precedent as 'finance.reports.view'
+      // on ac-tb below. The Chart of Accounts screen fronts routes/erp.js,
+      // whose list endpoint requires 'finance.gl.view' and whose every
+      // mutation requires 'finance.accounts.manage'. It was gated here on
+      // 'accounting.view', a key NO backend route enforces and which excludes
+      // auditor — so an auditor the API happily serves could not see the item.
+      // subRoutes: the module owns /new, /:id, /:id/edit, /:id/move, /health
+      // and /import as real, refresh-survivable URLs.
+      { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "finance.gl.view", module: "accounting", subRoutes: true },
       { id: "ac-journals", path: "/accounting/journals", label: "nav.items.ac-journals", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
       { id: "ac-gl", path: "/accounting/general-ledger", label: "nav.items.ac-gl", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
       // Tier A.1 corrective gate — this cap matches routes/erp-core.js's real
@@ -231,7 +243,6 @@ export const NAV: NavGroup[] = [
     id: "reports",
     label: "nav.groups.reports",
     items: [
-      { id: "rp-sales", path: "/reports/sales", label: "nav.items.rp-sales", icon: "BarChart3", cap: "reports.view", module: "reports", subRoutes: true },
       { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "reports.view", module: "reports" },
       { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "reports.view", module: "reports" },
       { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports" },

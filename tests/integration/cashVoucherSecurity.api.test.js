@@ -76,8 +76,8 @@ async function main() {
     const sfx = String(Date.now()).slice(-5);
     const A = 'CVS-A-' + sfx, cA = '8A' + sfx;
     const B = 'CVS-B-' + sfx, cB = '8B' + sfx;
-    await j('POST', '/erp/gl/accounts', T.admin, { id: A, code: cA, nameAr: A, type: 'asset', parentId: null, level: 1 });
-    await j('POST', '/erp/gl/accounts', T.admin, { id: B, code: cB, nameAr: B, type: 'revenue', parentId: null, level: 1 });
+    await j('POST', '/erp/gl/accounts', T.admin, { id: A, code: cA, nameAr: A, type: 'asset', parentId: null });
+    await j('POST', '/erp/gl/accounts', T.admin, { id: B, code: cB, nameAr: B, type: 'revenue', parentId: null });
     const box = await j('POST', '/cash/cash-boxes', T.admin, { name: 'CVS Box ' + sfx });
     const boxId = box.data && box.data.id;
     check('cashbox created', !!boxId, box.data);

@@ -2,7 +2,7 @@
 // analytics.cost.view; this file renders only when the cap is held).
 //
 // Per-item cost/profit/margin plus the menu-engineering quadrant: every item is
-// classified against the MEDIAN qty_sold and margin_pct as a Star / Plowhorse /
+// classified against the MEDIAN qty_sold and margin_pct_after_returns as a Star / Plowhorse /
 // Puzzle / Dog (labels from salesReports.profitability.quadrants.*) and that
 // class is carried as a table column. Reports are decision tables here — the
 // quadrant scatter that used to sit above the table belongs on the dashboard.
@@ -39,10 +39,10 @@ function kpiValue(result: AnalyticsResult | undefined, id: string): number | nul
 }
 
 const KPIS: Array<{ id: string; eq: string; fmt: (v: number) => string; icon: LucideIcon; tone: MetricTone }> = [
-  { id: "net_ex_vat", eq: "sum", fmt: formatCurrency, icon: Wallet, tone: "teal" },
-  { id: "cogs", eq: "sum", fmt: formatCurrency, icon: Coins, tone: "blue" },
-  { id: "gross_profit", eq: "grossProfit", fmt: formatCurrency, icon: TrendingUp, tone: "violet" },
-  { id: "margin_pct", eq: "marginPct", fmt: fmtPct, icon: Percent, tone: "amber" },
+  { id: "net_product_sales_ex_vat", eq: "netSalesExVat", fmt: formatCurrency, icon: Wallet, tone: "teal" },
+  { id: "cogs_after_returns", eq: "cogsAfterReturns", fmt: formatCurrency, icon: Coins, tone: "blue" },
+  { id: "gross_profit_after_returns", eq: "grossProfitAfterReturns", fmt: formatCurrency, icon: TrendingUp, tone: "violet" },
+  { id: "margin_pct_after_returns", eq: "marginPctAfterReturns", fmt: fmtPct, icon: Percent, tone: "amber" },
 ];
 
 type QuadrantClass = "star" | "plowhorse" | "puzzle" | "dog";
@@ -99,7 +99,7 @@ export default function Profitability() {
   const itemBody = useMemo<AnalyticsQueryBody>(
     () => ({
       ...reportQuerySpec(SEGMENT, "byItem", filters),
-      sort: [{ by: "net_ex_vat", dir: "desc" }],
+      sort: [{ by: "net_product_sales_ex_vat", dir: "desc" }],
       ...base,
     }),
     [base, filters],
@@ -108,24 +108,33 @@ export default function Profitability() {
   const kpis = useAnalyticsQuery("profitability-kpis", kpiBody);
   const byItem = useAnalyticsQuery("profitability-items", itemBody);
 
-  if (byItem.isPending) return <LoadingState />;
+  if (kpis.isPending || byItem.isPending) return <LoadingState />;
+  if (kpis.isError) return <ErrorState error={kpis.error} onRetry={() => kpis.refetch()} />;
   if (byItem.isError) return <ErrorState error={byItem.error} onRetry={() => byItem.refetch()} />;
+
+  const periodHasUncosted =
+    (kpiValue(kpis.data, "uncosted_net") ?? 0) > 0 ||
+    (kpiValue(kpis.data, "uncosted_returns_net") ?? 0) > 0;
 
   const raw: ItemRow[] = (byItem.data?.rows ?? []).map((r) => {
     const qtySold = displayMetric(r, "qty_sold");
-    const cost = displayMetric(r, "cogs");
+    const originalCost = displayMetric(r, "cogs");
+    const costAfterReturns = displayMetric(r, "cogs_after_returns");
     // An item with no recipe and no manual cost snapshots 0.00, which reads as
     // margin 100%. Blank the three cost columns rather than print a number the
     // system cannot stand behind.
-    const unknownCost = isCostUndefined(qtySold, cost);
+    const unknownCost =
+      (displayMetric(r, "uncosted_net") ?? 0) > 0 ||
+      (displayMetric(r, "uncosted_returns_net") ?? 0) > 0 ||
+      isCostUndefined(qtySold, originalCost);
     return {
       key: String(r.keys[0] ?? ""),
       label: r.labels[0] ?? String(r.keys[0] ?? "—"),
       qty: qtySold,
-      net: displayMetric(r, "net_ex_vat"),
-      cogs: unknownCost ? null : cost,
-      profit: unknownCost ? null : displayMetric(r, "gross_profit"),
-      margin: unknownCost ? null : displayMetric(r, "margin_pct"),
+      net: displayMetric(r, "net_product_sales_ex_vat"),
+      cogs: unknownCost ? null : costAfterReturns,
+      profit: unknownCost ? null : displayMetric(r, "gross_profit_after_returns"),
+      margin: unknownCost ? null : displayMetric(r, "margin_pct_after_returns"),
       cls: null,
       costUndefined: unknownCost,
     };
@@ -156,7 +165,9 @@ export default function Profitability() {
   // Honest banner: masked/incomplete cost provenance (cogs masked, or the
   // completeness flag) — margins over that window are not fully cost-backed.
   const costCaveat =
-    meta?.completeness?.complete === false || (meta?.maskedMetrics ?? []).includes("cogs");
+    periodHasUncosted ||
+    meta?.completeness?.complete === false ||
+    (meta?.maskedMetrics ?? []).some((id) => id === "cogs" || id === "cogs_after_returns");
 
   const columns: ColumnDef<ItemRow>[] = [
     { id: "item", header: t("salesReports.dims.menu_item"), accessor: (r) => r.label, pinStart: true, hideable: false, width: 180 },
@@ -170,7 +181,7 @@ export default function Profitability() {
     },
     {
       id: "net",
-      header: t("salesReports.metrics.net_ex_vat"),
+      header: t("salesReports.metrics.net_product_sales_ex_vat"),
       accessor: (r) => r.net,
       cell: (r) => (r.net == null ? "—" : formatCurrency(r.net)),
       numeric: true,
@@ -178,7 +189,7 @@ export default function Profitability() {
     },
     {
       id: "cogs",
-      header: t("salesReports.metrics.cogs"),
+      header: t("salesReports.metrics.cogs_after_returns"),
       accessor: (r) => r.cogs,
       cell: (r) =>
         r.costUndefined ? (
@@ -198,7 +209,7 @@ export default function Profitability() {
     },
     {
       id: "profit",
-      header: t("salesReports.metrics.gross_profit"),
+      header: t("salesReports.metrics.gross_profit_after_returns"),
       accessor: (r) => r.profit,
       cell: (r) => (r.profit == null ? "—" : formatCurrency(r.profit)),
       numeric: true,
@@ -206,7 +217,7 @@ export default function Profitability() {
     },
     {
       id: "margin",
-      header: t("salesReports.metrics.margin_pct"),
+      header: t("salesReports.metrics.margin_pct_after_returns"),
       accessor: (r) => r.margin,
       cell: (r) => (r.margin == null ? "—" : fmtPct(r.margin)),
       numeric: true,
@@ -231,10 +242,13 @@ export default function Profitability() {
       </div>
 
       {costCaveat && (
-        <div data-testid="cost-provenance-notice">
-          <Badge tone="warning">
-            {t("salesReports.metrics.cogs")}: {t("salesReports.states.notAvailableHistorically")}
-          </Badge>
+        <div
+          data-testid="cost-provenance-notice"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          {periodHasUncosted
+            ? t("salesReports.profitability.incompletePeriod")
+            : `${t("salesReports.metrics.cogs")}: ${t("salesReports.states.notAvailableHistorically")}`}
         </div>
       )}
 
@@ -259,7 +273,9 @@ export default function Profitability() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {KPIS.map((k) => {
           const label = t(`salesReports.metrics.${k.id}`);
-          const v = kpiValue(kpis.data, k.id);
+          const v = periodHasUncosted && k.id !== "net_product_sales_ex_vat"
+            ? null
+            : kpiValue(kpis.data, k.id);
           return (
             <div key={k.id} data-testid={`kpi-${k.id}`}>
               <MetricCard

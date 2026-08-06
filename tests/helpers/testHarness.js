@@ -48,6 +48,12 @@ const { spawn } = require('child_process');
 const mysql = require('mysql2/promise');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
+// Local-test-only signing key. Fresh worktrees intentionally have no .env, but
+// the real login route still signs a JWT after bcrypt succeeds. Without a
+// deterministic test key login returned { success:false } even though the
+// credentials were valid, turning every downstream RBAC assertion into a 401.
+// Never overwrite an explicitly supplied key (CI may provide its own).
+const TEST_JWT_SECRET = 'mt-pos-isolated-test-harness-jwt-secret-v1';
 
 class TestHarnessError extends Error {
   constructor(message) {
@@ -96,6 +102,7 @@ function activate() {
   assertLocalTestEnvironment();
   const testDbName = deriveTestDbName();
   process.env.DB_NAME = testDbName;
+  if (!process.env.JWT_SECRET) process.env.JWT_SECRET = TEST_JWT_SECRET;
   delete process.env.DATABASE_URL;
   delete process.env.MYSQL_URL;
   delete process.env.MYSQLHOST;
@@ -203,12 +210,10 @@ async function spawnServer(opts) {
  * For test files that never spawn their own server.js child (they call
  * engine/service functions directly against db/connection.js) but still
  * need the isolated test database's schema fully provisioned first:
- * spawns a throwaway server (which runs the full autoInitDB() migration
- * sequence before its port opens — server.js guarantees this, see the
- * comment above its app.listen() call), waits for it to come up, then
- * kills it immediately. Idempotent — safe to call every test run; the
- * schema only actually gets created once, on the first ever call against
- * a fresh test database.
+ * First it boots a throwaway server for the legacy autoInitDB() sequence,
+ * waits for readiness, and stops it. Then it runs every numbered migration,
+ * matching the production release-chain order. Idempotent and fail-closed;
+ * safe to call on every test run.
  */
 async function ensureSchema() {
   requireActivated();
@@ -218,6 +223,19 @@ async function ensureSchema() {
   // give the child a moment to release its DB pool connections before the
   // caller opens its own — avoids a noisy (harmless) connection-reset race.
   await new Promise((r) => setTimeout(r, 300));
+
+  // Production provisions the schema in two ordered steps: server.js first,
+  // then every numbered migration via db/migrate.js. Booting server.js alone
+  // is not a full release schema (for example, gl_accounts.company_id is
+  // versioned). Reuse the production runner so discovery, locking, checksums,
+  // and fail-closed behavior cannot drift inside the test harness.
+  const { runPendingMigrations } = require('../../db/migrate');
+  const logger = {
+    info: () => {},
+    warn: (obj, msg) => console.warn('[test-harness:migrate]', msg || obj),
+    error: (obj, msg) => console.error('[test-harness:migrate]', msg || obj),
+  };
+  await runPendingMigrations({ logger });
 }
 
 /**
@@ -246,7 +264,8 @@ async function ensureCoreAccounts(db) {
  * (ensureSchema()) provisions everything the LEGACY runMigrations() path
  * creates, but tables that only exist via a versioned db/migrations/*.sql
  * file (account_roles/account_role_history, for example — see ADR 0002)
- * are NOT created by ensureSchema() alone and need this.
+ * are now created by ensureSchema(); this remains only for tests that name
+ * and assert a particular migration explicitly.
  * @param {object} db - pool/connection bound to the test database
  * @param {string[]} filenames - e.g. ['0018_account_role_registry.sql', '0019_account_role_registry_scope_fix.sql']
  */

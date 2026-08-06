@@ -136,7 +136,7 @@ export interface ReportSpec {
   rollupEligible: boolean;
   /** Which backend answers. 'reconciliation' has its own endpoint and contract. */
   engine: "analytics" | "reconciliation";
-  /** Reports whose engine is not the planner declare their own filter surface. */
+  /** Reports whose complete screen has a narrower shared filter surface. */
   fixedFilters?: readonly FilterKey[];
   /** …and their own bases. */
   fixedDateBases?: readonly DateBasis[];
@@ -191,7 +191,11 @@ export const REPORTS: readonly ReportSpec[] = [
       },
       {
         id: "voidsAndProfit",
-        metrics: ["voids_count", "voids_value", "net_collections", "cogs", "gross_profit", "margin_pct"],
+        metrics: [
+          "voids_count", "voids_value", "net_collections",
+          "cogs_after_returns", "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
         dimensions: [],
       },
       {
@@ -224,6 +228,15 @@ export const REPORTS: readonly ReportSpec[] = [
       },
       { id: "byTax", metrics: ["net_ex_vat", "vat_amount"], dimensions: ["vat_category"] },
       { id: "byPayment", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"] },
+      // The command-center driver panel activates ONE of these at a time. They
+      // remain declared here so every dimension/metric/filter combination is
+      // planned by the registry gate instead of becoming an untested ad-hoc
+      // request in the page component.
+      { id: "driverBranch", metrics: ["net_ex_vat", "orders"], dimensions: ["branch"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverItem", metrics: ["net_ex_vat", "qty_sold"], dimensions: ["menu_item"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverHour", metrics: ["net_ex_vat", "orders"], dimensions: ["hour"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverCashier", metrics: ["net_ex_vat", "orders", "avg_ticket"], dimensions: ["cashier"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverPayment", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"], limit: LIMITS.MAX_LIMIT },
     ],
   },
 
@@ -279,13 +292,28 @@ export const REPORTS: readonly ReportSpec[] = [
     compare: false,
     engine: "analytics",
     exportQuery: "byItem",
-    exportSort: [{ by: "gross_profit", dir: "desc" }],
-    rollupEligible: true,
+    exportSort: [{ by: "gross_profit_after_returns", dir: "desc" }],
+    // Return-aware profitability joins line + return facts. The current
+    // menu-item rollup cannot express returns_net, so this report must use the
+    // exact live facts until the return rollup gains the same dimension.
+    rollupEligible: false,
     queries: [
-      { id: "kpis", metrics: ["net_ex_vat", "cogs", "gross_profit", "margin_pct"], dimensions: [] },
+      {
+        id: "kpis",
+        metrics: [
+          "net_product_sales_ex_vat", "cogs_after_returns",
+          "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
+        dimensions: [],
+      },
       {
         id: "byItem",
-        metrics: ["qty_sold", "net_ex_vat", "cogs", "gross_profit", "margin_pct"],
+        metrics: [
+          "qty_sold", "net_product_sales_ex_vat", "cogs", "cogs_after_returns",
+          "gross_profit_after_returns", "margin_pct_after_returns",
+          "uncosted_net", "uncosted_returns_net",
+        ],
         dimensions: ["menu_item"],
         limit: LIMITS.MAX_LIMIT,
       },
@@ -313,8 +341,15 @@ export const REPORTS: readonly ReportSpec[] = [
     exportQuery: "byMethod",
     rollupEligible: true,
     queries: [
-      { id: "kpis", metrics: ["payments_in", "refunds_out", "net_collections", "tips_total"], dimensions: [] },
+      // Payment KPIs stay on ONE fact. tips_total is an order fact and made a
+      // payment-method / hour / collector filter affect three cards while the
+      // tips card silently stayed unfiltered.
+      { id: "kpis", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: [] },
       { id: "byMethod", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"] },
+      { id: "byDay", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["day"], limit: LIMITS.MAX_LIMIT },
+      { id: "byWeekday", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["weekday"], limit: LIMITS.MAX_LIMIT },
+      { id: "byHour", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["hour"], limit: LIMITS.MAX_LIMIT },
+      { id: "byCollector", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_collector"], limit: LIMITS.MAX_LIMIT },
     ],
   },
   {
@@ -513,6 +548,15 @@ export const REPORTS: readonly ReportSpec[] = [
     // orders / invoice_total / avg_ticket by business day are all columns of
     // analytics_daily_branch.
     rollupEligible: true,
+    // Its KPI row and operational invoice table must honour the same scope.
+    // Every drill key below is implemented by InvoiceService.list against the
+    // same projected fact / at-sale line snapshots the source report uses. A
+    // filter must stay here only while BOTH the exact-filter totals and the
+    // invoice rows honour it; otherwise the hub auto-drops it on arrival.
+    fixedFilters: [
+      "branchId", "channel", "orderType", "paymentMethod", "hour",
+      "menuItemId", "categoryId", "cashierId",
+    ],
     queries: [
       { id: "kpis", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: [] },
       { id: "byDay", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: ["day"] },
@@ -625,6 +669,25 @@ export function reportFilterKeys(
   const facts = reportFacts(report);
   return ALL_FILTER_KEYS.filter(
     (key) => dimensionUsableOn(FILTER_DIMENSION[key], facts) && entitled(key),
+  );
+}
+
+/**
+ * Filters an analytics query for this report can actually carry. Usually this
+ * is identical to the visible report surface. A report may, however, use an
+ * operational endpoint for its exact rows/totals while retaining a narrower
+ * analytics query as a permission-safe fallback (Orders is that case). Keep
+ * this derived from query facts: `fixedFilters` must never make the planner
+ * claim a line/payment filter was applied to an order-only aggregate.
+ */
+export function reportAnalyticsFilterKeys(
+  report: ReportSpec,
+  can?: (cap: Capability) => boolean,
+): FilterKey[] {
+  const visible = new Set(reportFilterKeys(report, can));
+  const facts = reportFacts(report);
+  return ALL_FILTER_KEYS.filter(
+    (key) => visible.has(key) && dimensionUsableOn(FILTER_DIMENSION[key], facts),
   );
 }
 

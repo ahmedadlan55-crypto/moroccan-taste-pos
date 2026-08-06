@@ -26,6 +26,22 @@ const money = calc.money;
 function genId() { return 'AR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 function lineId() { return 'ARL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
+function _nonNegativeCost(value, label) {
+  const n = value == null || value === '' ? 0 : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw err('VALIDATION_ERROR', `تكلفة غير صالحة (${label || 'سطر'})`);
+  }
+  return money(n);
+}
+
+function _nonNegativeRate(value, label) {
+  const n = value == null || value === '' ? 0 : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw err('VALIDATION_ERROR', `تكلفة وحدة غير صالحة (${label || 'مكوّن'})`);
+  }
+  return calc.rate(n);
+}
+
 /** Compute lines + totals from raw input (server-authoritative — never trusts client totals). */
 async function _computeDoc(conn, data) {
   const std = await standardVatRate(conn);
@@ -52,7 +68,7 @@ async function _computeDoc(conn, data) {
       enteredUnitId: l.enteredUnitId || null, enteredUnitCode: l.enteredUnitCode || null,
       revenueAccountId: l.revenueAccountId || null, revenueAccountCode: l.revenueAccountCode || null,
       warehouseId: l.warehouseId || null,
-      costSnapshot: money(l.costSnapshot || 0),
+      costSnapshot: _nonNegativeCost(l.costSnapshot, l.description || l.sourceLineId),
     });
   });
   const totals = calc.computeTotals(computed);
@@ -199,8 +215,20 @@ async function cancel(id, ctx) {
  */
 async function _ensurePosLines(conn, documentId, lines, components) {
   if (!Array.isArray(lines) || !lines.length) return 0;
+  // Validate every cost before the first INSERT. The POS projection is a
+  // financial snapshot; accepting a negative value here can later restore
+  // negative inventory value while posting.js intentionally emits no COGS
+  // journal for a non-positive aggregate.
+  const lineCosts = lines.map((l) => _nonNegativeCost(l.costSnapshot, l.description || l.sourceLineId));
+  const componentCosts = Array.isArray(components)
+    ? components.map((c) => ({
+      unit: _nonNegativeRate(c.unitCostSnapshot, c.invItemName || c.invItemId),
+      total: _nonNegativeCost(c.totalCost, c.invItemName || c.invItemId),
+    }))
+    : [];
   const idBySourceLine = {};
-  for (const l of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const l = lines[lineIndex];
     const existing = await conn.query(
       'SELECT id FROM ar_document_lines WHERE document_id = ? AND source_line_id = ? LIMIT 1',
       [documentId, l.sourceLineId]);
@@ -218,7 +246,7 @@ async function _ensurePosLines(conn, documentId, lines, components) {
        l.enteredUnitId || null, l.enteredUnitCode || null, l.enteredQty, l.conversionFactor || 1, l.baseQty,
        l.unitPrice, l.discountAmount, l.vatCategory, l.vatRate, l.netAmount, l.vatAmount, l.grossAmount,
        l.revenueAccountId || null, l.revenueAccountCode || null, l.warehouseId || null,
-       l.costSnapshot, l.projectionVersion]);
+       lineCosts[lineIndex], l.projectionVersion]);
     idBySourceLine[l.sourceLineId] = id;
   }
 
@@ -226,7 +254,8 @@ async function _ensurePosLines(conn, documentId, lines, components) {
     // component_seq is per-line and assigned in the caller's deterministic
     // order, so a replay reproduces the same key rather than duplicating rows.
     const seqByLine = {};
-    for (const c of components) {
+    for (let componentIndex = 0; componentIndex < components.length; componentIndex++) {
+      const c = components[componentIndex];
       const parentId = idBySourceLine[c.sourceLineId];
       if (!parentId) continue;
       seqByLine[c.sourceLineId] = (seqByLine[c.sourceLineId] || 0) + 1;
@@ -240,7 +269,7 @@ async function _ensurePosLines(conn, documentId, lines, components) {
         ['ARLC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8), documentId, parentId,
          seqByLine[c.sourceLineId], c.source || 'recipe', c.invItemId || null, c.invItemName || null,
          c.warehouseId || null, c.deductedBaseQty, c.unitCode || null, c.conversionFactor || null,
-         c.unitCostSnapshot, c.totalCost, c.projectionVersion]);
+         componentCosts[componentIndex].unit, componentCosts[componentIndex].total, c.projectionVersion]);
     }
   }
   return lines.length;
@@ -376,6 +405,18 @@ async function list(params = {}) {
   const dir = String(params.dir).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const where = ["d.document_type <> 'credit_note' OR ? = 1"];
   const args = [params.includeCreditNotes ? 1 : 0];
+  // The Sales Decision Center puts analytics KPIs above this operational list.
+  // In that context both halves must describe the SAME population: projected
+  // sales facts, excluding voided orders and credit-note facts. Without this,
+  // drafts/manual documents widened the table while the KPI stayed narrower.
+  const analyticsPopulation = params.analyticsPopulation === true ||
+    params.analyticsPopulation === 1 ||
+    ['1', 'true'].includes(String(params.analyticsPopulation || '').toLowerCase());
+  if (analyticsPopulation) {
+    where.push('f.document_id IS NOT NULL');
+    where.push("(f.status IS NULL OR f.status <> 'voided')");
+    where.push("(f.source IS NULL OR f.source NOT IN ('sales_return','credit_note'))");
+  }
   if (params.status && LIST_STATUSES.includes(params.status)) { where.push('d.status = ?'); args.push(params.status); }
   if (params.customerId) { where.push('d.customer_id = ?'); args.push(String(params.customerId)); }
   if (params.sourceType) { where.push('d.source_type = ?'); args.push(String(params.sourceType)); }
@@ -384,7 +425,14 @@ async function list(params = {}) {
   // Period. The hub page has been sending from/to since it shipped and they
   // reached nothing, so honouring them is a fix, not a new contract — and an
   // unknown-parameter 422 here would break that live page on deploy.
-  const dayExpr = String(params.businessDay) === 'false' ? DAY_CALENDAR : DAY_BUSINESS;
+  // In analyticsPopulation mode the fact row is mandatory, so use the exact
+  // date expressions the analytics planner uses. In particular its calendar
+  // day is DATE(f.occurred_at_local), not ar_documents.issue_date; those can
+  // differ around midnight for a branch outside the server timezone. Ordinary
+  // operational invoice lists retain their existing issue-date fallback.
+  const dayExpr = String(params.businessDay) === 'false'
+    ? (analyticsPopulation ? 'DATE(f.occurred_at_local)' : DAY_CALENDAR)
+    : (analyticsPopulation ? 'f.business_day' : DAY_BUSINESS);
   const dFrom = params.from ? _dayBound(params.from) : null;
   const dTo = params.to ? _dayBound(params.to) : null;
   if (dFrom) { where.push(`${dayExpr} >= ?`); args.push(dFrom); }
@@ -397,13 +445,74 @@ async function list(params = {}) {
   // excludes manual invoices, which genuinely have no order type.
   const channels = _multi(params.channels != null ? params.channels : params.channel);
   if (channels.length) {
-    where.push(`COALESCE(f.channel_id, d.channel_id) IN (${channels.map(() => '?').join(',')})`);
+    const channelExpr = analyticsPopulation ? 'f.channel_id' : 'COALESCE(f.channel_id, d.channel_id)';
+    where.push(`${channelExpr} IN (${channels.map(() => '?').join(',')})`);
     channels.forEach((v) => args.push(v));
   }
   const orderTypes = _multi(params.orderTypes != null ? params.orderTypes : params.orderType);
   if (orderTypes.length) {
     where.push(`f.order_type IN (${orderTypes.map(() => '?').join(',')})`);
     orderTypes.forEach((v) => args.push(v));
+  }
+
+  // Decision-center drill filters. These are deliberately available only for
+  // the projected analytics population: the source of truth is the frozen fact
+  // / line snapshot, not today's menu or a best-effort parse of the invoice
+  // description. EXISTS keeps the outer document set one-row-per-invoice, so a
+  // split payment or a multi-line sale cannot inflate either the page or its
+  // pagination total.
+  if (analyticsPopulation) {
+    const cashiers = _multi(params.cashiers != null ? params.cashiers : params.cashierId);
+    if (cashiers.length) {
+      where.push(`f.created_by IN (${cashiers.map(() => '?').join(',')})`);
+      cashiers.forEach((v) => args.push(v));
+    }
+
+    const hours = _multi(params.hours != null ? params.hours : params.hour)
+      .map((v) => Number(v))
+      .filter((v, i, all) => Number.isInteger(v) && v >= 0 && v <= 23 && all.indexOf(v) === i);
+    if (hours.length) {
+      // Same expression as the registry's `hour` dimension over the order
+      // fact. occurred_at_local is the branch-local timestamp; using UTC or
+      // ar_documents.issue_date here would make the clicked heat-map cell and
+      // the invoice list describe different hours.
+      where.push(`HOUR(f.occurred_at_local) IN (${hours.map(() => '?').join(',')})`);
+      hours.forEach((v) => args.push(v));
+    }
+
+    const menuIds = _multi(params.menuIds != null ? params.menuIds : params.menuItemId);
+    const categoryNames = _multi(
+      params.categoryIds != null ? params.categoryIds : params.categoryId,
+    );
+    if (menuIds.length || categoryNames.length) {
+      const lineWhere = ['lf.document_id = d.id'];
+      if (menuIds.length) {
+        lineWhere.push(`lf.menu_id IN (${menuIds.map(() => '?').join(',')})`);
+        menuIds.forEach((v) => args.push(v));
+      }
+      if (categoryNames.length) {
+        // The shared URL key is historical (`categoryId`), but the analytics
+        // registry groups by category_name_snapshot because the projector has
+        // never had a category master id. Match the exact at-sale snapshot.
+        lineWhere.push(`lf.category_name_snapshot IN (${categoryNames.map(() => '?').join(',')})`);
+        categoryNames.forEach((v) => args.push(v));
+      }
+      // Menu + category belong to the SAME line. Two independent EXISTS
+      // clauses would accept a burger line plus an unrelated drinks line when
+      // the user asked for "Burger in Drinks".
+      where.push(`EXISTS (SELECT 1 FROM ar_document_lines lf WHERE ${lineWhere.join(' AND ')})`);
+    }
+
+    const paymentMethods = _multi(
+      params.paymentMethods != null ? params.paymentMethods : params.paymentMethod,
+    );
+    if (paymentMethods.length) {
+      where.push(
+        `EXISTS (SELECT 1 FROM analytics_payment_facts pf ` +
+        `WHERE pf.document_id = d.id AND pf.method_norm IN (${paymentMethods.map(() => '?').join(',')}))`,
+      );
+      paymentMethods.forEach((v) => args.push(v));
+    }
   }
 
   // THE BRANCH PREDICATE, IN THE STATEMENT ITSELF.
@@ -415,20 +524,47 @@ async function list(params = {}) {
   // filterPage then finds nothing left to drop.
   // `params.scope` has already been intersected with any `?branchId=` the caller
   // sent, and a missing scope normalizes to zero grants → `1=0` → no rows.
-  const b = SalesScope.branchClause(params.scope, 'd.branch_id');
+  const b = SalesScope.branchClause(params.scope, analyticsPopulation ? 'f.branch_id' : 'd.branch_id');
   if (b.sql) { where.push(b.sql); b.params.forEach((v) => args.push(v)); }
 
   const whereSql = 'WHERE ' + where.map((w) => '(' + w + ')').join(' AND ');
+  const visibleBranch = analyticsPopulation ? 'f.branch_id' : 'd.branch_id';
+  const listFrom = `${LIST_FROM}
+       LEFT JOIN branches br ON br.id = ${visibleBranch}
+       LEFT JOIN users u ON u.username = f.created_by`;
   const [rows] = await db.query(
     `SELECT d.id, d.document_number, d.document_type, d.source_type, d.customer_id, d.customer_name,
             d.issue_date, d.due_date, d.subtotal, d.vat_amount, d.total_amount, d.paid_amount,
-            d.balance_amount, d.status, d.zatca_status, d.version, d.branch_id,
-            COALESCE(f.channel_id, d.channel_id) AS channel, f.order_type, f.business_day
-       ${LIST_FROM} ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
+            d.balance_amount, d.status, d.zatca_status, d.version, ${visibleBranch} AS branch_id,
+            br.name AS branch_name, br.name_en AS branch_name_en,
+            COALESCE(NULLIF(TRIM(u.full_name), ''), u.username, f.created_by) AS cashier_name,
+            ${analyticsPopulation ? 'f.channel_id' : 'COALESCE(f.channel_id, d.channel_id)'} AS channel,
+            f.order_type, f.business_day
+       ${listFrom} ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
     args.concat([pageSize, offset]));
-  const [cnt] = await db.query(`SELECT COUNT(*) AS total ${LIST_FROM} ${whereSql}`, args);
+  // The drill filters span order, line and payment facts. Let the operational
+  // list return its own summary from the exact same WHERE instead of showing an
+  // unfiltered analytics KPI above a correctly filtered table.
+  const [cnt] = await db.query(
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(d.subtotal), 0) AS net_ex_vat,
+            COALESCE(SUM(d.total_amount), 0) AS invoice_total,
+            CASE WHEN COUNT(*) = 0 THEN NULL
+                 ELSE ROUND(SUM(d.subtotal) / COUNT(*), 2) END AS avg_ticket
+       ${listFrom} ${whereSql}`,
+    args,
+  );
   const total = Number(cnt[0].total);
-  return { data: rows, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
+  return {
+    data: rows,
+    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    totals: {
+      orders: total,
+      net_ex_vat: Number(cnt[0].net_ex_vat || 0),
+      invoice_total: Number(cnt[0].invoice_total || 0),
+      avg_ticket: cnt[0].avg_ticket == null ? null : Number(cnt[0].avg_ticket),
+    },
+  };
 }
 
-module.exports = { createDraft, issue, cancel, linkPosSale, getWithLines, list, _computeDoc };
+module.exports = { createDraft, issue, cancel, linkPosSale, getWithLines, list, _computeDoc, _ensurePosLines };

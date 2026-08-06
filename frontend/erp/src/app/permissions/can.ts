@@ -182,6 +182,19 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // reads the books, it does not post to them. Mirrored exactly, because a nav
   // gate that is wider than the server gate offers a button that 403s.
   "finance.gl.post": [...ADM, "manager", "accountant", "finance"],
+  // Package H — EXACT mirror of db/migrations/finance/capabilities.js ROLE_GRANTS.
+  //
+  //   finance.gl.view        → manager (FIN_ALL), accountant, finance, auditor
+  //   finance.accounts.manage→ manager (FIN_ALL), accountant, finance
+  //
+  // The auditor asymmetry is the POINT, not an oversight: an auditor READS the
+  // chart of accounts (so it must appear in their nav — it did not, which is
+  // the bug this fixes) and may not restructure it. Granting manage to auditor
+  // here would put Edit/Move/Delete buttons in front of a role the server
+  // answers with 403; withholding view keeps hiding a screen they are entitled
+  // to. FIN_READ / FIN are exactly these two sets.
+  "finance.gl.view": FIN_READ,
+  "finance.accounts.manage": FIN,
   // ── Accounting write caps (E1) — reverse is tighter (excludes plain accountant) ──
   "accounting.accounts.manage": FIN,
   "accounting.journals.create": FIN,

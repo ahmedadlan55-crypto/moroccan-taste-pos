@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, requiredId, dateISO } from "@/shared/schemas";
-import { Button, Dialog, Input, Select, safeUserMessage, useToast } from "@/shared/ui";
+import { Button, DatePicker, Dialog, Select, safeUserMessage, useToast } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import type { TFunction } from "@/i18n";
 import { useAuth } from "@/app/providers";
@@ -48,6 +48,7 @@ export function MyLeaveRequestDialog({ open, onClose }: { open: boolean; onClose
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     formState: { errors },
@@ -104,10 +105,26 @@ export function MyLeaveRequestDialog({ open, onClose }: { open: boolean; onClose
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t("people.leaveForm.fromDate")} required error={errors.startDate}>
-            {({ id, invalid }) => <Input id={id} type="date" dir="ltr" invalid={invalid} {...register("startDate")} />}
+            {({ id, invalid }) => (
+              <Controller
+                name="startDate"
+                control={control}
+                render={({ field }) => (
+                  <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                )}
+              />
+            )}
           </Field>
           <Field label={t("people.leaveForm.toDate")} required error={errors.endDate}>
-            {({ id, invalid }) => <Input id={id} type="date" dir="ltr" invalid={invalid} {...register("endDate")} />}
+            {({ id, invalid }) => (
+              <Controller
+                name="endDate"
+                control={control}
+                render={({ field }) => (
+                  <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                )}
+              />
+            )}
           </Field>
         </div>
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { PackagePlus } from "lucide-react";
-import { Button, FullPageFlow } from "@/shared/ui";
+import { Button, DatePicker, FullPageFlow } from "@/shared/ui";
 import { formatCurrency, formatQty } from "@/shared/lib";
 import { useProductionMutations } from "@/modules/inventory/lib/hooks/useProduction";
 import type { ProductionDetail } from "@/modules/inventory/lib/adapters/production.adapter";
@@ -123,7 +123,7 @@ export function RecordOutputDialog({
               {trackingMode === "expiry" && (
                 <label className="block text-xs font-bold text-slate-500">
                   {t("production.output.expiryLabel")}
-                  <input type="date" className="field mt-1 w-full" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} aria-label={t("production.output.expiryAria")} />
+                  <DatePicker className="mt-1 block" value={expiryDate} onChange={setExpiryDate} aria-label={t("production.output.expiryAria")} />
                 </label>
               )}
             </div>

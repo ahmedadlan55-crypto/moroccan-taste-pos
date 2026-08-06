@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Factory, Layers, Plus, TriangleAlert } from "lucide-react";
-import { Button, PageHeader, PermissionDenied, Select } from "@/shared/ui";
+import { Button, DatePicker, PageHeader, PermissionDenied, Select } from "@/shared/ui";
 import { useCan } from "@/shared/permissions";
 import { useUnsavedGuard } from "@/shared/forms";
 import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
@@ -227,11 +227,10 @@ export function ProductionBatchCreatePage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <label className="block text-xs font-bold text-slate-500">
             {t("production.batch.create.batchDateLabel")}
-            <input
-              type="date"
-              className="field mt-1 w-full py-2"
+            <DatePicker
+              className="mt-1 block"
               value={batchDate}
-              onChange={(e) => setBatchDate(e.target.value)}
+              onChange={setBatchDate}
               aria-label={t("production.batch.create.batchDateLabel")}
             />
           </label>

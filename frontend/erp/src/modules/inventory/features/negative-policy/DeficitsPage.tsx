@@ -10,7 +10,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ChevronLeft, ChevronRight, Download, Layers, Search, ShieldCheck, Wallet,
 } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { DatePicker, PageHeader } from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { Button } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
@@ -215,8 +215,8 @@ export function DeficitsPage() {
                   <option key={w.id} value={w.id}>{w.name}</option>
                 ))}
               </select>
-              <input type="date" className="field lg:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("inventoryRest.negativePolicy.deficits.dateFromAria")} />
-              <input type="date" className="field lg:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("inventoryRest.negativePolicy.deficits.dateToAria")} />
+              <DatePicker className="lg:w-40" value={dateFrom} onChange={(v) => patch({ dateFrom: v })} aria-label={t("inventoryRest.negativePolicy.deficits.dateFromAria")} />
+              <DatePicker className="lg:w-40" value={dateTo} onChange={(v) => patch({ dateTo: v })} aria-label={t("inventoryRest.negativePolicy.deficits.dateToAria")} />
             </div>
             <div className="flex flex-wrap gap-1">
               {DEFICIT_STATUS_FILTER_CODES.map((code) => (

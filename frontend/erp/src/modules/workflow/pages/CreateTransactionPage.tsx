@@ -24,6 +24,7 @@ import {
   CardBody,
   CardHeader,
   CardTitle,
+  DatePicker,
   FileUploader,
   Input,
   Select,
@@ -359,7 +360,7 @@ export function CreateTransactionPage() {
                     />
                   </Field>
                   <Field label={t("workflow.create.field.dueDate")}>
-                    <Input type="date" value={draft.dueDate} onChange={(event) => update("dueDate", event.target.value)} />
+                    <DatePicker value={draft.dueDate} onChange={(value) => update("dueDate", value)} />
                   </Field>
                 </div>
               )}

@@ -22,6 +22,7 @@ import { PackageCheck } from "lucide-react";
 import { PageHeader, PanelTitle } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { StatusBadge } from "@/shared/ui";
+import { DatePicker } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
@@ -169,7 +170,7 @@ export function ReceiveCreatePage() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
                 <label className="mb-1 block text-xs font-extrabold text-slate-500" htmlFor="rcv-date">{t("purchasing.receive.dateLabel")}</label>
-                <input id="rcv-date" type="date" className="field w-full" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
+                <DatePicker id="rcv-date" value={receiptDate} onChange={setReceiptDate} />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-extrabold text-slate-500" htmlFor="rcv-wh">{t("purchasing.field.warehouse")}</label>
@@ -229,7 +230,7 @@ export function ReceiveCreatePage() {
                       </div>
                       <div>
                         <label className="mb-1 block text-[11px] font-bold text-slate-400" htmlFor={`rcv-exp-${i}`}>{t("purchasing.lines.expiry")}</label>
-                        <input id={`rcv-exp-${i}`} type="date" className="field w-full" value={r.expiryDate} onChange={(e) => patch(i, { expiryDate: e.target.value })} />
+                        <DatePicker id={`rcv-exp-${i}`} value={r.expiryDate} onChange={(expiryDate) => patch(i, { expiryDate })} />
                       </div>
                     </div>
                   ))}

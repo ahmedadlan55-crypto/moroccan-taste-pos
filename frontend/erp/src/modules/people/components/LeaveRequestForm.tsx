@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, requiredId, dateISO } from "@/shared/schemas";
-import { Button, Input, Select } from "@/shared/ui";
+import { Button, DatePicker, Select } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import type { TFunction } from "@/i18n";
 import type { Employee, LeaveType } from "../lib/types";
@@ -40,6 +40,7 @@ export function LeaveRequestForm({ employees, leaveTypes, submitting, onSubmit, 
   const schema = useMemo(() => makeLeaveSchema(t), [t]);
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors },
   } = useForm<LeaveFormValues>({
@@ -76,10 +77,26 @@ export function LeaveRequestForm({ employees, leaveTypes, submitting, onSubmit, 
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={t("people.leaveForm.fromDate")} required error={errors.startDate}>
-          {({ id, invalid }) => <Input id={id} type="date" dir="ltr" invalid={invalid} {...register("startDate")} />}
+          {({ id, invalid }) => (
+            <Controller
+              name="startDate"
+              control={control}
+              render={({ field }) => (
+                <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+              )}
+            />
+          )}
         </Field>
         <Field label={t("people.leaveForm.toDate")} required error={errors.endDate}>
-          {({ id, invalid }) => <Input id={id} type="date" dir="ltr" invalid={invalid} {...register("endDate")} />}
+          {({ id, invalid }) => (
+            <Controller
+              name="endDate"
+              control={control}
+              render={({ field }) => (
+                <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+              )}
+            />
+          )}
         </Field>
       </div>
 

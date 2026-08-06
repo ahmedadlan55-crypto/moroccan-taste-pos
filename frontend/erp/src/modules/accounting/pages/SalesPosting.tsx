@@ -16,7 +16,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, RotateCcw, CheckCircle2 } from "lucide-react";
-import { Button, PageHeader, Card, Badge, Spinner } from "@/shared/ui";
+import { Button, PageHeader, Card, Badge, DatePicker, Spinner } from "@/shared/ui";
 import { useCan } from "@/app/providers";
 import { useT } from "@/i18n";
 import { formatCurrency, formatDate } from "@/shared/lib";
@@ -96,13 +96,13 @@ export function SalesPostingPage() {
       <Card className="flex flex-wrap items-end gap-3 p-3">
         <label className="text-sm">
           <span className="mb-1 block text-muted-foreground">من</span>
-          <input type="date" lang="en-GB" className="rounded border bg-background px-2 py-1"
-            value={filters.from ?? ""} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
+          <DatePicker className="w-44"
+            value={filters.from ?? ""} onChange={(v) => setFilters({ ...filters, from: v })} />
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-muted-foreground">إلى</span>
-          <input type="date" lang="en-GB" className="rounded border bg-background px-2 py-1"
-            value={filters.to ?? ""} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
+          <DatePicker className="w-44"
+            value={filters.to ?? ""} onChange={(v) => setFilters({ ...filters, to: v })} />
         </label>
         {tab === "pending" && (
           <div className="text-sm">

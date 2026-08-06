@@ -11,7 +11,7 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { formatCurrency, formatQty } from "@/shared/lib";
 import { useInvTxDetail, useInvTxMutations } from "@/modules/inventory/lib/hooks/useInventoryTx";
-import { SearchableEntityCombobox } from "@/shared/ui";
+import { DatePicker, SearchableEntityCombobox } from "@/shared/ui";
 import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/shared/ui";
 import { makeItemFetcher, makeAccountFetcher, type ItemHit, type AccountHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
 import {
@@ -186,7 +186,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
               </select>
             </label>
             <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.invtx.wizard.date")}
-              <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label={t("inventoryRest.invtx.wizard.date")} />
+              <DatePicker className="mt-1 block" value={date} onChange={setDate} aria-label={t("inventoryRest.invtx.wizard.date")} />
             </label>
             <label className="block text-xs font-bold text-slate-500 sm:col-span-2">{t("inventoryRest.invtx.wizard.reason")}
               <input className="field mt-1 w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isReceipt ? t("inventoryRest.invtx.wizard.reasonReceipt") : isAdj ? t("inventoryRest.invtx.wizard.reasonAdjustment") : t("inventoryRest.invtx.wizard.reasonIssue")} aria-label={t("inventoryRest.reasonDialog.reasonAria")} />
@@ -296,7 +296,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                               <div className="flex flex-wrap items-center gap-2 text-xs">
                                 <span className="font-bold text-slate-400">{t("inventoryRest.invtx.wizard.lotLabel")}</span>
                                 <input className="field h-9 w-40" placeholder={t("inventoryRest.invtx.wizard.lotNumber")} value={l.lotNumber ?? ""} onChange={(e) => updateLine(i, { lotNumber: e.target.value })} aria-label={t("inventoryRest.invtx.wizard.lotNumber")} />
-                                <input type="date" className="field h-9 w-40" value={l.expiryDate ?? ""} onChange={(e) => updateLine(i, { expiryDate: e.target.value })} aria-label={t("inventoryRest.invtx.wizard.lotExpiryAria")} />
+                                <DatePicker className="h-9 w-40" value={l.expiryDate ?? ""} onChange={(v) => updateLine(i, { expiryDate: v })} aria-label={t("inventoryRest.invtx.wizard.lotExpiryAria")} />
                               </div>
                             </td>
                           </tr>

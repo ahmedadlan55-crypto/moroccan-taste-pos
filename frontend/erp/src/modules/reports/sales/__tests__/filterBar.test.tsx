@@ -123,6 +123,26 @@ function renderHub(path = "/reports/sales/executive") {
 
 const searchString = () => screen.getByTestId("search").textContent ?? "";
 
+/**
+ * The period control is a POPOVER now (shared/ui/date-range-picker): a trigger
+ * that opens two month grids plus the preset rail, with its own Cancel/Apply.
+ * Picking a preset there is still just a DRAFT edit of this bar — the bar's own
+ * «تطبيق» is what commits it, which is exactly what these tests are about.
+ */
+function pickPeriodPreset(preset: keyof typeof AR_PRESETS) {
+  fireEvent.click(screen.getByRole("button", { name: AR.period }));
+  const panel = screen.getByTestId("date-range-popover");
+  fireEvent.click(within(panel).getByRole("button", { name: AR_PRESETS[preset] }));
+  // The picker's own Apply — scoped to the panel, because the bar behind it
+  // has an Apply of its own and only one of them commits to the URL.
+  fireEvent.click(within(panel).getByRole("button", { name: "تطبيق" }));
+}
+
+const AR_PRESETS = {
+  today: "اليوم",
+  lastMonth: "الشهر الماضي",
+} as const;
+
 beforeEach(() => {
   for (const k of Object.keys(caps)) delete caps[k];
   caps["analytics.view"] = true;
@@ -141,7 +161,7 @@ describe("the collapsed bar", () => {
 
     for (const name of [AR.period, AR.branch, AR.compare]) {
       expect(
-        within(bar).getByRole(name === AR.branch ? "button" : "combobox", { name }),
+        within(bar).getByRole(name === AR.compare ? "combobox" : "button", { name }),
         `${name} must be visible without expanding anything`,
       ).toBeInTheDocument();
     }
@@ -227,9 +247,7 @@ describe("more filters", () => {
 describe("editing a filter", () => {
   it("does not touch the committed state until Apply", () => {
     const { patch } = renderBar();
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     expect(patch, "an edit must not commit").not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: AR.apply }));
@@ -269,9 +287,7 @@ describe("editing a filter", () => {
     const before = posts.length;
     const searchBefore = searchString();
 
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     // Give react-query every chance to fire: the point is that it cannot,
     // because nothing the queries key off has changed.
     await act(async () => {
@@ -318,9 +334,7 @@ describe("the results region", () => {
     expect(chips).toHaveTextContent("2032");
     const committedLabel = chips.textContent;
 
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     expect(
       screen.getByTestId("active-filter-chips").textContent,
       "an uncommitted draft must not rewrite the label on the numbers",

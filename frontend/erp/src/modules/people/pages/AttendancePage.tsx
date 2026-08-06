@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Input, PageHeader, StatusBadge, Tabs } from "@/shared/ui";
+import { Badge, DatePicker, PageHeader, StatusBadge, Tabs } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatDate, formatNumber } from "@/shared/lib";
 import { useTx } from "@/shared/ui/i18n";
@@ -106,7 +106,7 @@ function AttendanceTab() {
       filterBar={
         <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
           {t("people.field.date")}
-          <Input type="date" dir="ltr" value={date} onChange={(e) => setDate(e.target.value)} className="h-10" />
+          <DatePicker value={date} onChange={setDate} className="h-10" />
         </label>
       }
     />

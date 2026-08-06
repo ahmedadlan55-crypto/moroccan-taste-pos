@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Package, Trash2, TriangleAlert } from "lucide-react";
-import { Button, EmptyState, NumberInput, Select, StatusBadge } from "@/shared/ui";
+import { Button, DatePicker, EmptyState, NumberInput, Select, StatusBadge } from "@/shared/ui";
 import { formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
 import type { BatchLineError, BomPickOption } from "../../lib/batchApi";
@@ -182,11 +182,9 @@ export function OutputsTable({
 
               <Cell span="lg:col-span-1" label={t("production.batch.create.col.expiry")}>
                 {expiryTracked ? (
-                  <input
-                    type="date"
-                    className="field w-full py-2"
+                  <DatePicker
                     value={row.expiryDate}
-                    onChange={(e) => onPatch(row.key, { expiryDate: e.target.value })}
+                    onChange={(v) => onPatch(row.key, { expiryDate: v })}
                     aria-label={`${t("production.batch.create.col.expiry")} — ${row.bom?.productName ?? formatNumber(index + 1)}`}
                     title={t("production.batch.create.expiryHint")}
                   />

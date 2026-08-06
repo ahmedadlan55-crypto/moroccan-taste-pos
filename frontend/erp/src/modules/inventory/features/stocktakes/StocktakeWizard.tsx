@@ -9,7 +9,7 @@ import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provi
 import { formatQty } from "@/shared/lib";
 import { useStocktakeMutations } from "@/modules/inventory/lib/hooks/useStocktakes";
 import { createStocktakeInput } from "@/modules/inventory/lib/schemas/stocktake.schema";
-import { SearchableEntityCombobox } from "@/shared/ui";
+import { DatePicker, SearchableEntityCombobox } from "@/shared/ui";
 import { makeItemFetcher, type ItemHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
 import { useT } from "@/i18n";
 
@@ -81,7 +81,7 @@ export function StocktakeWizard() {
             </select>
           </label>
           <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.date")}
-            <input type="date" className="field mt-1 w-full" value={date} onChange={(e) => setDate(e.target.value)} aria-label={t("inventoryRest.stocktakes.wizard.date")} />
+            <DatePicker className="mt-1 block" value={date} onChange={setDate} aria-label={t("inventoryRest.stocktakes.wizard.date")} />
           </label>
 
           <label className="block text-xs font-bold text-slate-500">{t("inventoryRest.stocktakes.wizard.scopeLabel")}

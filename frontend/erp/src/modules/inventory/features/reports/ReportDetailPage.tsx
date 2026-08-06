@@ -4,7 +4,7 @@ import { ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucid
 import { PageHeader,
   PrintDocument,
 } from "@/shared/ui";
-import { Button } from "@/shared/ui";
+import { Button, DatePicker } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
 import { useT, translateApiError } from "@/i18n";
 import type { TFunction } from "@/i18n";
@@ -152,10 +152,10 @@ export function ReportDetailPage() {
           {hasDateRange && (
             <>
               <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterFrom")}
-                <input type="date" dir="ltr" className="field mt-1 block" value={filters.from ?? ""} onChange={(e) => patch({ from: e.target.value })} />
+                <DatePicker className="mt-1 block" value={filters.from ?? ""} onChange={(v) => patch({ from: v })} />
               </label>
               <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterTo")}
-                <input type="date" dir="ltr" className="field mt-1 block" value={filters.to ?? ""} onChange={(e) => patch({ to: e.target.value })} />
+                <DatePicker className="mt-1 block" value={filters.to ?? ""} onChange={(v) => patch({ to: v })} />
               </label>
             </>
           )}

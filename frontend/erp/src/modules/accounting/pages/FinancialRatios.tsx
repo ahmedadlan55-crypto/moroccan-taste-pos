@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Gauge, Info } from "lucide-react";
 import { apiClient } from "@/shared/api";
-import { ErrorState, LoadingState, PageHeader, PanelTitle, Tooltip } from "@/shared/ui";
+import { DatePicker, ErrorState, LoadingState, PageHeader, PanelTitle, Tooltip } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { useT } from "@/i18n";
 import { computeRatios, extractInputs, type Ratio, type RatioGroup } from "../lib/ratios";
@@ -53,7 +53,7 @@ export function FinancialRatiosPage() {
         <div className="grid gap-4 p-5 sm:max-w-xs">
           <Field label={t("accounting.ratios.asOf")}>
             {({ id }) => (
-              <input id={id} type="date" className="field" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <DatePicker id={id} value={asOf} onChange={setAsOf} />
             )}
           </Field>
         </div>

@@ -19,6 +19,16 @@ export const sharedUi = {
     typeToSearch: "Type to search…",
     loadingMore: "Loading more…",
   },
+  datePicker: {
+    openCalendar: "Open calendar",
+    calendar: "Calendar",
+    prevMonth: "Previous month",
+    nextMonth: "Next month",
+  },
+  dateRangePicker: {
+    title: "Select a time period",
+    presets: "Quick periods",
+  },
   fileUploader: {
     hint: "Drag files here or click to choose",
     tooLarge: "The file exceeds the maximum size.",

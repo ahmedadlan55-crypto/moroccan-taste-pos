@@ -1,4 +1,4 @@
-import { Input, Select } from "@/shared/ui";
+import { DatePicker, Select } from "@/shared/ui";
 import { useT } from "@/i18n";
 import type { ShiftFilters as ShiftFiltersValue } from "../lib/types";
 
@@ -23,21 +23,19 @@ export function ShiftFilters({ value, onChange, cashiers }: ShiftFiltersProps) {
     <div className="flex flex-wrap items-center gap-2">
       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
         <span>{t("posAdmin.filters.from")}</span>
-        <Input
-          type="date"
+        <DatePicker
           className="h-10 w-40 py-1.5"
           value={value.startDate ?? ""}
-          onChange={(e) => set({ startDate: e.target.value || undefined })}
+          onChange={(v) => set({ startDate: v || undefined })}
           aria-label={t("posAdmin.filters.fromDateAria")}
         />
       </label>
       <label className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
         <span>{t("posAdmin.filters.to")}</span>
-        <Input
-          type="date"
+        <DatePicker
           className="h-10 w-40 py-1.5"
           value={value.endDate ?? ""}
-          onChange={(e) => set({ endDate: e.target.value || undefined })}
+          onChange={(v) => set({ endDate: v || undefined })}
           aria-label={t("posAdmin.filters.toDateAria")}
         />
       </label>

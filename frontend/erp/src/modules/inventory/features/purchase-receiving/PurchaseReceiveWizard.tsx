@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowRight, Check, PackageCheck, TriangleAlert, X } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { DatePicker, PageHeader } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { Stepper } from "@/modules/inventory/features/transfers/Stepper";
 import { LoadingState, ErrorState } from "@/shared/ui";
@@ -249,7 +249,7 @@ export function PurchaseReceiveWizard() {
                               <div className="flex flex-wrap items-center gap-2 text-xs">
                                 <span className="font-bold text-slate-400">{t("inventoryRest.purchaseReceiving.wizard.lotLabel")}</span>
                                 <input className="field h-9 w-44" placeholder={t("inventoryRest.purchaseReceiving.wizard.lotPlaceholder")} value={s.lotNumber} onChange={(e) => patchLine(l.itemId, { lotNumber: e.target.value })} aria-label={t("inventoryRest.purchaseReceiving.wizard.lotAria", { name: l.name })} />
-                                <input type="date" dir="ltr" className="field h-9 w-44" value={s.expiryDate} onChange={(e) => patchLine(l.itemId, { expiryDate: e.target.value })} aria-label={t("inventoryRest.purchaseReceiving.wizard.expiryAria", { name: l.name })} />
+                                <DatePicker className="h-9 w-44 py-1" value={s.expiryDate} onChange={(v) => patchLine(l.itemId, { expiryDate: v })} aria-label={t("inventoryRest.purchaseReceiving.wizard.expiryAria", { name: l.name })} />
                                 {l.trackingMode === "expiry" && <span className="font-bold text-amber-600">{t("inventoryRest.purchaseReceiving.wizard.expiryRequired")}</span>}
                               </div>
                             </td>

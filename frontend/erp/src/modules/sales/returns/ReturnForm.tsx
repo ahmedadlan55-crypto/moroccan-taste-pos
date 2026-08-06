@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Undo2 } from "lucide-react";
-import { Drawer, Button, LoadingState, safeUserMessage } from "@/shared/ui";
+import { Drawer, Button, DatePicker, LoadingState, safeUserMessage } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import { Field } from "@/shared/forms";
 import { o2cApi, qk, OpenInvoicePicker, Num, Money, type Invoice } from "@/modules/sales/lib";
@@ -66,7 +66,7 @@ export function ReturnForm({ open, onClose, onCreated, presetInvoiceId }: { open
         {mutation.isError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{safeUserMessage(mutation.error)}</div>}
         {!presetInvoiceId && <Field label={t("sales.returns.detail.originalInvoice")} required><OpenInvoicePicker value={picked} onChange={setPicked} /></Field>}
         <div className="grid grid-cols-2 gap-3">
-          <Field label={t("sales.returns.form.returnDate")} required><input dir="ltr" type="date" className="field w-full tabular-nums" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label={t("sales.returns.form.returnDate")} required><DatePicker value={date} onChange={setDate} /></Field>
           <Field label={t("sales.returns.col.refund")}>
             <select className="field w-full" value={refund} onChange={(e) => setRefund(e.target.value)}>
               <option value="ar_reduction">{t("sales.returns.refundOpt.ar_reduction")}</option>

@@ -25,7 +25,7 @@ import {
   Truck,
   Warehouse as WarehouseIcon,
 } from "lucide-react";
-import { PageHeader } from "@/shared/ui";
+import { DatePicker, PageHeader } from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { Button } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
@@ -342,25 +342,19 @@ function FilterBar({ from, to, category, type, window, onChange, onReset }: Filt
     <div className="no-print surface mb-4 flex flex-wrap items-end gap-3 p-4">
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
         <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.from")}</span>
-        <input
-          type="date"
-          dir="ltr"
-          className="field"
+        <DatePicker
           value={from}
           max={to || undefined}
-          onChange={(e) => onChange({ from: e.target.value || null })}
+          onChange={(v) => onChange({ from: v || null })}
         />
       </label>
 
       <label className="flex min-w-[8.5rem] flex-1 flex-col gap-1.5">
         <span className="text-xs font-extrabold text-slate-500">{t("inventoryRest.analytics.filter.to")}</span>
-        <input
-          type="date"
-          dir="ltr"
-          className="field"
+        <DatePicker
           value={to}
           min={from || undefined}
-          onChange={(e) => onChange({ to: e.target.value || null })}
+          onChange={(v) => onChange({ to: v || null })}
         />
       </label>
 

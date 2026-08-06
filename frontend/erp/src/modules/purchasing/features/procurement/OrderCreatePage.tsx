@@ -10,6 +10,7 @@ import { PageHeader, PanelTitle } from "@/shared/ui";
 import { Button } from "@/shared/ui";
 import { SearchableEntityCombobox, type EntityPage } from "@/shared/ui";
 import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/shared/ui";
+import { DatePicker } from "@/shared/ui";
 import { formatCurrency } from "@/shared/lib";
 import { useT, translateApiError } from "@/i18n";
 import { supplierFetcher, useCreateOrder } from "@/modules/inventory/lib/hooks/useProcurement";
@@ -107,7 +108,7 @@ export function OrderCreatePage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.orderCreate.expectedDateLabel")}</label>
-            <input type="date" className="field w-full" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
+            <DatePicker value={expectedDate} onChange={setExpectedDate} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.field.notes")}</label>

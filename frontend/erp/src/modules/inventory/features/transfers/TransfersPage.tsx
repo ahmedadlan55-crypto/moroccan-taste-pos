@@ -14,7 +14,7 @@ import {
 import { PageHeader } from "@/shared/ui";
 import { MetricCard } from "@/modules/inventory/lib/MetricCard";
 import { StatusBadge } from "@/shared/ui";
-import { Button } from "@/shared/ui";
+import { Button, DatePicker } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
 import { useTransfers } from "@/modules/inventory/lib/hooks/useTransfers";
 import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
@@ -162,8 +162,8 @@ export function TransfersPage() {
             <option value="">{t("inventoryRest.filter.allDestinations")}</option>
             {whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <input type="date" className="field xl:w-40" value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateFromAria")} />
-          <input type="date" className="field xl:w-40" value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} aria-label={t("inventoryRest.invtx.list.dateToAria")} />
+          <DatePicker className="xl:w-40" value={dateFrom} onChange={(v) => patch({ dateFrom: v })} aria-label={t("inventoryRest.invtx.list.dateFromAria")} />
+          <DatePicker className="xl:w-40" value={dateTo} onChange={(v) => patch({ dateTo: v })} aria-label={t("inventoryRest.invtx.list.dateToAria")} />
         </div>
         <div className="flex flex-wrap gap-1">
           {statusOptions.map((o) => (

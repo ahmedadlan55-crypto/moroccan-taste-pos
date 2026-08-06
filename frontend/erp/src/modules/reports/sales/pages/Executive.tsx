@@ -1,21 +1,25 @@
 // Sales Analytics Hub — "executive": the administrative sales report.
 //
-// This screen is a REPORT, not a dashboard. Managers and accountants read it
-// top-to-bottom the way they read a statement: a header that pins down exactly
-// which numbers these are (period, basis, tax mode, filters), then a stepped
-// sales statement, the tax breakdown a VAT return needs, collections with a
-// sales-vs-collections reconciliation line, returns and voids, cost and margin,
-// and finally the day-by-day detail with a totals row.
+// This screen is a DECISION WORKSPACE followed by its formal verification
+// layer. Managers first see the period pulse, exceptions and ranked drivers;
+// accountants can then read/print the stepped statement, VAT, collections,
+// returns, profit and day detail from the same trusted responses.
 //
-// Deliberately CHART-FREE: charts crowd a report that exists to be read,
-// printed and reconciled. The visual analysis lives on the other sections
-// (explorer, hours, branches…) — this one carries the figures.
+// Deliberately CHART-FREE: ranked evidence and direct drills answer a decision
+// faster than decorative plots, while the detailed statement remains printable.
 import { useMemo, type ReactNode } from "react";
 import {
+  ArrowDownRight,
+  ArrowUpRight,
   Building2,
+  CheckCircle2,
+  CircleAlert,
   Clock3,
   CreditCard,
+  Gauge,
   PackageSearch,
+  ReceiptText,
+  ShoppingBag,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -31,7 +35,7 @@ import { DataTable, type ColumnDef } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { useCan } from "@/shared/permissions";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
-import { formatCurrency, formatDateTime, formatNumber } from "@/shared/lib";
+import { cn, formatCurrency, formatDateTime, formatNumber } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import {
@@ -47,11 +51,13 @@ import {
 } from "../lib/api";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
 import { REPORT_BY_ID, reportQuery } from "../lib/reportRegistry";
+import { ExecutiveDrivers } from "../components/ExecutiveDrivers";
 
 const SEGMENT = "executive";
 
 /**
- * Every figure the report needs — in FIVE requests, not one and not six.
+ * The formal statement needs FIVE requests. The decision workspace adds ONE
+ * active driver request (never five dimensions in parallel), for six total.
  *
  * lib/analytics/planner.js caps a request at MAX_METRICS = 12 and answers
  * VALIDATION_ERROR / 422 above it. The report needs 30 figures, so a single
@@ -99,7 +105,7 @@ const SUMMARY_METRICS_A: readonly string[] = reportQuery(EXEC_REPORT, "statement
 const IN_GROUP_A: ReadonlySet<string> = new Set<string>(SUMMARY_METRICS_A);
 
 /**
- * FIVE REQUESTS, NOT SIX — and where each figure now comes from.
+ * FIVE STATEMENT REQUESTS + ONE ACTIVE DRIVER — where each figure comes from.
  *
  * The operational counters (qty, items per order, guests, fees, rounding,
  * returns count) used to be their OWN dimensionless request whose only output
@@ -323,24 +329,213 @@ function Statement({ lines, showCompare, compareLabel }: { lines: StatementLine[
 }
 
 /** Compact label/figure grid — the operational counters, no icons, no cards. */
-function Figures({ items, testId }: { items: Array<{ id: string; label: string; value: string }>; testId?: string }) {
+interface DecisionKpi {
+  id: string;
+  label: string;
+  value: string;
+  delta: number | null;
+  to: string;
+  icon: LucideIcon;
+  supporting?: string;
+  secondaryLabel?: string;
+  secondaryValue?: string;
+}
+
+function DeltaPill({ value, enabled, label }: { value: number | null; enabled: boolean; label: string }) {
+  if (!enabled) {
+    return <span className="text-[11px] font-bold text-slate-400">{label}</span>;
+  }
+  if (value == null) return <span className="text-[11px] font-bold text-slate-400">—</span>;
+  const rising = value > 0;
+  const falling = value < 0;
+  const Icon = rising ? ArrowUpRight : falling ? ArrowDownRight : Gauge;
   return (
-    <dl
-      data-testid={testId}
-      className={`grid grid-cols-2 divide-slate-100 sm:grid-cols-3 lg:divide-x lg:rtl:divide-x-reverse ${items.length >= 5 ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}
+    <span
+      dir="ltr"
+      className={cn(
+        "inline-flex min-h-6 items-center gap-1 rounded-full px-2 text-[11px] font-extrabold tabular-nums",
+        rising && "bg-emerald-50 text-emerald-700",
+        falling && "bg-rose-50 text-rose-700",
+        !rising && !falling && "bg-slate-100 text-slate-600",
+      )}
     >
-      {items.map((it, index) => (
-        <div
-          key={it.id}
-          className={`${items.length % 2 === 1 && index === items.length - 1 ? "col-span-2 sm:col-span-1" : ""} border-b border-slate-100 px-4 py-3 lg:border-b-0`}
-        >
-          <dt className="min-h-10 text-xs font-bold leading-5 text-slate-500">{it.label}</dt>
-          <dd dir="ltr" className="mt-1 text-lg font-extrabold tabular-nums text-slate-900 text-end lg:text-start">
-            {it.value}
-          </dd>
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+      {value > 0 ? "+" : ""}{formatNumber(value)}%
+    </span>
+  );
+}
+
+function DecisionKpis({ items, compareEnabled, compareOffLabel }: {
+  items: DecisionKpi[];
+  compareEnabled: boolean;
+  compareOffLabel: string;
+}) {
+  return (
+    <div
+      data-testid="kpi-row"
+      className={cn(
+        "grid divide-y divide-slate-100 sm:grid-cols-2 sm:divide-y-0",
+        items.length >= 5 ? "2xl:grid-cols-5" : "xl:grid-cols-4",
+      )}
+    >
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.id}
+            to={item.to}
+            data-kpi-id={item.id}
+            className="group min-w-0 border-slate-100 p-4 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100 sm:border-e"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700 transition-colors group-hover:bg-teal-100">
+                <Icon className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <DeltaPill value={item.delta} enabled={compareEnabled} label={compareOffLabel} />
+            </div>
+            <dl className="mt-3">
+              <dt className="min-h-10 text-xs font-bold leading-5 text-slate-500">{item.label}</dt>
+              <dd dir="ltr" className="mt-1 text-end text-xl font-black tabular-nums text-slate-950">
+                {item.value}
+              </dd>
+              {item.supporting && (
+                <dd className="mt-1 truncate text-[11px] font-bold text-slate-400">{item.supporting}</dd>
+              )}
+            </dl>
+            {item.secondaryLabel && (
+              <dl className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[11px] font-bold text-slate-400">
+                <dt className="truncate">{item.secondaryLabel}</dt>
+                <dd dir="ltr" className="shrink-0 tabular-nums">{item.secondaryValue ?? "—"}</dd>
+              </dl>
+            )}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+interface DecisionSignal {
+  id: string;
+  title: string;
+  body: string;
+  value?: string;
+  to?: string;
+  tone: "critical" | "warning";
+}
+
+function DecisionSignals({ signals, title, subtitle, clearTitle, clearBody, openLabel }: {
+  signals: DecisionSignal[];
+  title: string;
+  subtitle: string;
+  clearTitle: string;
+  clearBody: string;
+  openLabel: string;
+}) {
+  return (
+    <section className="surface overflow-hidden" data-testid="decision-signals">
+      <header className="border-b border-slate-100 px-4 py-3">
+        <h3 className="text-sm font-extrabold text-slate-950">{title}</h3>
+        <p className="mt-0.5 text-xs font-medium leading-5 text-slate-500">{subtitle}</p>
+      </header>
+      {signals.length === 0 ? (
+        <div className="flex items-start gap-3 px-4 py-5" data-signal-state="clear">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+            <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div>
+            <p className="text-sm font-extrabold text-slate-900">{clearTitle}</p>
+            <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{clearBody}</p>
+          </div>
         </div>
-      ))}
-    </dl>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {signals.map((signal) => {
+            const content = (
+              <>
+                <span
+                  className={cn(
+                    "grid h-9 w-9 shrink-0 place-items-center rounded-xl",
+                    signal.tone === "critical"
+                      ? "bg-rose-50 text-rose-700"
+                      : "bg-amber-50 text-amber-700",
+                  )}
+                >
+                  <CircleAlert className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-extrabold text-slate-900">{signal.title}</span>
+                    {signal.value && (
+                      <span dir="ltr" className="text-xs font-black tabular-nums text-slate-700">{signal.value}</span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-medium leading-5 text-slate-500">{signal.body}</span>
+                  {signal.to && <span className="mt-1 block text-[11px] font-extrabold text-teal-700">{openLabel}</span>}
+                </span>
+              </>
+            );
+            return (
+              <li key={signal.id} data-signal-id={signal.id}>
+                {signal.to ? (
+                  <Link
+                    to={signal.to}
+                    className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100"
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <div className="flex items-start gap-3 px-4 py-3">{content}</div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+interface DayInsight {
+  id: string;
+  title: string;
+  day: string;
+  label: string;
+  value: string;
+}
+
+function PeriodPulse({ insights, title, subtitle, openLabel, onOpen }: {
+  insights: DayInsight[];
+  title: string;
+  subtitle: string;
+  openLabel: string;
+  onOpen: (day: string) => void;
+}) {
+  return (
+    <section className="surface overflow-hidden" data-testid="period-pulse">
+      <header className="border-b border-slate-100 px-4 py-3">
+        <h3 className="text-sm font-extrabold text-slate-950">{title}</h3>
+        <p className="mt-0.5 text-xs font-medium leading-5 text-slate-500">{subtitle}</p>
+      </header>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        {insights.map((insight) => (
+          <button
+            key={insight.id}
+            type="button"
+            data-insight-id={insight.id}
+            onClick={() => onOpen(insight.day)}
+            className="min-w-0 border-b border-e border-slate-100 px-4 py-3 text-start transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100"
+          >
+            <span className="block text-[11px] font-extrabold uppercase tracking-wide text-slate-400">{insight.title}</span>
+            <span className="mt-1 flex items-baseline justify-between gap-2">
+              <span className="truncate text-sm font-extrabold text-slate-900">{insight.label}</span>
+              <span dir="ltr" className="shrink-0 text-sm font-black tabular-nums text-slate-950">{insight.value}</span>
+            </span>
+            <span className="mt-1 block text-[11px] font-extrabold text-teal-700">{openLabel}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -349,24 +544,27 @@ function DecisionShortcut({
   icon: Icon,
   label,
   description,
+  step,
 }: {
   to: string;
   icon: LucideIcon;
   label: string;
   description: string;
+  step: number;
 }) {
   return (
     <Link
       to={to}
-      className="group flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-start transition hover:border-teal-300 hover:bg-teal-50 focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+      className="group relative flex min-h-20 min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white px-3 py-3 text-start transition hover:-translate-y-0.5 hover:border-teal-300 hover:bg-teal-50 hover:shadow-soft focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
     >
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-teal-50 text-teal-700 transition group-hover:bg-white">
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-extrabold text-slate-900">{label}</span>
-        <span className="mt-0.5 block truncate text-[11px] font-medium text-slate-500">{description}</span>
+        <span className="mt-0.5 block text-[11px] font-medium leading-4 text-slate-500">{description}</span>
       </span>
+      <span dir="ltr" className="absolute end-2 top-1 text-[10px] font-black tabular-nums text-slate-200">0{step}</span>
     </Link>
   );
 }
@@ -539,6 +737,14 @@ export default function Executive() {
     const s = sourceOf(id);
     const v = s.fromTotals ? s.result?.totalsCompare?.[id] : s.row?.compare?.[id];
     return typeof v === "number" ? v : null;
+  };
+  // The server calculates comparison percentages over its own exact fact
+  // population. Never re-derive them from rounded display figures here.
+  const d = (id: string): number | null => {
+    if (!hasCompare) return null;
+    const s = sourceOf(id);
+    const v = s.fromTotals ? s.result?.totalsDelta?.[id] : s.row?.delta?.[id];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
   };
 
   const dayRows = useMemo<DayRow[]>(
@@ -779,69 +985,251 @@ export default function Executive() {
     { id: "payments", center: "payments", view: "payments", icon: CreditCard },
   ].filter((shortcut) => shortcut.id !== "cashiers" || canViewCashierPerformance);
 
-  const headlineFigures = [
+  const headlineMetricId = inclBasis ? "net_product_sales" : "net_product_sales_ex_vat";
+  const decisionKpis: DecisionKpi[] = [
     {
       id: "net_sales",
       label: inclBasis
         ? t("salesReports.metrics.net_product_sales")
         : t("salesReports.metrics.net_product_sales_ex_vat"),
       value: money(inclBasis ? f("net_product_sales") : f("net_product_sales_ex_vat")),
+      delta: d(headlineMetricId),
+      to: decisionHref("operations", "branches"),
+      icon: Building2,
     },
-    { id: "orders", label: t("salesReports.metrics.orders"), value: count(f("orders")) },
-    { id: "avg_ticket", label: t("salesReports.metrics.avg_ticket"), value: money(f("avg_ticket")) },
+    {
+      id: "orders",
+      label: t("salesReports.metrics.orders"),
+      value: count(f("orders")),
+      delta: d("orders"),
+      to: decisionHref("operations", "orders"),
+      icon: ShoppingBag,
+    },
+    {
+      id: "avg_ticket",
+      label: t("salesReports.metrics.avg_ticket"),
+      value: money(f("avg_ticket")),
+      delta: d("avg_ticket"),
+      to: decisionHref("operations", "hours"),
+      icon: ReceiptText,
+      supporting: t("salesReports.command.exVatBasis"),
+    },
+    {
+      id: "net_collections",
+      label: t("salesReports.metrics.net_collections"),
+      value: money(netCollections),
+      delta: d("net_collections"),
+      to: decisionHref("payments", "payments"),
+      icon: CreditCard,
+    },
     ...(canViewCost
       ? [
           {
             id: "gross_profit_after_returns",
             label: t("salesReports.metrics.gross_profit_after_returns"),
             value: money(trustedGrossProfitAfterReturns),
-          },
-          {
-            id: "margin_pct_after_returns",
-            label: t("salesReports.metrics.margin_pct_after_returns"),
-            value: percent(trustedMarginAfterReturns),
+            delta: compareHasUncosted ? null : d("gross_profit_after_returns"),
+            to: decisionHref("items", "profitability"),
+            icon: Gauge,
+            secondaryLabel: t("salesReports.metrics.margin_pct_after_returns"),
+            secondaryValue: percent(trustedMarginAfterReturns),
           },
         ]
       : []),
   ];
 
+  const statementVariance = f("statement_variance");
+  const uncostedExposure = (f("uncosted_net") ?? 0) + (f("uncosted_returns_net") ?? 0);
+  const signals: DecisionSignal[] = [];
+  if (statementVariance != null && Math.abs(statementVariance) >= MONEY_EPSILON) {
+    signals.push({
+      id: "statement-variance",
+      title: t("salesReports.command.signals.statementVariance.title"),
+      body: t("salesReports.command.signals.statementVariance.body"),
+      value: money(statementVariance),
+      to: decisionHref("operations", "orders"),
+      tone: "critical",
+    });
+  }
+  if (settlementDiff != null && Math.abs(settlementDiff) >= MONEY_EPSILON) {
+    signals.push({
+      id: "settlement-difference",
+      title: t("salesReports.command.signals.settlement.title"),
+      body: t("salesReports.command.signals.settlement.body"),
+      value: money(settlementDiff),
+      to: decisionHref("payments", "reconciliation"),
+      tone: "critical",
+    });
+  }
+  if (canViewCost && uncostedExposure >= MONEY_EPSILON) {
+    signals.push({
+      id: "uncosted-sales",
+      title: t("salesReports.command.signals.uncosted.title"),
+      body: t("salesReports.command.signals.uncosted.body"),
+      value: money(uncostedExposure),
+      to: decisionHref("items", "profitability"),
+      tone: "warning",
+    });
+  }
+  if ((freshness?.pendingDays ?? 0) > 0) {
+    signals.push({
+      id: "pending-days",
+      title: t("salesReports.command.signals.pending.title"),
+      body: t("salesReports.command.signals.pending.body"),
+      value: count(freshness?.pendingDays ?? 0),
+      tone: "warning",
+    });
+  }
+  if ((d(headlineMetricId) ?? 0) < 0) {
+    signals.push({
+      id: "sales-decline",
+      title: t("salesReports.command.signals.salesDecline.title"),
+      body: t("salesReports.command.signals.salesDecline.body"),
+      value: percent(d(headlineMetricId)),
+      to: decisionHref("operations", "branches"),
+      tone: "warning",
+    });
+  }
+  if ((d("orders") ?? 0) < 0) {
+    signals.push({
+      id: "orders-decline",
+      title: t("salesReports.command.signals.ordersDecline.title"),
+      body: t("salesReports.command.signals.ordersDecline.body"),
+      value: percent(d("orders")),
+      to: decisionHref("operations", "hours"),
+      tone: "warning",
+    });
+  }
+
+  const rowsWithNet = dayRows.filter((row) => row.net != null);
+  const rowsWithOrders = dayRows.filter((row) => row.orders != null);
+  const rowsWithTicket = dayRows.filter((row) => row.avgTicket != null);
+  const bestNet = rowsWithNet.reduce<DayRow | null>(
+    (best, row) => (best == null || (row.net ?? -Infinity) > (best.net ?? -Infinity) ? row : best),
+    null,
+  );
+  const weakestNet = rowsWithNet.reduce<DayRow | null>(
+    (weakest, row) => (weakest == null || (row.net ?? Infinity) < (weakest.net ?? Infinity) ? row : weakest),
+    null,
+  );
+  const busiest = rowsWithOrders.reduce<DayRow | null>(
+    (best, row) => (best == null || (row.orders ?? -Infinity) > (best.orders ?? -Infinity) ? row : best),
+    null,
+  );
+  const highestTicket = rowsWithTicket.reduce<DayRow | null>(
+    (best, row) => (best == null || (row.avgTicket ?? -Infinity) > (best.avgTicket ?? -Infinity) ? row : best),
+    null,
+  );
+  const periodInsights: DayInsight[] = [
+    bestNet && {
+      id: "best-sales-day",
+      title: t("salesReports.command.pulse.bestSales"),
+      day: bestNet.day,
+      label: bestNet.label,
+      value: money(bestNet.net),
+    },
+    weakestNet && {
+      id: "weakest-sales-day",
+      title: t("salesReports.command.pulse.weakestSales"),
+      day: weakestNet.day,
+      label: weakestNet.label,
+      value: money(weakestNet.net),
+    },
+    busiest && {
+      id: "busiest-day",
+      title: t("salesReports.command.pulse.busiest"),
+      day: busiest.day,
+      label: busiest.label,
+      value: count(busiest.orders),
+    },
+    highestTicket && {
+      id: "highest-ticket-day",
+      title: t("salesReports.command.pulse.highestTicket"),
+      day: highestTicket.day,
+      label: highestTicket.label,
+      value: money(highestTicket.avgTicket),
+    },
+  ].filter((value): value is DayInsight => value != null);
+
   return (
     <section className="space-y-4" data-testid="page-executive">
-      <div className="flex flex-wrap items-start justify-between gap-3 px-1">
-        <div className="min-w-0">
-          <h2 className="text-lg font-extrabold text-slate-900">
-            {t("salesReports.pages.executive.title")}
-          </h2>
-          <p className="mt-0.5 text-sm font-medium text-slate-500">
-            {t("salesReports.pages.executive.subtitle")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {(freshness?.pendingDays ?? 0) > 0 && (
-            <Badge tone="warning">
-              {t("salesReports.topbar.lateTx", { count: freshness?.pendingDays ?? 0 })}
-            </Badge>
-          )}
-          {freshness?.watermark && (
-            <span data-freshness-watermark className="text-xs font-bold text-slate-400">
-              {t("salesReports.topbar.refreshedAt", { time: formatDateTime(freshness.watermark) })}
-            </span>
-          )}
-        </div>
-      </div>
-      {/* The first row answers the manager's first five questions. Operational
-          counters still exist in the daily result and statement; they no
-          longer displace sales, ticket and margin from the first viewport. */}
-      <div className="surface overflow-hidden">
-        <Figures
-          testId="kpi-row"
-          items={headlineFigures}
+      <section
+        className="no-print surface overflow-hidden border-teal-200"
+        data-testid="executive-command-center"
+      >
+        <header className="bg-gradient-to-l from-teal-950 via-teal-900 to-slate-950 px-4 py-4 text-white sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 max-w-3xl">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-teal-200">
+                {t("salesReports.command.stepUnderstand")}
+              </p>
+              <h2 className="mt-1 text-xl font-black tracking-tight sm:text-2xl">
+                {t("salesReports.command.title")}
+              </h2>
+              <p className="mt-1.5 text-sm font-medium leading-6 text-teal-50/80">
+                {t("salesReports.command.subtitle")}
+              </p>
+            </div>
+            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              {(freshness?.pendingDays ?? 0) > 0 && (
+                <Badge tone="warning">
+                  {t("salesReports.topbar.lateTx", { count: freshness?.pendingDays ?? 0 })}
+                </Badge>
+              )}
+              {freshness?.watermark && (
+                <span data-freshness-watermark className="text-xs font-bold text-teal-100/70">
+                  {t("salesReports.topbar.refreshedAt", { time: formatDateTime(freshness.watermark) })}
+                </span>
+              )}
+              {!hasCompare && (
+                <button
+                  type="button"
+                  onClick={() => patch({ compare: "prevPeriod" }, { push: true })}
+                  className="min-h-10 rounded-xl border border-white/25 bg-white/10 px-3 text-xs font-extrabold text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/20"
+                >
+                  {t("salesReports.command.enableCompare")}
+                </button>
+              )}
+            </div>
+          </div>
+        </header>
+        <DecisionKpis
+          items={decisionKpis}
+          compareEnabled={hasCompare}
+          compareOffLabel={t("salesReports.command.compareOff")}
+        />
+      </section>
+
+      <div className="no-print grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(19rem,0.9fr)]">
+        <DecisionSignals
+          signals={signals}
+          title={t("salesReports.command.attention.title")}
+          subtitle={t("salesReports.command.attention.subtitle")}
+          clearTitle={t("salesReports.command.attention.clearTitle")}
+          clearBody={t("salesReports.command.attention.clearBody")}
+          openLabel={t("salesReports.command.openAnalysis")}
+        />
+        <PeriodPulse
+          insights={periodInsights}
+          title={t("salesReports.command.pulse.title")}
+          subtitle={t("salesReports.command.pulse.subtitle")}
+          openLabel={t("salesReports.command.pulse.openDay")}
+          onOpen={(day) => patch({ from: day, to: day, preset: "custom" }, { push: true })}
         />
       </div>
 
-      <section className="surface p-3" data-testid="decision-shortcuts">
+      <ExecutiveDrivers
+        filters={filters}
+        search={search}
+        canViewCashiers={canViewCashierPerformance}
+      />
+
+      <section className="no-print surface p-3" data-testid="decision-shortcuts">
         <div className="mb-2 flex flex-wrap items-end justify-between gap-1 px-1">
           <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-teal-700">
+              {t("salesReports.command.stepExplain")}
+            </p>
             <h3 className="text-sm font-extrabold text-slate-900">
               {t("salesReports.decisions.title")}
             </h3>
@@ -851,11 +1239,12 @@ export default function Executive() {
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-          {decisionShortcuts.map((shortcut) => (
+          {decisionShortcuts.map((shortcut, index) => (
             <DecisionShortcut
               key={shortcut.id}
               to={decisionHref(shortcut.center, shortcut.view)}
               icon={shortcut.icon}
+              step={index + 1}
               label={t(`salesReports.decisions.${shortcut.id}.title`)}
               description={
                 shortcut.id === "items" && !canViewCost
@@ -866,6 +1255,20 @@ export default function Executive() {
           ))}
         </div>
       </section>
+
+      <div className="flex flex-wrap items-end justify-between gap-2 px-1 pt-1">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-teal-700">
+            {t("salesReports.command.stepVerify")}
+          </p>
+          <h3 className="mt-0.5 text-base font-black text-slate-950">
+            {t("salesReports.command.details.title")}
+          </h3>
+          <p className="mt-0.5 text-xs font-medium leading-5 text-slate-500">
+            {t("salesReports.command.details.subtitle")}
+          </p>
+        </div>
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Section

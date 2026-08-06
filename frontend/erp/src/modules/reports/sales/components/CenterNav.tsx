@@ -48,7 +48,7 @@ export function CenterNav({ options, value, onChange, ariaLabel, className }: Ce
       aria-label={ariaLabel}
       data-testid="sales-center-nav"
       className={cn(
-        "grid grid-cols-5 gap-1.5 sm:gap-2",
+        "grid grid-cols-3 gap-1.5 sm:gap-2 xl:grid-cols-5",
         className,
       )}
     >
@@ -67,12 +67,12 @@ export function CenterNav({ options, value, onChange, ariaLabel, className }: Ce
               if (!active) onChange(option.id);
             }}
             className={cn(
-              "flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border px-1 py-1.5 text-center transition-colors",
+              "flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border px-1.5 py-2 text-center transition-colors",
               "sm:min-h-16 sm:flex-row sm:justify-start sm:gap-2.5 sm:rounded-xl sm:px-3 sm:py-2.5 sm:text-start",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
               active
-                ? "border-teal-300 bg-teal-50 text-teal-950 shadow-soft"
-                : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:bg-slate-50 hover:text-slate-900",
+                ? "border-teal-300 bg-white text-teal-950 shadow-soft"
+                : "border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-white hover:text-slate-900",
             )}
           >
             <span
@@ -83,9 +83,9 @@ export function CenterNav({ options, value, onChange, ariaLabel, className }: Ce
             >
               <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" aria-hidden={true} />
             </span>
-            <span className="w-full min-w-0 text-[10px] font-extrabold leading-tight sm:text-xs xl:text-sm">
-              <span aria-hidden="true" className="sm:hidden">{option.shortLabel ?? option.label}</span>
-              <span aria-hidden="true" className="hidden whitespace-normal leading-5 sm:block">{option.label}</span>
+            <span className="w-full min-w-0 text-xs font-extrabold leading-tight xl:text-sm">
+              <span aria-hidden="true" className="xl:hidden">{option.shortLabel ?? option.label}</span>
+              <span aria-hidden="true" className="hidden whitespace-normal leading-5 xl:block">{option.label}</span>
             </span>
           </button>
         );

@@ -9,7 +9,9 @@
 //   hub scope       → branchId/channel/orderType
 // Row click → /sales/invoices?doc=<id> — the canonical full detail page
 // (lines / payments / audit) via the sales module's ?doc pattern (use-nav.ts).
-// KPI row comes from the analytics API: orders, invoice_total, avg_ticket.
+// KPI row comes from the SAME filtered invoice population as the table for
+// invoice viewers. Aggregate-only viewers retain the analytics KPI where the
+// planner can represent the active filters without widening the population.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -67,6 +69,11 @@ function kpiValue(result: AnalyticsResult | undefined, id: string): number | nul
   return row ? displayMetric(row, id) : null;
 }
 
+function totalsValue(totals: Record<string, number | null> | undefined, id: string): number | null {
+  const v = totals?.[id];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 const KPIS: Array<{ id: string; eq: string; fmt: (v: number) => string; icon: LucideIcon; tone: MetricTone }> = [
   { id: "orders", eq: "count", fmt: formatNumber, icon: ShoppingCart, tone: "teal" },
   { id: "invoice_total", eq: "invoiceTotal", fmt: formatCurrency, icon: Receipt, tone: "blue" },
@@ -79,35 +86,39 @@ export default function Orders() {
   const navigate = useNavigate();
   const canViewInvoices = useCan("invoices.view");
   const { filters } = useUrlFilters(analyticsFilterCodec);
-  const sharedFilters = useMemo(
+  const analyticsOnlyFilters = useMemo(
     () => ({
       ...filters,
-      // The operational invoice list cannot express these dimensions. Clear
-      // them on the KPI too so a direct/stale URL cannot scope half the page.
+      // The planner cannot put order metrics beside a line-only or
+      // payment-only dimension. Invoice viewers use InvoiceService's exact
+      // aggregate below; aggregate-only viewers keep the analytics KPI only
+      // for combinations the planner can honestly express.
       brandId: [],
       paymentMethod: [],
-      hour: "",
       menuItemId: [],
       categoryId: [],
-      cashierId: [],
     }),
     [filters],
   );
+  const hasRelationalDrill =
+    filters.paymentMethod.length > 0 ||
+    filters.menuItemId.length > 0 ||
+    filters.categoryId.length > 0;
 
   // ── KPI row (analytics API) ──
-  // buildFiltersBody carries the wave-4 drill params too (paymentMethod / hour
-  // / menuItemId / categoryId / cashierId), so a drill INTO this page scopes
-  // the KPIs. The operational invoice list deliberately receives only the
-  // overlapping filters InvoiceService.list can express; sending the other
-  // keys would make the request LOOK scoped while the service ignored them.
+  // Hour and cashier are native order-fact filters. Line/payment filters use
+  // the O2C list aggregate instead; asking the analytics planner to combine
+  // them with order metrics would correctly return 422.
   const kpiBody = useMemo<AnalyticsQueryBody>(
     () => ({
-      ...reportQuerySpec(SEGMENT, "kpis", sharedFilters),
-      ...buildFiltersBody(sharedFilters),
+      ...reportQuerySpec(SEGMENT, "kpis", analyticsOnlyFilters),
+      ...buildFiltersBody(analyticsOnlyFilters),
     }),
-    [sharedFilters],
+    [analyticsOnlyFilters],
   );
-  const kpis = useAnalyticsQuery("orders-kpis", kpiBody);
+  const kpis = useAnalyticsQuery("orders-kpis", kpiBody, {
+    enabled: !canViewInvoices && !hasRelationalDrill,
+  });
 
   // ── invoices list (operational O2C API, mirrored locally) ──
   const [ts, setTs] = useState<TableState>({ page: 1, pageSize: 25, search: "", sort: null });
@@ -127,17 +138,23 @@ export default function Orders() {
       ...(ts.sort && SORT_MAP[ts.sort.columnId]
         ? { sort: SORT_MAP[ts.sort.columnId], dir: ts.sort.dir.toUpperCase() }
         : {}),
-      // These are the exact list filters shared with the analytics KPI query.
+      // These are exact list filters over the frozen order/line/payment facts.
       // Multi-values are comma-separated because apiClient params are scalar;
       // InvoiceService._multi and SalesScope.requestedBranchIds both accept
-      // that representation. Do not add brand/item/hour/cashier/payment keys
-      // here until InvoiceService.list has a real predicate for them.
+      // that representation. brand/customer remain absent because this list
+      // has no proven predicate for them; silently forwarding them would make
+      // the URL look filtered while leaving the population unchanged.
       from: filters.from,
       to: filters.to,
       businessDay: filters.businessDay,
       ...(filters.branchId.length > 0 ? { branchId: filters.branchId.join(",") } : {}),
       ...(filters.channel.length > 0 ? { channel: filters.channel.join(",") } : {}),
       ...(filters.orderType.length > 0 ? { orderType: filters.orderType.join(",") } : {}),
+      ...(filters.paymentMethod.length > 0 ? { paymentMethod: filters.paymentMethod.join(",") } : {}),
+      ...(filters.hour !== "" ? { hour: filters.hour } : {}),
+      ...(filters.menuItemId.length > 0 ? { menuItemId: filters.menuItemId.join(",") } : {}),
+      ...(filters.categoryId.length > 0 ? { categoryId: filters.categoryId.join(",") } : {}),
+      ...(filters.cashierId.length > 0 ? { cashierId: filters.cashierId.join(",") } : {}),
     }),
     [
       ts,
@@ -147,6 +164,11 @@ export default function Orders() {
       filters.branchId,
       filters.channel,
       filters.orderType,
+      filters.paymentMethod,
+      filters.hour,
+      filters.menuItemId,
+      filters.categoryId,
+      filters.cashierId,
     ],
   );
 
@@ -232,7 +254,9 @@ export default function Orders() {
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {KPIS.map((k) => {
           const label = t(`salesReports.metrics.${k.id}`);
-          const v = kpiValue(kpis.data, k.id);
+          const v = canViewInvoices
+            ? totalsValue(list.data?.totals as Record<string, number | null> | undefined, k.id)
+            : kpiValue(kpis.data, k.id);
           return (
             <div key={k.id} data-testid={`kpi-${k.id}`}>
               <MetricCard

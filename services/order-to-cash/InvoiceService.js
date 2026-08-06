@@ -455,6 +455,66 @@ async function list(params = {}) {
     orderTypes.forEach((v) => args.push(v));
   }
 
+  // Decision-center drill filters. These are deliberately available only for
+  // the projected analytics population: the source of truth is the frozen fact
+  // / line snapshot, not today's menu or a best-effort parse of the invoice
+  // description. EXISTS keeps the outer document set one-row-per-invoice, so a
+  // split payment or a multi-line sale cannot inflate either the page or its
+  // pagination total.
+  if (analyticsPopulation) {
+    const cashiers = _multi(params.cashiers != null ? params.cashiers : params.cashierId);
+    if (cashiers.length) {
+      where.push(`f.created_by IN (${cashiers.map(() => '?').join(',')})`);
+      cashiers.forEach((v) => args.push(v));
+    }
+
+    const hours = _multi(params.hours != null ? params.hours : params.hour)
+      .map((v) => Number(v))
+      .filter((v, i, all) => Number.isInteger(v) && v >= 0 && v <= 23 && all.indexOf(v) === i);
+    if (hours.length) {
+      // Same expression as the registry's `hour` dimension over the order
+      // fact. occurred_at_local is the branch-local timestamp; using UTC or
+      // ar_documents.issue_date here would make the clicked heat-map cell and
+      // the invoice list describe different hours.
+      where.push(`HOUR(f.occurred_at_local) IN (${hours.map(() => '?').join(',')})`);
+      hours.forEach((v) => args.push(v));
+    }
+
+    const menuIds = _multi(params.menuIds != null ? params.menuIds : params.menuItemId);
+    const categoryNames = _multi(
+      params.categoryIds != null ? params.categoryIds : params.categoryId,
+    );
+    if (menuIds.length || categoryNames.length) {
+      const lineWhere = ['lf.document_id = d.id'];
+      if (menuIds.length) {
+        lineWhere.push(`lf.menu_id IN (${menuIds.map(() => '?').join(',')})`);
+        menuIds.forEach((v) => args.push(v));
+      }
+      if (categoryNames.length) {
+        // The shared URL key is historical (`categoryId`), but the analytics
+        // registry groups by category_name_snapshot because the projector has
+        // never had a category master id. Match the exact at-sale snapshot.
+        lineWhere.push(`lf.category_name_snapshot IN (${categoryNames.map(() => '?').join(',')})`);
+        categoryNames.forEach((v) => args.push(v));
+      }
+      // Menu + category belong to the SAME line. Two independent EXISTS
+      // clauses would accept a burger line plus an unrelated drinks line when
+      // the user asked for "Burger in Drinks".
+      where.push(`EXISTS (SELECT 1 FROM ar_document_lines lf WHERE ${lineWhere.join(' AND ')})`);
+    }
+
+    const paymentMethods = _multi(
+      params.paymentMethods != null ? params.paymentMethods : params.paymentMethod,
+    );
+    if (paymentMethods.length) {
+      where.push(
+        `EXISTS (SELECT 1 FROM analytics_payment_facts pf ` +
+        `WHERE pf.document_id = d.id AND pf.method_norm IN (${paymentMethods.map(() => '?').join(',')}))`,
+      );
+      paymentMethods.forEach((v) => args.push(v));
+    }
+  }
+
   // THE BRANCH PREDICATE, IN THE STATEMENT ITSELF.
   // The router already drops out-of-scope rows from the page it gets back
   // (lib/salesScope.filterPage), which closed the row leak but left
@@ -482,9 +542,29 @@ async function list(params = {}) {
             f.order_type, f.business_day
        ${listFrom} ${whereSql} ORDER BY ${sortCol} ${dir} LIMIT ? OFFSET ?`,
     args.concat([pageSize, offset]));
-  const [cnt] = await db.query(`SELECT COUNT(*) AS total ${listFrom} ${whereSql}`, args);
+  // The drill filters span order, line and payment facts. Let the operational
+  // list return its own summary from the exact same WHERE instead of showing an
+  // unfiltered analytics KPI above a correctly filtered table.
+  const [cnt] = await db.query(
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(d.subtotal), 0) AS net_ex_vat,
+            COALESCE(SUM(d.total_amount), 0) AS invoice_total,
+            CASE WHEN COUNT(*) = 0 THEN NULL
+                 ELSE ROUND(SUM(d.subtotal) / COUNT(*), 2) END AS avg_ticket
+       ${listFrom} ${whereSql}`,
+    args,
+  );
   const total = Number(cnt[0].total);
-  return { data: rows, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
+  return {
+    data: rows,
+    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    totals: {
+      orders: total,
+      net_ex_vat: Number(cnt[0].net_ex_vat || 0),
+      invoice_total: Number(cnt[0].invoice_total || 0),
+      avg_ticket: cnt[0].avg_ticket == null ? null : Number(cnt[0].avg_ticket),
+    },
+  };
 }
 
 module.exports = { createDraft, issue, cancel, linkPosSale, getWithLines, list, _computeDoc, _ensurePosLines };

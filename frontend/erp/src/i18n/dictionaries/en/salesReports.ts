@@ -7,6 +7,7 @@ export const salesReports = {
     eyebrow: "Sales · Decision center",
     title: "Sales Decision Center",
     subtitle: "Understand performance and act from one place — trusted figures by item, hour, branch, cashier and payment method",
+    workspaceLabel: "Current decision path",
     tabsAria: "Sales analytics sections",
     settingsAria: "Report settings",
     resultsAria: "Report results",
@@ -45,6 +46,85 @@ export const salesReports = {
     },
   },
 
+  command: {
+    stepUnderstand: "01 · Understand the result",
+    stepExplain: "04 · Explore further",
+    stepVerify: "05 · Verify the trusted detail",
+    title: "Sales pulse and period decisions",
+    subtitle: "Start with the outcome, monitor exceptions, then open the dimension that explains it without losing the report scope.",
+    enableCompare: "Compare with previous period",
+    compareOff: "Comparison is off",
+    exVatBasis: "Value shown excluding VAT",
+    openAnalysis: "Open related analysis",
+    attention: {
+      title: "02 · What needs attention now",
+      subtitle: "Control exceptions and performance changes derived from the period itself, with no hidden estimated thresholds.",
+      clearTitle: "No visible exceptions",
+      clearBody: "Statement, collections and costing are within the available controls for this period. Enable comparison to monitor performance change too.",
+    },
+    pulse: {
+      title: "Period day pulse",
+      subtitle: "The strongest and weakest days in the displayed data; select a day to pin its scope and review the detail.",
+      bestSales: "Highest sales day",
+      weakestSales: "Weakest sales day",
+      busiest: "Highest order day",
+      highestTicket: "Highest average ticket",
+      openDay: "View this day",
+    },
+    drivers: {
+      step: "03 · Understand what moved the result",
+      title: "Performance drivers",
+      subtitle: "Switch dimension to see the current leading contributor, strongest gain and biggest decline among active groups in the period.",
+      dimensionAria: "Choose the performance-driver dimension",
+      dimensions: {
+        branch: "Branch",
+        item: "Item",
+        hour: "Hour",
+        cashier: "Cashier",
+        payment: "Collections",
+      },
+      cards: {
+        leader: "Current leading contributor",
+        gain: "Strongest value gain",
+        decline: "Biggest value decline",
+      },
+      scopeLimited: "The result hit the row limit; the item ranking below covers the returned rows and is not claimed to include rows beyond them.",
+      failed: "Performance drivers could not be loaded for this dimension.",
+      compareNeeded: "Enable comparison to see gains and declines beside the current leading contributor.",
+      empty: "No groups can be ranked in the current scope.",
+    },
+    details: {
+      title: "Statement, controls and daily detail",
+      subtitle: "The formal verification layer: sales statement, VAT, collections, returns, profit and exportable daily detail.",
+    },
+    signals: {
+      statementVariance: {
+        title: "Invoice header-to-line variance",
+        body: "The control line is not zero; review the invoices in this scope before relying on the statement.",
+      },
+      settlement: {
+        title: "Invoice-to-collection difference",
+        body: "Invoice value does not match net receipts and refunds; open reconciliation to identify the source.",
+      },
+      uncosted: {
+        title: "Sales without trusted cost",
+        body: "Part of revenue or returns has no complete cost snapshot, so affected profit indicators are withheld.",
+      },
+      pending: {
+        title: "Days are still processing",
+        body: "Days inside the period have not reached the data-complete watermark yet; their results may change after refresh.",
+      },
+      salesDecline: {
+        title: "Net sales declined",
+        body: "Net sales are below the comparison period. Start with branches, then inspect the channels and items driving it.",
+      },
+      ordersDecline: {
+        title: "Order count declined",
+        body: "Orders are below the comparison period. Review trading hours and branches to locate the decline.",
+      },
+    },
+  },
+
   report: {
     title: "Sales report",
     print: "Print",
@@ -74,7 +154,7 @@ export const salesReports = {
     sectionCollections: "Collections by payment method",
     sectionCollectionsNote: "Received, refunded and net collections, reconciled against the invoice total",
     sectionReturns: "Returns and voids",
-    sectionReturnsNote: "Count, value and share of net sales",
+    sectionReturnsNote: "Count, value and share of VAT-inclusive invoiced sales before returns",
     sectionProfit: "Cost and profit",
     sectionProfitNote: "Cost comes from at-sale snapshots, never from today's cost",
     sectionDaily: "Daily detail",

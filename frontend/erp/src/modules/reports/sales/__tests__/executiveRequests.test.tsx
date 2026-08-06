@@ -45,10 +45,11 @@ vi.mock("../lib/api", async (importOriginal) => {
     fetchAnalyticsRegistry: vi.fn(async () => REGISTRY as never),
     runAnalyticsQuery: vi.fn(async (body: AnalyticsQueryBody) => {
       calls.push({ metrics: [...body.metrics], dimensions: [...body.dimensions] });
+      const keys = body.dimensions.length > 0 ? ["fixture"] : [];
       return {
         columns: [],
-        rows: [],
-        totals: {},
+        rows: [{ keys, labels: keys, values: Object.fromEntries(body.metrics.map((metric) => [metric, 1])) }],
+        totals: Object.fromEntries(body.metrics.map((metric) => [metric, 1])),
         meta: { freshness: { watermark: null }, maskedMetrics: [] },
       } as never;
     }),
@@ -103,7 +104,7 @@ afterEach(() => {
 });
 
 describe("the executive report's round-trip budget", () => {
-  it("issues FIVE analytics requests, not six", async () => {
+  it("issues five statement requests plus one active driver request", async () => {
     renderExecutive();
     await settle();
     const unique = new Set(calls.map((c) => `${c.dimensions.join("|")}::${c.metrics.join("|")}`));
@@ -111,7 +112,7 @@ describe("the executive report's round-trip budget", () => {
       unique.size,
       `executive issued ${unique.size} distinct requests: ` +
         [...unique].map((k) => k.split("::")[0] || "(no grouping)").join(" / "),
-    ).toBe(5);
+    ).toBe(6);
   }, 20000);
 
   it("no request exceeds the planner's metric ceiling", async () => {

@@ -30,6 +30,11 @@ router.get('/', requireCapability('invoices.view'), async (req, res) => {
     const page = await SalesScope.filterPage(db, scope, 'ar_documents', out.data);
     return H.sendData(res, page.rows, {
       pagination: Object.assign({}, out.pagination, page.dropped ? { scopeFiltered: true } : {}),
+      // A defensive scope drop means the service and route disagreed. Never
+      // expose the wider aggregate in that state; in the healthy path the
+      // service predicate already removed every out-of-scope document and the
+      // exact-filter totals are safe to publish.
+      ...(page.dropped ? {} : { totals: out.totals }),
     });
   } catch (e) { return H.sendErr(res, e); }
 });

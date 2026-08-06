@@ -57,6 +57,8 @@ export interface AnalyticsSortSpec {
 }
 
 export interface AnalyticsQueryBody {
+  /** Label language; part of the server cache key and response contract. */
+  lang?: "ar" | "en";
   metrics: string[];
   dimensions: string[];
   filters: AnalyticsQueryFilters;
@@ -84,7 +86,10 @@ export interface AnalyticsResultRow {
   /** metricId → value; ABSENT/null means not computable (render "—", never 0). */
   values: Record<string, number | null>;
   compare?: Record<string, number | null>;
+  /** Server-calculated comparison percentage. */
   delta?: Record<string, number | null>;
+  /** Server-calculated absolute change, preserved separately from delta %. */
+  deltaAbs?: Record<string, number | null>;
 }
 
 export interface AnalyticsResultMeta {
@@ -114,6 +119,7 @@ export interface AnalyticsResult {
    */
   totalsCompare?: Record<string, number | null>;
   totalsDelta?: Record<string, number | null>;
+  totalsDeltaAbs?: Record<string, number | null>;
   // `total` is NOT a server count: QueryService returns only {limit, offset,
   // rowCountCapped}, so it degrades to rows.length. `rowCountCapped` is the
   // authoritative "a fact hit MAX_LIMIT — you are NOT seeing the whole period"
@@ -271,6 +277,7 @@ export function queryBodyToWireRequest(body: AnalyticsQueryBody): AnalyticsPlann
   const f = body.filters;
   const dimFilters = plannerFilters(f, body.metrics.map(mapId));
   return {
+    ...(body.lang ? { lang: body.lang } : {}),
     metrics: body.metrics.map(mapId),
     dimensions: body.dimensions,
     range: { from: f.from, to: f.to },
@@ -324,6 +331,22 @@ function unswapDelta(
   return out;
 }
 
+/** Preserve the server's exact absolute change beside its percentage. */
+function unswapDeltaAbs(
+  delta: WireRow["delta"],
+  swap: Record<string, string> | null,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  if (!delta) return out;
+  const back: Record<string, string> = {};
+  if (swap) for (const [pageId, wireId] of Object.entries(swap)) back[wireId] = pageId;
+  for (const [k, v] of Object.entries(delta)) {
+    const key = back[k] ?? k;
+    out[key] = v && typeof v === "object" ? asNumberOrNull(v.abs) : null;
+  }
+  return out;
+}
+
 function wireRowToResultRow(row: WireRow, dims: string[], swap: Record<string, string> | null): AnalyticsResultRow {
   const keys = dims.map((d) => (row.keys && row.keys[d] !== undefined ? row.keys[d] : null));
   const labels = dims.map((d, i) => {
@@ -333,7 +356,10 @@ function wireRowToResultRow(row: WireRow, dims: string[], swap: Record<string, s
   });
   const out: AnalyticsResultRow = { keys, labels, values: unswapValues(row.values, swap) };
   if (row.compare) out.compare = unswapValues(row.compare, swap);
-  if (row.delta) out.delta = unswapDelta(row.delta, swap);
+  if (row.delta) {
+    out.delta = unswapDelta(row.delta, swap);
+    out.deltaAbs = unswapDeltaAbs(row.delta, swap);
+  }
   return out;
 }
 
@@ -383,6 +409,10 @@ export function normalizeAnalyticsResult(
     data.totals && typeof data.totals === "object" && "delta" in data.totals
       ? unswapDelta((data.totals as { delta?: WireRow["delta"] }).delta, swap)
       : undefined;
+  const totalsDeltaAbs =
+    data.totals && typeof data.totals === "object" && "delta" in data.totals
+      ? unswapDeltaAbs((data.totals as { delta?: WireRow["delta"] }).delta, swap)
+      : undefined;
 
   // Dimensionless queries: the server carries the single aggregate in totals
   // and returns zero rows — synthesize the one row the KPI pages read.
@@ -390,6 +420,7 @@ export function normalizeAnalyticsResult(
     const kpiRow: AnalyticsResultRow = { keys: [], labels: [], values: totals };
     if (totalsCompare && Object.keys(totalsCompare).length > 0) kpiRow.compare = totalsCompare;
     if (totalsDelta && Object.keys(totalsDelta).length > 0) kpiRow.delta = totalsDelta;
+    if (totalsDeltaAbs && Object.keys(totalsDeltaAbs).length > 0) kpiRow.deltaAbs = totalsDeltaAbs;
     rows.push(kpiRow);
   }
 
@@ -411,6 +442,7 @@ export function normalizeAnalyticsResult(
     totals,
     ...(totalsCompare && Object.keys(totalsCompare).length > 0 ? { totalsCompare } : {}),
     ...(totalsDelta && Object.keys(totalsDelta).length > 0 ? { totalsDelta } : {}),
+    ...(totalsDeltaAbs && Object.keys(totalsDeltaAbs).length > 0 ? { totalsDeltaAbs } : {}),
     ...(data.page
       ? {
           page: {
@@ -652,6 +684,7 @@ export interface PlannerFilterSpec {
 }
 
 export interface AnalyticsPlannerRequest {
+  lang?: "ar" | "en";
   metrics: string[];
   dimensions: string[];
   range: { from: string; to: string };

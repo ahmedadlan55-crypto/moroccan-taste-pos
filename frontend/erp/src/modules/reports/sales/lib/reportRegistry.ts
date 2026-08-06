@@ -228,6 +228,15 @@ export const REPORTS: readonly ReportSpec[] = [
       },
       { id: "byTax", metrics: ["net_ex_vat", "vat_amount"], dimensions: ["vat_category"] },
       { id: "byPayment", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"] },
+      // The command-center driver panel activates ONE of these at a time. They
+      // remain declared here so every dimension/metric/filter combination is
+      // planned by the registry gate instead of becoming an untested ad-hoc
+      // request in the page component.
+      { id: "driverBranch", metrics: ["net_ex_vat", "orders"], dimensions: ["branch"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverItem", metrics: ["net_ex_vat", "qty_sold"], dimensions: ["menu_item"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverHour", metrics: ["net_ex_vat", "orders"], dimensions: ["hour"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverCashier", metrics: ["net_ex_vat", "orders", "avg_ticket"], dimensions: ["cashier"], limit: LIMITS.MAX_LIMIT },
+      { id: "driverPayment", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"], limit: LIMITS.MAX_LIMIT },
     ],
   },
 
@@ -533,10 +542,14 @@ export const REPORTS: readonly ReportSpec[] = [
     // analytics_daily_branch.
     rollupEligible: true,
     // Its KPI row and operational invoice table must honour the same scope.
-    // Brand/hour/cashier are valid on the analytics order fact but the invoice
-    // list cannot express them; showing those controls would scope only half
-    // the screen. Dedicated reports cover those dimensions directly.
-    fixedFilters: ["branchId", "channel", "orderType"],
+    // Every drill key below is implemented by InvoiceService.list against the
+    // same projected fact / at-sale line snapshots the source report uses. A
+    // filter must stay here only while BOTH the exact-filter totals and the
+    // invoice rows honour it; otherwise the hub auto-drops it on arrival.
+    fixedFilters: [
+      "branchId", "channel", "orderType", "paymentMethod", "hour",
+      "menuItemId", "categoryId", "cashierId",
+    ],
     queries: [
       { id: "kpis", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: [] },
       { id: "byDay", metrics: ["orders", "invoice_total", "avg_ticket"], dimensions: ["day"] },
@@ -649,6 +662,25 @@ export function reportFilterKeys(
   const facts = reportFacts(report);
   return ALL_FILTER_KEYS.filter(
     (key) => dimensionUsableOn(FILTER_DIMENSION[key], facts) && entitled(key),
+  );
+}
+
+/**
+ * Filters an analytics query for this report can actually carry. Usually this
+ * is identical to the visible report surface. A report may, however, use an
+ * operational endpoint for its exact rows/totals while retaining a narrower
+ * analytics query as a permission-safe fallback (Orders is that case). Keep
+ * this derived from query facts: `fixedFilters` must never make the planner
+ * claim a line/payment filter was applied to an order-only aggregate.
+ */
+export function reportAnalyticsFilterKeys(
+  report: ReportSpec,
+  can?: (cap: Capability) => boolean,
+): FilterKey[] {
+  const visible = new Set(reportFilterKeys(report, can));
+  const facts = reportFacts(report);
+  return ALL_FILTER_KEYS.filter(
+    (key) => visible.has(key) && dimensionUsableOn(FILTER_DIMENSION[key], facts),
   );
 }
 

@@ -84,6 +84,8 @@ export const ORDER_TYPE_CODES = ["dine_in", "takeaway", "delivery"] as const;
 const MORE_FILTERS_ID = "analytics-more-filters";
 
 export interface AnalyticsTopBarProps {
+  /** Stable report id used by the export registry (never the centre pathname). */
+  reportId?: string;
   filters: AnalyticsFilters;
   patch: (partial: Partial<AnalyticsFilters>) => void;
   reset: () => void;
@@ -107,6 +109,12 @@ export interface AnalyticsTopBarProps {
   showTaxBasis?: boolean;
   /** The active query's meta (freshness / late count) when a page has data. */
   meta?: AnalyticsResult["meta"];
+  /**
+   * Whether this report can export the CURRENT scope without silently dropping
+   * a filter. The hub derives this from the report registry; standalone uses
+   * keep the historical default.
+   */
+  showExport?: boolean;
   /** Refetch handler for the refresh icon (hidden when absent). */
   onRefresh?: () => void;
   /** Page-owned actions (save view / export …) rendered at the end. */
@@ -336,6 +344,7 @@ function SaveViewControl() {
 }
 
 export function AnalyticsTopBar({
+  reportId,
   filters,
   patch,
   reset,
@@ -347,6 +356,7 @@ export function AnalyticsTopBar({
   showCompare = true,
   showDateBasis = true,
   showTaxBasis = true,
+  showExport = true,
 }: AnalyticsTopBarProps) {
   const t = useT();
   const location = useLocation();
@@ -365,8 +375,10 @@ export function AnalyticsTopBar({
   const menuItems = useMenuItemOptions(
     shows("menuItemId") && (showMore || filters.menuItemId.length > 0),
   );
-  // Segment = the last pathname piece (the hub owns /reports/sales/<segment>).
-  const segment = location.pathname.split("/").filter(Boolean).pop() ?? "";
+  // A hub route names a CENTRE (operations/payments/items), while exports are
+  // keyed by the active REPORT (orders/taxes/profitability). Standalone uses
+  // retain the historical pathname fallback; the hub always passes reportId.
+  const segment = reportId ?? location.pathname.split("/").filter(Boolean).pop() ?? "";
   const canExport = useCan("analytics.export");
 
   const presetLabels = Object.fromEntries(
@@ -596,7 +608,7 @@ export function AnalyticsTopBar({
           <Printer className="h-4 w-4" />
           {t("salesReports.topbar.print")}
         </Button>
-        {canExport && <ExportMenu segment={segment} filters={filters} />}
+        {canExport && showExport && <ExportMenu segment={segment} filters={filters} />}
         {pageActions}
       </div>
 

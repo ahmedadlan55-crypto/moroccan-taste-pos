@@ -230,7 +230,7 @@ describe("SalesAnalyticsHub — capability gates", () => {
     caps["analytics.reconciliation.view"] = true;
     renderAt("/reports/sales/executive");
     const nav = await findCenterNav();
-    expect(nav).toHaveClass("grid-cols-5");
+    expect(nav).toHaveClass("grid-cols-3", "xl:grid-cols-5");
     const buttons = within(nav).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "الملخّص التنفيذي",
@@ -241,7 +241,7 @@ describe("SalesAnalyticsHub — capability gates", () => {
     ]);
     expect(buttons.filter((button) => button.getAttribute("aria-current") === "page")).toHaveLength(1);
     expect(buttons[0]).toHaveAttribute("aria-current", "page");
-    for (const button of buttons) expect(button).toHaveClass("min-h-12");
+    for (const button of buttons) expect(button).toHaveClass("min-h-14");
   });
 
   it("a deep-link to a cap-gated report renders PermissionDenied (centre navigation stays)", async () => {

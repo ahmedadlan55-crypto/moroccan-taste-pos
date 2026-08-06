@@ -7,6 +7,7 @@
 //     filter tweak refetches (no loading flash); the AbortSignal is threaded so
 //     a superseded request is actually cancelled.
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useLang } from "@/i18n";
 import {
   fetchAnalyticsRegistry,
   runAnalyticsQuery,
@@ -29,9 +30,11 @@ export function useAnalyticsQuery(
   body: AnalyticsQueryBody,
   opts?: { enabled?: boolean },
 ) {
+  const lang = useLang();
+  const localizedBody: AnalyticsQueryBody = { ...body, lang };
   return useQuery<AnalyticsResult>({
-    queryKey: analyticsKeys.query(segment, body),
-    queryFn: ({ signal }) => runAnalyticsQuery(body, signal),
+    queryKey: analyticsKeys.query(segment, localizedBody),
+    queryFn: ({ signal }) => runAnalyticsQuery(localizedBody, signal),
     enabled: opts?.enabled ?? true,
     placeholderData: keepPreviousData,
   });

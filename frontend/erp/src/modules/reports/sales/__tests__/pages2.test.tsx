@@ -154,11 +154,12 @@ afterEach(cleanup);
 /* ── 9. Orders ───────────────────────────────────────────────── */
 
 describe("Orders page", () => {
-  it("keeps the KPI and invoice table on the same supported filter and document population", async () => {
+  it("sends every drill filter to the exact invoice population without dropping it", async () => {
     invoicesMock.mockResolvedValue({
       success: true,
       data: [invoice(1)],
       pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 },
+      totals: { orders: 1, net_ex_vat: 100, invoice_total: 115, avg_ticket: 100 },
     });
 
     renderPage(
@@ -167,7 +168,6 @@ describe("Orders page", () => {
         "&from=2032-03-01&to=2032-03-31&preset=custom&businessDay=0" +
         "&branchId=BR-01,BR-02&channel=pos,delivery&orderType=dine_in,takeaway" +
         "&customerId=%20CUST-009%20" +
-        // Present in the analytics URL, but NOT accepted by InvoiceService.list.
         "&brandId=BRAND-X&paymentMethod=cash&hour=13" +
         "&menuItemId=MENU-1&categoryId=CAT-1&cashierId=USER-1",
     );
@@ -184,47 +184,19 @@ describe("Orders page", () => {
       branchId: "BR-01,BR-02",
       channel: "pos,delivery",
       orderType: "dine_in,takeaway",
+      paymentMethod: "cash",
+      hour: "13",
+      menuItemId: "MENU-1",
+      categoryId: "CAT-1",
+      cashierId: "USER-1",
     });
-
-    await waitFor(() => expect(runMock).toHaveBeenCalled());
-    const kpiRequest = runMock.mock.calls
-      .map(([body]) => body)
-      .find((body) => body.dimensions.length === 0 && body.metrics.includes("orders"));
-    expect(kpiRequest).toBeDefined();
-    expect({
-      from: params?.from,
-      to: params?.to,
-      businessDay: params?.businessDay,
-      branchId: params?.branchId,
-      channel: params?.channel,
-      orderType: params?.orderType,
-    }).toEqual({
-      from: kpiRequest?.filters.from,
-      to: kpiRequest?.filters.to,
-      businessDay: kpiRequest?.dateBasis === "business_day",
-      branchId: kpiRequest?.filters.branchIds?.join(","),
-      channel: kpiRequest?.filters.channels?.join(","),
-      orderType: kpiRequest?.filters.orderTypes?.join(","),
-    });
-
-    for (const unsupported of [
-      "brandId",
-      "paymentMethod",
-      "hour",
-      "menuItemId",
-      "categoryId",
-      "cashierId",
-      "customerId",
-    ]) {
-      expect(params).not.toHaveProperty(unsupported);
-    }
-
-    expect(kpiRequest?.filters).not.toHaveProperty("brandIds");
-    expect(kpiRequest?.filters).not.toHaveProperty("paymentMethods");
-    expect(kpiRequest?.filters).not.toHaveProperty("hours");
-    expect(kpiRequest?.filters).not.toHaveProperty("menuIds");
-    expect(kpiRequest?.filters).not.toHaveProperty("categoryIds");
-    expect(kpiRequest?.filters).not.toHaveProperty("cashiers");
+    expect(params).not.toHaveProperty("brandId");
+    expect(params).not.toHaveProperty("customerId");
+    // Invoice viewers read KPIs from the exact same SQL aggregate as the rows;
+    // a second analytics request could not express line/payment filters.
+    expect(runMock).not.toHaveBeenCalled();
+    await within(await screen.findByTestId("kpi-orders")).findByText("1");
+    within(screen.getByTestId("kpi-invoice_total")).getByText("115.00 ر.س");
   });
 
   it("renders the analytics KPI row and the invoice list; row click drills to /sales/invoices?doc=", async () => {
@@ -240,6 +212,7 @@ describe("Orders page", () => {
         invoice(2),
       ],
       pagination: { page: 1, pageSize: 25, total: 2, totalPages: 1 },
+      totals: { orders: 12, net_ex_vat: 3450, invoice_total: 3450, avg_ticket: 287.5 },
     });
 
     renderPage(<OrdersPage />, "/reports/sales/orders");
@@ -262,6 +235,7 @@ describe("Orders page", () => {
       success: true,
       data: [],
       pagination: { page: 1, pageSize: 25, total: 0, totalPages: 0 },
+      totals: { orders: 0, net_ex_vat: 0, invoice_total: 0, avg_ticket: 0 },
     });
     renderPage(<OrdersPage />, "/reports/sales/orders");
     await waitFor(() => expect(document.querySelector('[data-state="empty"]')).toBeInTheDocument());
@@ -286,6 +260,21 @@ describe("Orders page", () => {
     await within(await screen.findByTestId("kpi-orders")).findByText("12");
     expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument();
     expect(invoicesMock).not.toHaveBeenCalled();
+  });
+
+  it("never replaces an exact payment/item drill with a wider KPI for aggregate-only viewers", async () => {
+    delete caps["invoices.view"];
+    renderPage(
+      <OrdersPage />,
+      "/reports/sales/operations?view=orders&paymentMethod=card&menuItemId=MENU-1",
+    );
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-state="permission-denied"]')).toBeInTheDocument(),
+    );
+    expect(invoicesMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+    within(screen.getByTestId("kpi-orders")).getByText("—");
   });
 });
 

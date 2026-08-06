@@ -44,6 +44,7 @@ import {
   REPORTS,
   REPORT_BY_ID,
   reportDateBases,
+  reportAnalyticsFilterKeys,
   reportFilterKeys,
   reportTaxModes,
   resolveDimensions,
@@ -105,7 +106,10 @@ function planCode(request: unknown): string | null {
 
 /** Filter-key sets exercised per report: none, each alone, and all together. */
 function filterCases(report: ReportSpec): Array<{ label: string; keys: FilterKey[] }> {
-  const keys = reportFilterKeys(report);
+  // These are requests sent to the analytics planner. Orders exposes a wider
+  // operational drill surface, but its exact invoice list/totals are tested in
+  // pages2.test.tsx and InvoiceService integration tests instead.
+  const keys = reportAnalyticsFilterKeys(report);
   return [
     { label: "no filters", keys: [] },
     ...keys.map((k) => ({ label: k, keys: [k] })),
@@ -330,6 +334,15 @@ describe("switching reports drops the filters the new one cannot honour", () => 
     expect(keys).toContain("menuItemId");
     expect(keys).toContain("branchId");
     expect(keys).not.toContain("paymentMethod");
+  });
+
+  it("the orders drill terminus retains every filter its exact list population honours", () => {
+    const keys = reportFilterKeys(REPORT_BY_ID.orders);
+    expect(keys).toEqual([
+      "branchId", "channel", "orderType", "paymentMethod", "hour",
+      "menuItemId", "categoryId", "cashierId",
+    ]);
+    expect(unsupportedFilterKeys(REPORT_BY_ID.orders, keys)).toEqual([]);
   });
 });
 

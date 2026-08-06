@@ -550,6 +550,39 @@ async function main() {
   });
 
   // ── 8. the dashboard's own SQL ────────────────────────────────────────────
+  await test('the orders drill filters constrain both page and count without row multiplication', async () => {
+    fakeDb.reset();
+    await InvoiceService.list({
+      scope: SCOPE_A,
+      analyticsPopulation: true,
+      hour: '13',
+      cashierId: 'USER-1,USER-2',
+      menuItemId: 'MENU-1',
+      categoryId: 'Hot drinks',
+      paymentMethod: 'cash,card',
+    });
+    eq(calls.length, 2, 'expected one page statement and one count statement');
+    const page = calls.find((c) => /ORDER BY/.test(c.sql));
+    const count = calls.find((c) => /COUNT\(\*\) AS total/.test(c.sql));
+    ok(page && count, 'page/count statement pair was not emitted');
+
+    for (const c of [page, count]) {
+      ok(/HOUR\(f\.occurred_at_local\) IN \(\?\)/.test(c.sql), 'hour is not branch-local: ' + c.sql);
+      ok(/f\.created_by IN \(\?,\?\)/.test(c.sql), 'cashier ids were not applied: ' + c.sql);
+      ok(/EXISTS \(SELECT 1 FROM ar_document_lines lf WHERE lf\.document_id = d\.id AND lf\.menu_id IN \(\?\) AND lf\.category_name_snapshot IN \(\?\)\)/.test(c.sql),
+        'menu/category are not constrained on the same frozen line: ' + c.sql);
+      ok(/EXISTS \(SELECT 1 FROM analytics_payment_facts pf WHERE pf\.document_id = d\.id AND pf\.method_norm IN \(\?,\?\)\)/.test(c.sql),
+        'payment method is not constrained by a non-multiplying EXISTS: ' + c.sql);
+      ok(!/JOIN ar_document_lines lf/.test(c.sql) && !/JOIN analytics_payment_facts pf/.test(c.sql),
+        'a one-to-many JOIN can inflate page rows or COUNT(*): ' + c.sql);
+    }
+
+    // LIMIT/OFFSET are the only page-only params; every filter and scope value
+    // before them must be byte-for-byte identical to the count population.
+    eq(JSON.stringify(page.params.slice(0, -2)), JSON.stringify(count.params),
+      'page and pagination.total use different filter bindings');
+  });
+
   console.log('\n8. the AR dashboard aggregates only the caller\'s branches');
 
   await test('every dashboard figure carries the predicate', async () => {

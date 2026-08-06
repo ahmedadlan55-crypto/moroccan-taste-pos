@@ -341,8 +341,15 @@ export const REPORTS: readonly ReportSpec[] = [
     exportQuery: "byMethod",
     rollupEligible: true,
     queries: [
-      { id: "kpis", metrics: ["payments_in", "refunds_out", "net_collections", "tips_total"], dimensions: [] },
+      // Payment KPIs stay on ONE fact. tips_total is an order fact and made a
+      // payment-method / hour / collector filter affect three cards while the
+      // tips card silently stayed unfiltered.
+      { id: "kpis", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: [] },
       { id: "byMethod", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_method"] },
+      { id: "byDay", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["day"], limit: LIMITS.MAX_LIMIT },
+      { id: "byWeekday", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["weekday"], limit: LIMITS.MAX_LIMIT },
+      { id: "byHour", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["hour"], limit: LIMITS.MAX_LIMIT },
+      { id: "byCollector", metrics: ["payments_in", "refunds_out", "net_collections"], dimensions: ["payment_collector"], limit: LIMITS.MAX_LIMIT },
     ],
   },
   {

@@ -23,6 +23,7 @@ import {
   fetchAnalyticsExport,
   fetchSavedViews,
   createSavedView,
+  runAnalyticsQuery,
   type AnalyticsExportJob,
   type AnalyticsPlannerRequest,
   type AnalyticsQueryBody,
@@ -31,7 +32,7 @@ import {
 import { createAnalyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import { AnalyticsTopBar } from "../components/AnalyticsTopBar";
 import { ExportMenu } from "../components/ExportMenu";
-import Payments from "../pages/Payments";
+import Payments, { normalizePaymentGroups } from "../pages/Payments";
 import Hours from "../pages/Hours";
 
 /* ── permission gate (controllable) ── */
@@ -98,8 +99,21 @@ vi.mock("../lib/api", async (importOriginal) => {
     metrics: [
       "payments_in", "refunds_out", "net_collections", "tips_total",
       "net_ex_vat", "orders",
-    ].map((id) => ({ id, kind: "additive", format: "money", equationKey: "sum" })),
-    dimensions: [],
+    ].map((id) => ({
+      id,
+      kind: id === "net_collections" ? "derived" : "additive",
+      format: "money",
+      equationKey: "sum",
+      facts: id === "tips_total" || id === "orders" ? ["order"] : id === "net_ex_vat" ? ["line"] : ["payment"],
+    })),
+    dimensions: [
+      { id: "business_day", kind: "time", groupable: true, facts: ["order", "line", "payment"] },
+      { id: "calendar_day", kind: "time", groupable: true, facts: ["order", "line", "payment"] },
+      { id: "weekday", kind: "time", groupable: true, facts: ["order", "line", "payment"] },
+      { id: "hour", kind: "time", groupable: true, facts: ["order", "line", "payment"] },
+      { id: "payment_collector", kind: "employee", groupable: true, facts: ["payment"] },
+      { id: "payment_method", kind: "attribute", groupable: true, facts: ["payment"] },
+    ],
   };
 
   return {
@@ -138,6 +152,7 @@ const createExportMock = vi.mocked(createAnalyticsExport);
 const fetchExportMock = vi.mocked(fetchAnalyticsExport);
 const fetchSavedViewsMock = vi.mocked(fetchSavedViews);
 const createSavedViewMock = vi.mocked(createSavedView);
+const runMock = vi.mocked(runAnalyticsQuery);
 
 /* ── harness ── */
 
@@ -206,6 +221,16 @@ describe("wave-4 codec params", () => {
     for (const key of ["paymentMethod", "hour", "menuItemId", "categoryId", "cashierId"]) {
       expect(serialized[key], key).toBeNull();
     }
+  });
+});
+
+describe("payments breakdown URL", () => {
+  it("deduplicates, canonicalises dates and clamps untrusted levels", () => {
+    expect(normalizePaymentGroups(["business_day", "hour", "hour", "payment_collector", "weekday", "bad"])).toEqual({
+      tokens: ["day", "hour", "payment_collector"],
+      adjusted: true,
+    });
+    expect(normalizePaymentGroups(["bad"])).toEqual({ tokens: ["payment_method"], adjusted: true });
   });
 });
 
@@ -317,5 +342,47 @@ describe("wave-4 drills", () => {
     expect(probe).toContain("view=orders");
     expect(probe).toContain("hour=10");
     expect(probe).toContain("channel=pos"); // the current search survived the drill
+  });
+});
+
+describe("payments analytical breakdown", () => {
+  it("runs the visible table by date, collector and hour from the shareable URL", async () => {
+    caps["analytics.employees.view"] = true;
+    renderAt(<Payments />, "/reports/sales/payments?pg=day,payment_collector,hour");
+    await screen.findByTestId("payments-breakdown-controls");
+    await waitFor(() => {
+      const detail = runMock.mock.calls
+        .map(([body]) => body)
+        .find((body) => body.dimensions.join(",") === "business_day,payment_collector,hour");
+      expect(detail).toMatchObject({
+        metrics: ["payments_in", "refunds_out", "net_collections"],
+        limit: 500,
+      });
+    });
+    expect(screen.getByTestId("location")).toHaveTextContent("pg=day,payment_collector,hour");
+    expect(screen.getByText("3 مستوى")).toBeInTheDocument();
+  });
+
+  it("registers export from the same weekday × hour shape shown on screen", async () => {
+    renderAt(
+      <>
+        <Payments />
+        <ExportMenu segment="payments" filters={DEFAULTS} pollIntervalMs={5} pollTimeoutMs={2000} />
+      </>,
+      "/reports/sales/payments?pg=weekday,hour",
+    );
+    await screen.findAllByText("الاثنين");
+    fireEvent.click(screen.getByRole("button", { name: "تصدير" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "تصدير CSV" }));
+    await waitFor(() => expect(createExportMock).toHaveBeenCalledTimes(1));
+    const [request] = createExportMock.mock.calls[0] as [AnalyticsPlannerRequest, string];
+    expect(request.metrics).toEqual(["payments_in", "refunds_out", "net_collections"]);
+    expect(request.dimensions).toEqual(["weekday", "hour"]);
+    expect(request.sort).toEqual([
+      { by: "weekday", dir: "asc" },
+      { by: "hour", dir: "asc" },
+      { by: "payments_in", dir: "desc" },
+    ]);
+    expect(request.limit).toBe(500);
   });
 });

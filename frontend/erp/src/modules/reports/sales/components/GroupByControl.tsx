@@ -50,14 +50,32 @@ export interface GroupByControlProps {
   onChange: (next: string[]) => void;
   /** Metrics the report will request — drives which dimensions are legal. */
   metricIds: string[];
+  /** Optional report-specific surface. Omit to expose the full registry. */
+  allowedDimensionIds?: readonly string[];
+  /** Optional report-specific depth. Defaults to the planner ceiling. */
+  maxDimensions?: number;
   className?: string;
 }
 
-export function GroupByControl({ registry, value, onChange, metricIds, className }: GroupByControlProps) {
+export function GroupByControl({
+  registry,
+  value,
+  onChange,
+  metricIds,
+  allowedDimensionIds,
+  maxDimensions = MAX_GROUP_DIMS,
+  className,
+}: GroupByControlProps) {
   const t = useT();
   const listSeparator = useListSeparator();
 
-  const dims = useMemo(() => groupableDimensions(registry), [registry]);
+  const depth = Math.max(1, Math.min(MAX_GROUP_DIMS, maxDimensions));
+  const dims = useMemo(() => {
+    const all = groupableDimensions(registry);
+    if (!allowedDimensionIds) return all;
+    const allowed = new Set(allowedDimensionIds);
+    return all.filter((d) => allowed.has(d.id));
+  }, [registry, allowedDimensionIds]);
 
   /** One option list per slot: same dimensions, different exclusions. */
   const optionsForSlot = useMemo(() => {
@@ -89,7 +107,7 @@ export function GroupByControl({ registry, value, onChange, metricIds, className
    * Slots rendered = every chosen level, plus ONE empty slot to add the next.
    * Never more than the planner accepts.
    */
-  const slotCount = Math.min(value.length + 1, MAX_GROUP_DIMS);
+  const slotCount = Math.min(value.length + 1, depth);
 
   const setSlot = (slot: number, next: string | null) => {
     const out = [...value];
@@ -100,7 +118,7 @@ export function GroupByControl({ registry, value, onChange, metricIds, className
     } else {
       out[slot] = next;
     }
-    onChange(out.filter(Boolean).slice(0, MAX_GROUP_DIMS));
+    onChange(out.filter(Boolean).slice(0, depth));
   };
 
   return (

@@ -1,39 +1,116 @@
-// Sales Analytics Hub — "payments" page.
+// Sales Analytics Hub — collections and payment reconciliation.
 //
-// Collections KPIs (payments in / refunds out / net collections / tips — tips
-// renders "—" when null) and a per-method table with the in/out direction
-// split (refunds cells carry the negative cellTone). Wave 4: a method row
-// drills by pinning the shared `paymentMethod` codec param (push:true — Back
-// restores).
-import { useMemo } from "react";
-import { HandCoins, Undo2, Wallet, Coins } from "lucide-react";
-import { Badge, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
-import { DataTable, type ColumnDef } from "@/shared/tables";
+// The table is intentionally a query-driven breakdown, not a fixed
+// "by payment method" list. The page-local `pg` URL parameter is a shareable
+// description of the selected levels and the exact same request shape is
+// registered for export.
+import { useEffect, useMemo } from "react";
+import {
+  CalendarDays,
+  CalendarRange,
+  Clock3,
+  CreditCard,
+  HandCoins,
+  Undo2,
+  UserRound,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
+import { Badge, Button, EmptyState, ErrorState, ExplainNumber, LoadingState, MetricCard } from "@/shared/ui";
+import { DataTable } from "@/shared/tables";
 import { useUrlFilters } from "@/shared/hooks/useUrlFilters";
 import { computeCompareRange } from "@/shared/ui/date-range-picker";
-import { formatCurrency, formatNumber } from "@/shared/lib";
-import { useT, type TFunction } from "@/i18n";
-import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
+import { formatCurrency, formatDate, formatNumber } from "@/shared/lib";
+import { useLang, useT, type Lang, type TFunction } from "@/i18n";
+import {
+  analyticsFilterCodec,
+  csvParam,
+  makeCodec,
+  type AnalyticsFilters,
+} from "../lib/filters";
 import {
   buildFiltersBody,
   displayMetric,
   reportQuerySpec,
+  setPageExportRequest,
   type AnalyticsCompareSpec,
   type AnalyticsQueryBody,
   type AnalyticsRegistry,
   type AnalyticsResult,
   type AnalyticsResultRow,
 } from "../lib/api";
+import { LIMITS } from "../lib/contract";
+import { reconcile } from "../lib/grouping";
+import { buildResultColumns, toResultRows, type ResultTableRow } from "../lib/resultTable";
 import { useAnalyticsQuery, useAnalyticsRegistry } from "../lib/useAnalyticsQuery";
+import { GroupByControl, MAX_GROUP_DIMS } from "../components/GroupByControl";
 
 const SEGMENT = "payments";
-// Both queries — and the ExportMenu's file — come from lib/reportRegistry.
+const PAYMENT_METRICS = ["payments_in", "refunds_out", "net_collections"] as const;
 
-/* ── tiny local helpers (page-local copies by design) ── */
+const GROUP_TOKENS = ["day", "weekday", "hour", "payment_collector", "payment_method"] as const;
+type PaymentGroupToken = (typeof GROUP_TOKENS)[number];
+
+const paymentsCodec = makeCodec({
+  pg: csvParam(["payment_method"]),
+});
+
+interface NormalizedGroups {
+  tokens: PaymentGroupToken[];
+  adjusted: boolean;
+}
+
+/** URL input is untrusted: dedupe, canonicalise old date ids and obey the planner ceiling. */
+export function normalizePaymentGroups(raw: readonly string[]): NormalizedGroups {
+  const out: PaymentGroupToken[] = [];
+  let adjusted = false;
+  for (const value of raw) {
+    const canonical = value === "business_day" || value === "calendar_day" ? "day" : value;
+    if (!(GROUP_TOKENS as readonly string[]).includes(canonical)) {
+      adjusted = true;
+      continue;
+    }
+    const token = canonical as PaymentGroupToken;
+    if (out.includes(token)) {
+      adjusted = true;
+      continue;
+    }
+    if (out.length >= MAX_GROUP_DIMS) {
+      adjusted = true;
+      continue;
+    }
+    out.push(token);
+  }
+  if (out.length === 0) {
+    if (raw.length > 0) adjusted = true;
+    out.push("payment_method");
+  }
+  return { tokens: out, adjusted };
+}
+
+function resolveGroup(token: PaymentGroupToken, filters: AnalyticsFilters): string {
+  return token === "day" ? (filters.businessDay ? "business_day" : "calendar_day") : token;
+}
 
 function compareSpec(filters: AnalyticsFilters): AnalyticsCompareSpec | undefined {
   if (filters.compare === "none") return undefined;
-  return { mode: filters.compare, ...computeCompareRange(filters.compare, { from: filters.from, to: filters.to }) };
+  return {
+    mode: filters.compare,
+    ...computeCompareRange(filters.compare, { from: filters.from, to: filters.to }),
+  };
+}
+
+function tokenFromDimension(dimension: string): PaymentGroupToken | null {
+  if (dimension === "business_day" || dimension === "calendar_day") return "day";
+  return (GROUP_TOKENS as readonly string[]).includes(dimension) ? (dimension as PaymentGroupToken) : null;
+}
+
+function detailSort(dimensions: string[]): NonNullable<AnalyticsQueryBody["sort"]> {
+  const levels = dimensions.map((dimension) => ({
+    by: dimension,
+    dir: dimension === "business_day" || dimension === "calendar_day" ? ("desc" as const) : ("asc" as const),
+  }));
+  return [...levels, { by: "payments_in", dir: "desc" }];
 }
 
 function metricExplain(t: TFunction, registry: AnalyticsRegistry | undefined, code: string) {
@@ -63,113 +140,161 @@ function CompletenessNotice({ meta }: { meta?: AnalyticsResult["meta"] }) {
   );
 }
 
-/** The masked/missing contract for a single-row (dimensionless) KPI result. */
 function kpiValue(
   result: AnalyticsResult | undefined,
   row: AnalyticsResultRow | undefined,
   id: string,
-  format: (v: number) => string,
 ): string {
   if (!row || result?.meta.maskedMetrics.includes(id)) return "—";
-  const v = displayMetric(row, id);
-  return v == null ? "—" : format(v);
+  const value = displayMetric(row, id);
+  return value == null ? "—" : formatCurrency(value);
 }
 
-interface MethodRow {
-  key: string;
-  label: string;
-  paymentsIn: number | null;
-  refundsOut: number | null;
-  net: number | null;
+const MONDAY_UTC = Date.UTC(2026, 0, 5);
+
+function readableDimensionLabel(
+  dimension: string,
+  key: string | number | null,
+  serverLabel: string,
+  lang: Lang,
+): string {
+  if (key == null) return serverLabel || "—";
+  if (dimension === "business_day" || dimension === "calendar_day") return formatDate(String(key));
+  if (dimension === "hour") return `${String(Number(key)).padStart(2, "0")}:00`;
+  if (dimension === "weekday") {
+    const weekday = Number(key);
+    if (Number.isInteger(weekday) && weekday >= 0 && weekday <= 6) {
+      return new Intl.DateTimeFormat(lang === "ar" ? "ar-SA" : "en-GB", {
+        weekday: "long",
+        timeZone: "UTC",
+      }).format(new Date(MONDAY_UTC + weekday * 86_400_000));
+    }
+  }
+  return serverLabel || String(key);
 }
+
+function quickLabelKey(token: PaymentGroupToken): string {
+  if (token === "day") return "date";
+  if (token === "payment_collector") return "collector";
+  if (token === "payment_method") return "method";
+  return token;
+}
+
+const QUICK_GROUPS: Array<{ token: PaymentGroupToken; icon: LucideIcon }> = [
+  { token: "payment_method", icon: CreditCard },
+  { token: "day", icon: CalendarDays },
+  { token: "weekday", icon: CalendarRange },
+  { token: "hour", icon: Clock3 },
+  { token: "payment_collector", icon: UserRound },
+];
 
 export default function Payments() {
   const t = useT();
-  const { filters, patch } = useUrlFilters(analyticsFilterCodec);
+  const lang = useLang();
+  const shared = useUrlFilters(analyticsFilterCodec);
+  const page = useUrlFilters(paymentsCodec);
   const registry = useAnalyticsRegistry();
 
-  // Wave-4 drill: pin the clicked method as the shared paymentMethod filter.
-  const drillMethod = (method: string) => {
-    if (method !== "") patch({ paymentMethod: [method] }, { push: true });
-  };
+  const normalized = useMemo(() => normalizePaymentGroups(page.filters.pg), [page.filters.pg.join("|")]);
+  const requestedDimensions = useMemo(
+    () => normalized.tokens.map((token) => resolveGroup(token, shared.filters)),
+    [normalized.tokens.join("|"), shared.filters.businessDay],
+  );
+  const reconciled = useMemo(
+    () => reconcile(registry.data, [...PAYMENT_METRICS], requestedDimensions),
+    [registry.data, requestedDimensions.join("|")],
+  );
+  const dimensions = reconciled.dimensions.length > 0 ? reconciled.dimensions : ["payment_method"];
+  const currentTokens = dimensions
+    .map(tokenFromDimension)
+    .filter((token): token is PaymentGroupToken => token != null);
+  const currentDayDimension = shared.filters.businessDay ? "business_day" : "calendar_day";
+  const allowedDimensions = useMemo(
+    () => [currentDayDimension, "weekday", "hour", "payment_collector", "payment_method"],
+    [currentDayDimension],
+  );
+  const collectorAvailable = registry.data?.dimensions.some((dimension) => dimension.id === "payment_collector") ?? false;
 
-  const base = buildFiltersBody(filters);
-  const compare = compareSpec(filters);
-
-  const kpiSpec = reportQuerySpec(SEGMENT, "kpis", filters);
+  const base = buildFiltersBody(shared.filters);
+  const compare = compareSpec(shared.filters);
   const kpiBody: AnalyticsQueryBody = {
     ...base,
-    ...kpiSpec,
+    ...reportQuerySpec(SEGMENT, "kpis", shared.filters),
     ...(compare ? { compare } : {}),
   };
-  const byMethodBody: AnalyticsQueryBody = {
-    ...base,
-    ...reportQuerySpec(SEGMENT, "byMethod", filters),
-    sort: [{ by: "payments_in", dir: "desc" }],
-  };
+  const sort = detailSort(dimensions);
+  const detailSpec = {
+    metrics: [...PAYMENT_METRICS],
+    dimensions,
+    sort,
+    limit: LIMITS.MAX_LIMIT,
+  } satisfies Pick<AnalyticsQueryBody, "metrics" | "dimensions" | "sort" | "limit">;
+  const detailBody: AnalyticsQueryBody = { ...base, ...detailSpec, ...(compare ? { compare } : {}) };
 
-  // Data queries wait for a VALID metric catalog: without one there is nothing
-  // to label or explain, and a disabled query never fires a doomed request.
   const catalogReady = registry.data != null && Array.isArray(registry.data.metrics);
   const kpis = useAnalyticsQuery(SEGMENT, kpiBody, { enabled: catalogReady });
-  const byMethod = useAnalyticsQuery(SEGMENT, byMethodBody, { enabled: catalogReady });
+  const detail = useAnalyticsQuery(SEGMENT, detailBody, { enabled: catalogReady });
 
-  const kpiRow = kpis.data?.rows[0];
+  useEffect(() => {
+    setPageExportRequest(SEGMENT, () => ({
+      metrics: [...detailSpec.metrics],
+      dimensions: [...detailSpec.dimensions],
+      sort: detailSpec.sort ? [...detailSpec.sort] : undefined,
+      limit: detailSpec.limit,
+    }));
+  }, [dimensions.join("|"), JSON.stringify(sort)]);
 
-  const methodRows = useMemo<MethodRow[]>(
+  const rows = useMemo<ResultTableRow[]>(
     () =>
-      (byMethod.data?.rows ?? []).map((row) => ({
-        key: String(row.keys[0] ?? ""),
-        label: row.labels[0] ?? String(row.keys[0] ?? ""),
-        paymentsIn: displayMetric(row, "payments_in"),
-        refundsOut: displayMetric(row, "refunds_out"),
-        net: displayMetric(row, "net_collections"),
+      toResultRows(detail.data?.rows ?? []).map((row) => ({
+        ...row,
+        labels: row.labels.map((label, index) =>
+          readableDimensionLabel(dimensions[index], row.keys[index], label, lang),
+        ),
       })),
-    [byMethod.data],
+    [detail.data, dimensions.join("|"), lang],
+  );
+  const columns = useMemo(
+    () =>
+      buildResultColumns({
+        dimensions,
+        metricIds: [...PAYMENT_METRICS],
+        t,
+        registry: registry.data,
+        maskedMetrics: detail.data?.meta.maskedMetrics,
+        pinDimensions: 1,
+      }),
+    [dimensions.join("|"), registry.data, detail.data?.meta.maskedMetrics.join("|"), t],
   );
 
-  const columns = useMemo<ColumnDef<MethodRow>[]>(
-    () => [
-      {
-        id: "method",
-        header: t("salesReports.dims.payment_method"),
-        accessor: (r) => r.label,
-        pinStart: true, hideable: false,
-        width: 160,
-        sortable: true,
-      },
-      {
-        id: "paymentsIn",
-        header: t("salesReports.metrics.payments_in"),
-        accessor: (r) => r.paymentsIn,
-        cell: (r) => (r.paymentsIn == null ? "—" : formatCurrency(r.paymentsIn)),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "refundsOut",
-        header: t("salesReports.metrics.refunds_out"),
-        accessor: (r) => r.refundsOut,
-        cell: (r) => (r.refundsOut == null ? "—" : formatCurrency(r.refundsOut)),
-        cellTone: (r) => (r.refundsOut != null && r.refundsOut > 0 ? "negative" : undefined),
-        numeric: true,
-        sortable: true,
-      },
-      {
-        id: "net",
-        header: t("salesReports.metrics.net_collections"),
-        accessor: (r) => r.net,
-        cell: (r) => (r.net == null ? "—" : formatCurrency(r.net)),
-        numeric: true,
-        sortable: true,
-      },
-    ],
-    [t],
+  const changeGrouping = (nextDimensions: string[]) => {
+    const nextTokens = nextDimensions
+      .map(tokenFromDimension)
+      .filter((token): token is PaymentGroupToken => token != null);
+    page.patch({ pg: nextTokens.length > 0 ? nextTokens : ["payment_method"] });
+  };
+
+  const drillRow = (row: ResultTableRow) => {
+    const next: Partial<AnalyticsFilters> = {};
+    dimensions.forEach((dimension, index) => {
+      const key = row.keys[index];
+      if (key == null) return;
+      if (dimension === "payment_method") next.paymentMethod = [String(key)];
+      if (dimension === "hour") next.hour = String(key);
+      if (dimension === "business_day" || dimension === "calendar_day") {
+        next.from = String(key);
+        next.to = String(key);
+        next.preset = "custom";
+      }
+    });
+    if (Object.keys(next).length > 0) shared.patch(next, { push: true });
+  };
+  const hasDrillableDimension = dimensions.some((d) =>
+    ["payment_method", "hour", "business_day", "calendar_day"].includes(d),
   );
 
-  const isLoading = registry.isLoading || kpis.isLoading || byMethod.isLoading;
-  const error = registry.error ?? kpis.error ?? byMethod.error;
-
+  const isLoading = registry.isLoading || kpis.isLoading || detail.isLoading;
+  const error = registry.error ?? kpis.error ?? detail.error;
   if (isLoading) return <LoadingState rows={6} />;
   if (error) {
     return (
@@ -179,32 +304,100 @@ export default function Payments() {
         onRetry={() => {
           void registry.refetch();
           void kpis.refetch();
-          void byMethod.refetch();
+          void detail.refetch();
         }}
       />
     );
   }
-  if (methodRows.length === 0) {
-    return <EmptyState title={t("salesReports.states.empty")} />;
-  }
 
+  const kpiRow = kpis.data?.rows[0];
   const kpiCards = [
     { id: "payments_in", icon: HandCoins, tone: "teal" as const },
     { id: "refunds_out", icon: Undo2, tone: "rose" as const },
     { id: "net_collections", icon: Wallet, tone: "blue" as const },
-    { id: "tips_total", icon: Coins, tone: "amber" as const },
   ];
+  const groupingAdjusted = normalized.adjusted || reconciled.dropped.length > 0;
 
   return (
     <section className="space-y-4" data-testid="page-payments">
-      <CompletenessNotice meta={byMethod.data?.meta} />
+      <CompletenessNotice meta={detail.data?.meta} />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="kpi-row">
+      <article className="surface space-y-4 p-4" data-testid="payments-breakdown-controls">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-extrabold text-slate-900">
+              {t("salesReports.pages.payments.breakdown.title")}
+            </h2>
+            <p className="mt-1 text-sm font-medium text-slate-500">
+              {t("salesReports.pages.payments.breakdown.subtitle")}
+            </p>
+          </div>
+          <Badge tone="info">
+            {t("salesReports.pages.payments.breakdown.levels", { count: dimensions.length })}
+          </Badge>
+        </header>
+
+        <div
+          className="flex max-w-full gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]"
+          role="group"
+          aria-label={t("salesReports.pages.payments.breakdown.quickViews")}
+        >
+          {QUICK_GROUPS.map(({ token, icon: Icon }) => {
+            const active = currentTokens.length === 1 && currentTokens[0] === token;
+            const unavailable = token === "payment_collector" && !collectorAvailable;
+            return (
+              <Button
+                key={token}
+                size="sm"
+                variant={active ? "subtle" : "secondary"}
+                className="shrink-0"
+                aria-pressed={active}
+                disabled={unavailable}
+                onClick={() => page.patch({ pg: [token] })}
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {t(`salesReports.pages.payments.breakdown.${quickLabelKey(token)}`)}
+              </Button>
+            );
+          })}
+        </div>
+
+        <GroupByControl
+          registry={registry.data}
+          metricIds={[...PAYMENT_METRICS]}
+          value={dimensions}
+          onChange={changeGrouping}
+          allowedDimensionIds={allowedDimensions}
+          maxDimensions={MAX_GROUP_DIMS}
+        />
+        <p className="text-xs font-semibold text-slate-500">
+          {t("salesReports.pages.payments.breakdown.hint")}
+        </p>
+      </article>
+
+      {groupingAdjusted && (
+        <div
+          data-testid="payments-grouping-adjusted"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          {t("salesReports.pages.payments.breakdown.adjusted")}
+        </div>
+      )}
+      {detail.data?.page?.rowCountCapped && (
+        <div
+          data-testid="payments-breakdown-limited"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800"
+        >
+          {t("salesReports.pages.payments.breakdown.scopeLimited")}
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-3" data-testid="kpi-row">
         {kpiCards.map(({ id, icon, tone }) => (
           <MetricCard
             key={id}
             label={t(`salesReports.metrics.${id}`)}
-            value={kpiValue(kpis.data, kpiRow, id, formatCurrency)}
+            value={kpiValue(kpis.data, kpiRow, id)}
             icon={icon}
             tone={tone}
             explain={metricExplain(t, registry.data, id)}
@@ -212,16 +405,20 @@ export default function Payments() {
         ))}
       </div>
 
-      {/* No chart here by design: reports are decision tables — charts live on the dashboard. */}
-      <DataTable<MethodRow>
-        columns={columns}
-        rows={methodRows}
-        getRowId={(r) => r.key}
-        tableId="sales-hub-payments"
-        initialSort={{ columnId: "paymentsIn", dir: "desc" }}
-        onRowClick={(r) => drillMethod(r.key)}
-        emptyTitle={t("salesReports.states.empty")}
-      />
+      {rows.length === 0 ? (
+        <EmptyState title={t("salesReports.states.empty")} />
+      ) : (
+        <DataTable<ResultTableRow>
+          columns={columns}
+          rows={rows}
+          getRowId={(row) => row.id}
+          tableId="sales-hub-payments"
+          initialPageSize={25}
+          onRowClick={hasDrillableDimension ? drillRow : undefined}
+          emptyTitle={t("salesReports.states.empty")}
+          mobileTitle={(row) => row.labels.join(" · ")}
+        />
+      )}
     </section>
   );
 }

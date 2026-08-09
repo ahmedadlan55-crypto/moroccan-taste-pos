@@ -1219,7 +1219,6 @@ export class OfflineEngine {
       await this.deps.orders.put(doc.id, doc);
     }
     this.emitEvent({ type: "checkout-done", orderId: op.orderId, ok: false, queued: false, invoiceNumber: null, saleId: null, error: message });
-    this.emitEvent({ type: "toast", kind: "error", message });
   }
 
   /** After a conflict every later queued op for that order is doomed — drop them. */
@@ -1262,7 +1261,6 @@ export class OfflineEngine {
         await this.deps.orders.put(doc.id, doc);
       }
       this.emitEvent({ type: "checkout-done", orderId, ok: false, queued: false, invoiceNumber: null, saleId: null, error });
-      this.emitEvent({ type: "toast", kind: "error", message: error });
     };
 
     // 1) submit — Idempotency-Key = opId (stable across retries).

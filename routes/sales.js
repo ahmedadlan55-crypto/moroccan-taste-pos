@@ -2032,8 +2032,13 @@ router.post('/', requireCapability('pos.use'), async (req, res) => {
         sourceType: 'sale',
         sourceId: orderId,
         occurredAt: now,
-        brandId: saleBrandId || brandId || null,
-        branchId: saleBranchId || branchId || null,
+        // Use the same trusted dimensions already frozen on the sale row.
+        // `brandId`/`branchId` below used to refer to block-scoped variables
+        // from the invoice projection section.  Cashiers without an assigned
+        // dimension therefore reached an unbound identifier here and every
+        // checkout rolled back with a 500.
+        brandId: saleBrandId || null,
+        branchId: saleBranchId || null,
         net, tax: vat, gross: invTotal, cogs: _captureCogs,
         invoiceNumber: invoiceNumber || null,
         channelId: channelId || null,

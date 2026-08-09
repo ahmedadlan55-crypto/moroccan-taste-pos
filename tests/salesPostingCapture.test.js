@@ -123,6 +123,12 @@ function check(name, cond, extra) {
   check('capture is fail-closed inside checkout',
     /salesPostingCapture\.capture\([\s\S]*throwOnError:\s*true/.test(around) &&
     !/try \{[\s\S]*salesPostingCapture\.capture\([\s\S]*?\} catch/.test(around));
+  check('capture uses the trusted dimensions frozen on the sale row',
+    /brandId:\s*saleBrandId\s*\|\|\s*null/.test(around) &&
+    /branchId:\s*saleBranchId\s*\|\|\s*null/.test(around));
+  check('capture never falls through to block-scoped dimension identifiers',
+    !/\|\|\s*brandId\b/.test(around) &&
+    !/\|\|\s*branchId\b/.test(around));
 }
 
 // ── 7. The capture module may not open its own connection ────────────────

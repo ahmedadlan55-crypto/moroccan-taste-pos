@@ -314,6 +314,8 @@ describe("checkout failure path", () => {
     const after = await h.orders.get("ORDERZ");
     expect(after?.status).toBe("open"); // editable again
     expect(await h.engine.queuedOps()).toHaveLength(0); // op dropped, not jammed
+    expect(h.events.filter((e) => e.type === "checkout-done" && !e.ok)).toHaveLength(1);
+    expect(errorToasts(h.events)).toHaveLength(0); // PaymentDialog owns the foreground error surface
   });
 
   it("keeps the checkout op queued when the network dies mid-chain", async () => {

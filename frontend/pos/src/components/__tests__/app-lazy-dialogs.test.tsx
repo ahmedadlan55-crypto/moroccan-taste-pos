@@ -78,9 +78,12 @@ async function mount(ctx: PosContextValue = makeCtx()) {
  */
 function engineEmitter(engine: ReturnType<typeof makeFakeEngine>): (e: EngineEvent) => void {
   const calls = (engine.onEvent as unknown as { mock: { calls: Array<[(e: EngineEvent) => void]> } }).mock.calls;
-  const first = calls[0];
-  if (!first) throw new Error("App never subscribed to engine events");
-  return first[0];
+  // Effects resubscribe when the active dialog/order changes.  The real
+  // engine removes the previous listener; this lightweight mock only records
+  // calls, so replay the latest (live) closure rather than a stale first one.
+  const latest = calls.at(-1);
+  if (!latest) throw new Error("App never subscribed to engine events");
+  return latest[0];
 }
 
 beforeEach(() => {
@@ -258,7 +261,8 @@ describe("scan path — ProductGrid's parseQtyPrefix on the search box", () => {
 describe("durable failure log — the App-side write site", () => {
   it("records a permanently-failed checkout so it survives the reload", async () => {
     const engine = makeFakeEngine();
-    await mount(makeCtx({ engine }));
+    const ctx = makeCtx({ engine });
+    await mount(ctx);
 
     // App subscribes to the engine; replay the event the engine emits when a
     // queued sale dies for good (lib/offline.ts — runCheckoutOp's fail() and
@@ -285,6 +289,56 @@ describe("durable failure log — the App-side write site", () => {
       message: "الوردية مغلقة",
       cashier: "cashier1",
     });
+    expect(ctx.pushToast).toHaveBeenCalledWith("error", "الوردية مغلقة");
+  });
+
+  it("does not duplicate the active PaymentDialog error as a sticky toast", async () => {
+    const engine = makeFakeEngine();
+    const ctx = makeCtx({ engine });
+    await mount(ctx);
+    fireEvent.keyDown(window, { key: "F4" });
+    await screen.findByRole("dialog", { name: "الدفع" });
+    vi.mocked(ctx.pushToast).mockClear();
+
+    await act(async () => {
+      engineEmitter(engine)({
+        type: "checkout-done",
+        orderId: ctx.cart.id,
+        ok: false,
+        queued: false,
+        invoiceNumber: null,
+        saleId: null,
+        error: "فشل البيع",
+      });
+      await Promise.resolve();
+    });
+
+    expect(ctx.pushToast).not.toHaveBeenCalled();
+    await waitFor(() => expect(readFailures()).toHaveLength(1));
+  });
+
+  it("still alerts when a background checkout fails while payment is open", async () => {
+    const engine = makeFakeEngine();
+    const ctx = makeCtx({ engine });
+    await mount(ctx);
+    fireEvent.keyDown(window, { key: "F4" });
+    await screen.findByRole("dialog", { name: "الدفع" });
+    vi.mocked(ctx.pushToast).mockClear();
+
+    await act(async () => {
+      engineEmitter(engine)({
+        type: "checkout-done",
+        orderId: "ANOTHER-ORDER",
+        ok: false,
+        queued: false,
+        invoiceNumber: null,
+        saleId: null,
+        error: "فشل طلب محفوظ",
+      });
+      await Promise.resolve();
+    });
+
+    expect(ctx.pushToast).toHaveBeenCalledWith("error", "فشل طلب محفوظ");
   });
 
   it("does NOT record a checkout that merely queued (offline is not a failure)", async () => {

@@ -370,6 +370,12 @@ export default function App() {
     return engine.onEvent((e) => {
       if (e.type !== "checkout-done" || e.ok || e.queued) return;
       const message = e.error || t("appShell.failureLog.checkoutFailed");
+      // The active PaymentDialog renders the same terminal checkout error
+      // inline.  A second sticky toast obscures the till and makes one failure
+      // look like two.  Background failures (or failures for another order)
+      // still need an immediate global alert.
+      const handledInline = payOpen && e.orderId === cart.id;
+      if (!handledInline) pushToast("error", message);
       // Read the stored doc for the money figures: by the time a BACKGROUND
       // flush fails, the cart on screen is usually a different order entirely.
       void engine
@@ -391,7 +397,7 @@ export default function App() {
           recordFailure({ id: `checkout:${e.orderId}`, kind: "checkout", orderId: e.orderId, message, cashier: user?.username ?? null });
         });
     });
-  }, [engine, t, user]);
+  }, [engine, t, user, payOpen, cart.id, pushToast]);
 
   // ── Held count (badge) ───────────────────────────────────────────────────
   const refreshHeldCount = useCallback(async () => {

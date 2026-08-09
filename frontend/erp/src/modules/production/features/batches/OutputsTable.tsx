@@ -184,7 +184,7 @@ export function OutputsTable({
                 {expiryTracked ? (
                   <DatePicker
                     value={row.expiryDate}
-                    onChange={(value) => onPatch(row.key, { expiryDate: value })}
+                    onChange={(v) => onPatch(row.key, { expiryDate: v })}
                     aria-label={`${t("production.batch.create.col.expiry")} — ${row.bom?.productName ?? formatNumber(index + 1)}`}
                     title={t("production.batch.create.expiryHint")}
                   />

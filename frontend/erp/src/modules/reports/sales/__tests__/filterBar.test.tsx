@@ -182,7 +182,9 @@ describe("the collapsed bar", () => {
     expect(primary).toHaveClass("grid-cols-1", "sm:grid-cols-2");
 
     const period = screen.getByRole("button", { name: AR.period });
-    expect(period.parentElement).toHaveClass("w-full", "[&>span]:w-full");
+    // DateRangePicker's trigger itself is full-width; assert the responsive
+    // wrapper rather than depending on a fixed parent depth.
+    expect(period.closest('[class*="[&>span]:w-full"]')).toHaveClass("w-full", "[&>span]:w-full");
     const branch = screen.getByRole("button", { name: AR.branch });
     expect(branch.parentElement).toHaveClass("w-full");
     const compare = screen.getByRole("combobox", { name: AR.compare });

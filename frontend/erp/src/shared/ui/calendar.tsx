@@ -1,10 +1,10 @@
-// ADLAN calendar primitive ? ONE month grid, pure and controlled, plus the
+// ADLAN calendar primitive — ONE month grid, pure and controlled, plus the
 // popover shell and the ISO/English date helpers that DatePicker and
 // DateRangePicker are both built on. There is exactly one calendar in this
 // codebase and this is it: a second one would be a second set of month-length,
 // leap-year, locale and keyboard bugs.
 //
-// ENGLISH, ALWAYS ? the project's standing date policy (see the DATE POLICY
+// ENGLISH, ALWAYS — the project's standing date policy (see the DATE POLICY
 // comment in shared/lib/formatters.ts). Month names, weekday initials and the
 // spelled-out day label come from Intl with an EXPLICIT "en-GB" locale and an
 // explicit `calendar: "gregory"` + `numberingSystem: "latn"`, so an Arabic
@@ -13,14 +13,14 @@
 // String(Date#getDate()), not Intl output, which makes Arabic-Indic digits
 // impossible by construction rather than by configuration.
 //
-// LOCAL CALENDAR, ALWAYS ? every helper here takes and returns an ISO
+// LOCAL CALENDAR, ALWAYS — every helper here takes and returns an ISO
 // "YYYY-MM-DD" string and builds Dates from local components. Nothing calls
 // toISOString(), which reads the UTC day and silently reports yesterday for a
 // Riyadh user between 00:00 and 02:59 (the bug shared/lib/dates.ts exists to
 // prevent).
 //
-// RTL ? the panel chrome mirrors with the document, but the GRID is pinned
-// dir="ltr": a Gregorian week is read Monday?Sunday in both languages, and the
+// RTL — the panel chrome mirrors with the document, but the GRID is pinned
+// dir="ltr": a Gregorian week is read Monday→Sunday in both languages, and the
 // month-nav chevrons must keep meaning "earlier"/"later", not "left"/"right".
 import {
   useEffect,
@@ -36,7 +36,7 @@ import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/shared/lib";
 
-/* ?? ISO date helpers (local calendar, string in / string out) ??? */
+/* ── ISO date helpers (local calendar, string in / string out) ─── */
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -44,7 +44,7 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** Local "YYYY-MM-DD" for a Date ? never toISOString(). */
+/** Local "YYYY-MM-DD" for a Date — never toISOString(). */
 export function dateToISO(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
@@ -88,7 +88,7 @@ export function addMonthsISO(iso: string, months: number): string {
   const day = d.getDate();
   d.setDate(1);
   d.setMonth(d.getMonth() + months);
-  // Day 0 of the FOLLOWING month is the last day of this one ? no month-length
+  // Day 0 of the FOLLOWING month is the last day of this one — no month-length
   // table, and February/leap years need no special case.
   const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   d.setDate(Math.min(day, lastDay));
@@ -100,7 +100,7 @@ export function startOfMonthISO(iso: string): string {
   return dateToISO(new Date(d.getFullYear(), d.getMonth(), 1));
 }
 
-/** "YYYY-MM" ? the month two ISO days share, for cheap same-month tests. */
+/** "YYYY-MM" — the month two ISO days share, for cheap same-month tests. */
 export function monthKeyISO(iso: string): string {
   return iso.slice(0, 7);
 }
@@ -111,7 +111,7 @@ export function clampISO(iso: string, min?: string, max?: string): string {
   return iso;
 }
 
-/* ?? English formatting (pinned locale + calendar + numbering) ??? */
+/* ── English formatting (pinned locale + calendar + numbering) ─── */
 
 const EN_CALENDAR = { calendar: "gregory", numberingSystem: "latn" } as const;
 
@@ -132,22 +132,22 @@ const _dayShort = new Intl.DateTimeFormat("en-GB", {
   ...EN_CALENDAR,
 });
 
-/** "2026 AUGUST" ? the month-nav title. */
+/** "2026 AUGUST" — the month-nav title. */
 export function formatMonthTitle(iso: string): string {
   const d = isoToDate(iso);
   if (!d) return "";
-  // toUpperCase (not toLocaleUpperCase) ? locale-independent by definition, so
+  // toUpperCase (not toLocaleUpperCase) — locale-independent by definition, so
   // a Turkish host locale cannot turn "AUGUST" into "AUGUST" with a dotless I.
   return `${d.getFullYear()} ${_monthLong.format(d).toUpperCase()}`;
 }
 
-/** "Thursday, 20 August 2026" ? a day cell's accessible name. */
+/** "Thursday, 20 August 2026" — a day cell's accessible name. */
 export function formatDayAriaLabel(iso: string): string {
   const d = isoToDate(iso);
   return d ? _dayFull.format(d) : iso;
 }
 
-/** "20 Aug 2026" ? the From/To header and the closed trigger. */
+/** "20 Aug 2026" — the From/To header and the closed trigger. */
 export function formatISODisplay(iso: string): string {
   const d = isoToDate(iso);
   return d ? _dayShort.format(d) : "";
@@ -156,7 +156,7 @@ export function formatISODisplay(iso: string): string {
 /**
  * Monday-first weekday headers. 2024-01-01 was a Monday, so it anchors the
  * week without asking Intl for a first-day-of-week it reports differently per
- * locale ? the grid's week order is a product decision, not a locale one.
+ * locale — the grid's week order is a product decision, not a locale one.
  */
 export const CALENDAR_WEEKDAYS: ReadonlyArray<{ narrow: string; long: string }> = Array.from(
   { length: 7 },
@@ -166,7 +166,7 @@ export const CALENDAR_WEEKDAYS: ReadonlyArray<{ narrow: string; long: string }> 
   },
 );
 
-/** Monday=0 ? Sunday=6. */
+/** Monday=0 … Sunday=6. */
 function weekdayIndex(d: Date): number {
   return (d.getDay() + 6) % 7;
 }
@@ -186,7 +186,7 @@ export function monthGridDays(monthISO: string): string[] {
 /**
  * Where a navigation key moves the focused day, or null when the key is not a
  * navigation key. Exported because the range picker owns ONE focused day
- * across TWO month grids ? the movement cannot live inside a single grid.
+ * across TWO month grids — the movement cannot live inside a single grid.
  */
 export function nextFocusedDay(key: string, from: string): string | null {
   switch (key) {
@@ -215,7 +215,7 @@ export function nextFocusedDay(key: string, from: string): string | null {
   }
 }
 
-/* ?? CalendarMonth ????????????????????????????????????????????? */
+/* ── CalendarMonth ───────────────────────────────────────────── */
 
 export interface CalendarMonthLabels {
   prevMonth: string;
@@ -233,7 +233,7 @@ export interface CalendarMonthProps {
   previewEnd?: string | null;
   min?: string;
   max?: string;
-  /** ISO "today" ? injected so the app and the tests share one clock. */
+  /** ISO "today" — injected so the app and the tests share one clock. */
   today: string;
   /** Roving-tabindex target; the only day cell reachable with Tab. */
   focusedDay?: string | null;
@@ -301,7 +301,7 @@ export function CalendarMonth({
   }, [monthStart]);
 
   // The shaded band runs between the two endpoints, whichever order they were
-  // picked in ? a half-picked range previews against the hovered/focused day.
+  // picked in — a half-picked range previews against the hovered/focused day.
   const anchor = selectedStart ?? null;
   const other = selectedEnd ?? previewEnd ?? null;
   const bandStart = anchor && other ? (anchor <= other ? anchor : other) : null;
@@ -309,10 +309,10 @@ export function CalendarMonth({
   const hasBand = bandStart !== null && bandEnd !== null && bandStart !== bandEnd;
 
   return (
-    // dir=ltr: the week reads Monday?Sunday and ? means "earlier" in both
+    // dir=ltr: the week reads Monday→Sunday and ‹ means "earlier" in both
     // languages. Only the panel chrome around this mirrors.
     <div dir="ltr" className={cn("min-w-0", className)}>
-      {/* The title row is unconditional ? a grid that does not say which month
+      {/* The title row is unconditional — a grid that does not say which month
           it is showing is a trap. Only the nav BUTTONS are optional. */}
       <div className="mb-1 flex items-center justify-between gap-1">
         {onPrevMonth ? (
@@ -427,11 +427,11 @@ export function CalendarMonth({
   );
 }
 
-/* ?? DatePopover ??????????????????????????????????????????????? */
+/* ── DatePopover ─────────────────────────────────────────────── */
 
 // Deliberately NOT shared/ui/overlay.tsx's useFocusTrap: that hook locks body
 // scroll and auto-focuses the first focusable element 20ms after open. Both are
-// right for a modal and wrong here ? a date popover must not lock the page, and
+// right for a modal and wrong here — a date popover must not lock the page, and
 // its opening focus belongs on the selected DAY (the ARIA date-picker pattern),
 // which a delayed "focus the first control" would then steal.
 const FOCUSABLE_SELECTOR =
@@ -453,8 +453,8 @@ export interface DatePopoverProps {
 
 /**
  * The popover shell: portalled to <body> (so it is never clipped by a card's
- * overflow, and ? because the pickers are routinely rendered inside a <label>
- * ? so its buttons never become competing labelled controls), position-fixed
+ * overflow, and — because the pickers are routinely rendered inside a <label>
+ * — so its buttons never become competing labelled controls), position-fixed
  * against the trigger, Tab-trapped, Escape- and outside-click-dismissed, with
  * focus returned to the trigger on close.
  */
@@ -496,7 +496,7 @@ export function DatePopover({
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     // The panel's own width is responsive (the columns stack under `sm`), so
-    // the first measurement can be taken before the layout settles ? which
+    // the first measurement can be taken before the layout settles — which
     // pinned a 375px-wide phone's panel flush against the viewport edge.
     // Re-place whenever the panel's box actually changes. (jsdom has no
     // ResizeObserver; src/test/setup.ts stubs a no-op one, so this is inert
@@ -560,7 +560,7 @@ export function DatePopover({
     };
   }, [open, anchorRef]);
 
-  // Focus restore on close ? the native <input type=date> gave this for free.
+  // Focus restore on close — the native <input type=date> gave this for free.
   useEffect(() => {
     if (!open) return;
     return () => (returnFocusRef ?? anchorRef).current?.focus?.();

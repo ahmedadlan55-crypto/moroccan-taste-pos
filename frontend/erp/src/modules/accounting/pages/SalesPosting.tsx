@@ -96,12 +96,12 @@ export function SalesPostingPage() {
         <label className="text-sm">
           <span className="mb-1 block text-muted-foreground">من</span>
           <DatePicker className="w-44"
-            value={filters.from ?? ""} onChange={(value) => setFilters({ ...filters, from: value })} />
+            value={filters.from ?? ""} onChange={(v) => setFilters({ ...filters, from: v })} />
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-muted-foreground">إلى</span>
           <DatePicker className="w-44"
-            value={filters.to ?? ""} onChange={(value) => setFilters({ ...filters, to: value })} />
+            value={filters.to ?? ""} onChange={(v) => setFilters({ ...filters, to: v })} />
         </label>
         {tab === "pending" && (
           <div className="text-sm">

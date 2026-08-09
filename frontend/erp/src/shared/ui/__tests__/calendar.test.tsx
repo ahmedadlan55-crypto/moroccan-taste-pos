@@ -1,4 +1,4 @@
-// The calendar primitive ? the one month grid the whole app's date fields are
+// The calendar primitive — the one month grid the whole app's date fields are
 // built on. Every assertion here is a PROPERTY (an English month name, an ISO
 // value, a real last-day-of-month), never a snapshot: a snapshot of a calendar
 // re-records whatever it currently draws, including the wrong thing.
@@ -50,11 +50,11 @@ function cell(iso: string): HTMLElement {
   return el as HTMLElement;
 }
 
-/* ?? ISO helpers ??????????????????????????????????????????????????????????? */
+/* ── ISO helpers ─────────────────────────────────────────────────────────── */
 
 describe("ISO date helpers", () => {
   it("round-trips a local date without ever touching UTC", () => {
-    // 00:30 local ? the window where toISOString() reports the PREVIOUS day for
+    // 00:30 local — the window where toISOString() reports the PREVIOUS day for
     // a Riyadh user, which is the whole reason these helpers exist.
     const d = new Date(2026, 0, 1, 0, 30);
     expect(dateToISO(d)).toBe("2026-01-01");
@@ -74,7 +74,7 @@ describe("ISO date helpers", () => {
   });
 
   it("adds months without rolling over a short month", () => {
-    // setMonth() alone turns Jan 31 + 1 into Mar 3 ? a PageDown that skips
+    // setMonth() alone turns Jan 31 + 1 into Mar 3 — a PageDown that skips
     // February entirely.
     expect(addMonthsISO("2026-01-31", 1)).toBe("2026-02-28");
     expect(addMonthsISO("2028-01-31", 1)).toBe("2028-02-29");
@@ -102,7 +102,7 @@ describe("ISO date helpers", () => {
   });
 });
 
-/* ?? the grid shape ???????????????????????????????????????????????????????? */
+/* ── the grid shape ──────────────────────────────────────────────────────── */
 
 describe("monthGridDays", () => {
   it("always yields 6 Monday-first weeks around the month", () => {
@@ -138,7 +138,7 @@ describe("nextFocusedDay", () => {
   });
 });
 
-/* ?? ENGLISH, on an Arabic document ???????????????????????????????????????? */
+/* ── ENGLISH, on an Arabic document ──────────────────────────────────────── */
 
 describe("English dates on an Arabic document", () => {
   beforeEach(() => {
@@ -172,7 +172,7 @@ describe("English dates on an Arabic document", () => {
     expect(screen.getByText("2026 AUGUST")).toBeInTheDocument();
 
     // The narrow initials repeat (T/T, S/S), so the accessible name carries the
-    // full weekday. Monday first ? a Gregorian week is read that way in both
+    // full weekday. Monday first — a Gregorian week is read that way in both
     // languages, which is why the grid itself never mirrors.
     const headers = screen.getAllByRole("columnheader");
     expect(headers.map((h) => h.getAttribute("aria-label"))).toEqual([
@@ -186,7 +186,7 @@ describe("English dates on an Arabic document", () => {
     ]);
     expect(headers.map((h) => h.textContent).join("")).toBe("MTWTFSS");
 
-    // Arabic-Indic digits (????) would fail \d ? the day number comes from
+    // Arabic-Indic digits (٠١٢…) would fail \d — the day number comes from
     // String(Date#getDate()), not from Intl, so they are impossible here.
     for (const b of dayButtons()) expect(b.textContent ?? "").toMatch(/^\d{1,2}$/);
     expect(day("2026-08-20")).toHaveAttribute("aria-label", "Thursday, 20 August 2026");
@@ -199,7 +199,7 @@ describe("English dates on an Arabic document", () => {
   });
 });
 
-/* ?? selection, today, bounds ?????????????????????????????????????????????? */
+/* ── selection, today, bounds ────────────────────────────────────────────── */
 
 describe("CalendarMonth", () => {
   it("emits the ISO day that was clicked, including the muted neighbours", () => {

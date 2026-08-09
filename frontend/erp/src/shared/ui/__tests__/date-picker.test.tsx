@@ -1,4 +1,4 @@
-// DatePicker ? the single-date field, rebuilt on the shared calendar
+// DatePicker — the single-date field, rebuilt on the shared calendar
 // primitive. The native <input type="date"> it replaced gave typing, keyboard
 // navigation, an accessible name per day and focus restore for free; every one
 // of those is pinned here, because "we drew our own calendar" is exactly how a
@@ -10,7 +10,7 @@ import { DatePicker } from "@/shared/ui/date-picker";
 import { ar } from "@/i18n/dictionaries/ar";
 
 // No I18nProvider here (shared components must render without one), so the kit
-// falls back to the Arabic dictionary ? read the labels from it rather than
+// falls back to the Arabic dictionary — read the labels from it rather than
 // hardcoding copy that can drift.
 const UI = ar.sharedUi.datePicker;
 
@@ -73,7 +73,7 @@ describe("typing (the native control allowed it, so this must too)", () => {
       fireEvent.change(field(), { target: { value: attempt } });
     }
     expect(onValue, "an unfinished or impossible date is not a date").not.toHaveBeenCalled();
-    // Whatever was typed stays visible while the caret is in the field ? a
+    // Whatever was typed stays visible while the caret is in the field — a
     // control that erases your keystrokes mid-word is unusable.
     expect(field().value).toBe("hello");
 
@@ -264,13 +264,13 @@ describe("call-site compatibility", () => {
   it("keeps its accessible name when wrapped in a <label> (15 call sites do this)", () => {
     render(
       <label>
-        <span>?? ?????</span>
+        <span>من تاريخ</span>
         <DatePicker value="2026-08-20" onChange={vi.fn()} />
       </label>,
     );
     // The calendar trigger is a role=button SPAN precisely so it cannot become
     // a second labelable control and make this query ambiguous.
-    const labelled = screen.getByLabelText("?? ?????");
+    const labelled = screen.getByLabelText("من تاريخ");
     expect(labelled.tagName).toBe("INPUT");
     expect((labelled as HTMLInputElement).value).toBe("2026-08-20");
   });

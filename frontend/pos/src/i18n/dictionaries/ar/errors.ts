@@ -11,6 +11,8 @@
  *  would REPLACE every one of those precise sentences with one vague line.
  */
 export const errors = {
+  ORDER_OWNERSHIP_CONFLICT:
+    "هذا الطلب محفوظ لحساب كاشير آخر لحماية المبيعات — سجّل دخول صاحبه، أو اطلب من المدير استئنافه",
   VERSION_CONFLICT: "تم تعديل هذا العنصر من جهاز آخر — يرجى إعادة التحميل والمحاولة مجددًا",
   UNAUTHORIZED: "الجلسة منتهية أو غير مصرَّح بها — يرجى تسجيل الدخول من جديد",
   SERVER_ERROR: "حدث خطأ في الخادم — يرجى المحاولة لاحقًا",

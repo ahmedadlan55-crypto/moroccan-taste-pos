@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "pretest": "node tests/invoiceReprint.test.js",
     "test:procurement-accounts": "node tests/procurementAccounts.test.js",
     "test:accounting-consolidation": "node tests/coaSaudiCanonical.test.js && node tests/coaSingleInventory.test.js && node tests/procurementAccounts.test.js && node tests/erpCoreInventoryAtomicity.test.js && node tests/salesPostingCapture.test.js && node tests/salesPostingAggregate.test.js && node tests/salesPostingService.test.js",
     "dev": "nodemon server.js",

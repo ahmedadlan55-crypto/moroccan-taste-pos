@@ -5,6 +5,7 @@ const db = require('../db/connection');
 const bcrypt = require('bcryptjs');
 const { isTruthy } = require('../lib/settingsKeys');
 const invoiceIdentity = require('../lib/invoiceIdentity');
+const invoiceReprint = require('../lib/invoiceReprint');
 // G-SALES hardening — fine-grained capability guard (same pattern as
 // routes/order-to-cash/returns.js). Runs after the global JWT gate, so
 // req.user is the verified token. admin/developer bypass inside.
@@ -2432,11 +2433,14 @@ router.get('/invoice/:orderId', async (req, res) => {
     // Invoices predating the migration have no snapshot and keep the live
     // resolution, so old receipts print exactly as they did before.
     let crNumber = '', nationalAddress = '', receiptHeader = '', receiptThankYou = '', receiptReturnPolicy = '';
+    let legalName = '', receiptLanguage = null, receiptVatRate = null, salesTaxName = '';
+    let branchNameEn = '';
     let identitySource = 'live';
     const snap = await invoiceIdentity.loadIdentity(db, sale.receipt_identity_id);
     if (snap) {
       identitySource = 'snapshot';
       companyName   = snap.sellerName   || companyName;
+      legalName     = snap.legalName    || '';
       taxNumber     = snap.taxNumber    || taxNumber;
       currency      = snap.currency     || currency;
       companyPhone  = snap.phone        || companyPhone;
@@ -2445,13 +2449,39 @@ router.get('/invoice/:orderId', async (req, res) => {
       receiptFooter = snap.footer       || receiptFooter;
       brandName     = snap.brandName    || brandName;
       branchName    = snap.branchName   || branchName;
+      branchNameEn  = snap.branchNameEn || '';
       branchAddress = snap.address      || branchAddress;
+      branchCompanyName = snap.branchCompanyName || branchCompanyName;
       crNumber            = snap.crNumber       || '';
       nationalAddress     = snap.nationalAddress || '';
       receiptHeader       = snap.header         || '';
       receiptThankYou     = snap.thankYou       || '';
       receiptReturnPolicy = snap.returnPolicy   || '';
+      receiptLanguage     = snap.language       || null;
+      receiptVatRate      = Number.isFinite(Number(snap.vatRate)) ? Number(snap.vatRate) : null;
+      salesTaxName        = snap.salesTaxName   || '';
+    } else {
+      // Pre-snapshot invoices cannot be made historical retroactively. Expose
+      // the resolver's CURRENT values explicitly and keep identitySource=live;
+      // this is an honest fallback, not a claim that those values were issued.
+      try {
+        const live = (await invoiceIdentity.resolveIdentity(db, {
+          brandId: sale.brand_id || null,
+          branchId: sale.branch_id || null,
+        })).identity;
+        legalName = live.legalName || '';
+        branchNameEn = live.branchNameEn || '';
+        receiptLanguage = live.language || null;
+        receiptVatRate = Number.isFinite(Number(live.vatRate)) ? Number(live.vatRate) : null;
+        salesTaxName = live.salesTaxName || '';
+      } catch (e) {
+        console.warn('[sales/invoice] live receipt identity fallback failed for sale', sale.id, '—', e.code || e.message);
+      }
     }
+
+    // The receipt logo is ONE resolved historical value. On a snapshotted
+    // invoice it must never be re-overridden by today's brand logo.
+    const receiptLogo = snap ? (snap.logo || '') : (brandLogo || companyLogo);
 
     // RECORDED per-category tax breakdown — parsed ONCE and reused for both the
     // QR-rebuild fallback (below) and the new `taxSubtotals` response field.
@@ -2467,10 +2497,10 @@ router.get('/invoice/:orderId', async (req, res) => {
       splitDetails: (function () { try { return sale.split_details_json ? JSON.parse(sale.split_details_json) : null; } catch (e) { return null; } })(),
       cashTendered: Number(sale.cash_tendered) || 0,
       changeDue: Number(sale.change_due) || 0,
-      items: items.map((i, idx) => ({
-        name: i.item_name, qty: i.qty, price: Number(i.price), total: Number(i.total),
-        lineId: lineIdByOrdinal[idx] ?? null,
-      })),
+      // Prefer the checkout snapshot. `sales_items` is an intentionally narrow
+      // projection and cannot reproduce notes/UOM/tax conventions on reprint.
+      // Old/corrupt rows fall back to it without inventing absent details.
+      items: invoiceReprint.historicalInvoiceItems(sale.items_json, items, lineIdByOrdinal),
       // O2C document version — required by ReturnRequestDialog as
       // expectedVersion (optimistic-concurrency guard on the return create).
       version: arDocVersion,
@@ -2478,14 +2508,19 @@ router.get('/invoice/:orderId', async (req, res) => {
       cashierName: cashierName,
       cashierEmpNo: cashierEmpNo,
       branchName: branchName,
+      branchNameEn: branchNameEn,
       branchAddress: branchAddress,
       branchLat: branchLat,
       branchLng: branchLng,
       // V5.7.14 — operating company per branch (printed under parent brand)
       branchCompanyName: branchCompanyName,
       companyName: companyName,
+      legalName: legalName,
       taxNumber: taxNumber,
       currency: currency,
+      receiptLanguage: receiptLanguage,
+      vatRate: receiptVatRate,
+      salesTaxName: salesTaxName,
       companyPhone: companyPhone,
       companyEmail: companyEmail,
       receiptFooter: receiptFooter,
@@ -2502,7 +2537,7 @@ router.get('/invoice/:orderId', async (req, res) => {
       companyLogo: companyLogo,
       brandName: brandName,
       brandLogo: brandLogo,
-      receiptLogo: brandLogo || companyLogo,
+      receiptLogo: receiptLogo,
       // v5.11.4 — customer block + payment notes for receipt and admin display
       customerId: sale.customer_id || null,
       customerName: customerName,

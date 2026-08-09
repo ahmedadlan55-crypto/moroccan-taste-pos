@@ -25,13 +25,15 @@ interface Identity {
   address: string; nationalAddress: string; phone: string; email: string;
   logo: string; currency: string; vatRate: number; salesTaxName: string;
   header: string; footer: string; thankYou: string; returnPolicy: string;
-  language: string; branchName: string; branchCompanyName: string; brandName: string;
+  language: string; branchName: string; branchNameEn?: string; branchCompanyName: string; brandName: string;
 }
 interface ReceiptSettings { paperWidth: string; autoPrint: string }
 interface IdentityResponse {
   success: boolean;
   identity: Identity;
   sources: Record<string, string>;
+  globalIdentity?: Identity;
+  globalSources?: Record<string, string>;
   branches: Array<{ id: string; name: string }>;
   brands: Array<{ id: string; name: string }>;
   showFields: Record<string, boolean>;
@@ -86,6 +88,14 @@ const PAPER_WIDTHS: Array<{ value: string }> = [{ value: "58" }, { value: "80" }
 
 const LOGO_MAX_DIMENSION = 256;
 const LOGO_MAX_BYTES = 100 * 1024;
+
+// A deliberately non-scannable marker for the live preview. A null QR made the
+// "show QR" switch appear broken even though real, synced sales print the
+// server-stamped ZATCA PNG. Keeping the marker inline also makes the preview
+// deterministic and network-independent.
+const PREVIEW_QR_DATA_URL = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" fill="white"/><g fill="currentColor"><rect x="8" y="8" width="34" height="34"/><rect x="78" y="8" width="34" height="34"/><rect x="8" y="78" width="34" height="34"/><rect x="51" y="51" width="12" height="12"/><rect x="70" y="55" width="10" height="10"/><rect x="52" y="73" width="15" height="15"/><rect x="82" y="78" width="9" height="9"/><rect x="97" y="94" width="15" height="15"/></g><g fill="white"><rect x="16" y="16" width="18" height="18"/><rect x="86" y="16" width="18" height="18"/><rect x="16" y="86" width="18" height="18"/></g></svg>',
+)}`;
 
 /** file → downscaled (≤256px) PNG/JPEG data-URL, rejected when >100KB after compression. */
 async function compressLogo(file: File, t: TFunction): Promise<string> {
@@ -156,6 +166,7 @@ export function InvoiceSettingsPage() {
   });
 
   const identity = data?.identity;
+  const globalIdentity = data?.globalIdentity ?? identity;
   const sources = data?.sources ?? {};
 
   const save = useMutation({
@@ -176,7 +187,7 @@ export function InvoiceSettingsPage() {
   });
 
   const valueOf = (f: { key: keyof Identity; settingKey: string }) =>
-    draft[f.settingKey] ?? String(identity?.[f.key] ?? "");
+    draft[f.settingKey] ?? String(globalIdentity?.[f.key] ?? "");
 
   const dirty = Object.keys(draft).length > 0;
   const scopeDirty = Object.keys(scopeDraft).length > 0;
@@ -194,9 +205,10 @@ export function InvoiceSettingsPage() {
     setDraft((d) => ({ ...d, ReceiptShowFields: JSON.stringify({ ...showFields, [key]: next }) }));
 
   const paperWidth = draft.ReceiptPaperWidth ?? data?.receiptSettings?.paperWidth ?? "80";
+  const selectedPaperWidth: PaperWidth = paperWidth === "58" || paperWidth === "A4" ? paperWidth : "80";
   const autoPrint = (draft.ReceiptAutoPrint ?? data?.receiptSettings?.autoPrint ?? "1") === "1";
   const language = draft.ReceiptLanguage ?? (identity?.language || "ar");
-  const logoValue = draft.logo ?? (identity?.logo || "");
+  const logoValue = draft.logo ?? (globalIdentity?.logo || "");
 
   const onLogoFile = async (file: File | undefined, target: "global" | "brand") => {
     if (!file) return;
@@ -216,38 +228,59 @@ export function InvoiceSettingsPage() {
     // ReceiptLanguage setting value); narrow it the same defensive way
     // invoiceTemplate.ts's own normalizeLanguage() does, so DocumentIdentity's
     // typed `language?: DocumentLanguage` is honored without changing behavior.
+    const languageRaw = draft.ReceiptLanguage ?? identity.language;
     const language: DocumentLanguage =
-      identity.language === "en" || identity.language === "both" ? identity.language : "ar";
+      languageRaw === "en" || languageRaw === "both" ? languageRaw : "ar";
+    // A draft global value changes this scope only when the effective value is
+    // currently global/default. Company/brand/branch values keep precedence,
+    // exactly as they will after saving and reloading. Scoped drafts, on the
+    // other hand, are the strongest layer and therefore always win here.
+    const globalDraft = (identityKey: keyof Identity, settingKey: string, current: string): string => {
+      const source = sources[String(identityKey)] ?? "";
+      const canAffectScope = !source || source.startsWith("settings.");
+      return canAffectScope && draft[settingKey] !== undefined ? draft[settingKey] : current;
+    };
     return {
       ...identity,
       language,
-      sellerName: draft.name ?? identity.sellerName,
-      taxNumber: draft.taxNumber ?? identity.taxNumber,
-      crNumber: draft.CrNumber ?? identity.crNumber,
-      nationalAddress: draft.NationalAddress ?? identity.nationalAddress,
-      header: draft.ReceiptHeader ?? identity.header,
-      footer: draft.receiptFooter ?? identity.footer,
-      thankYou: draft.ReceiptThankYou ?? identity.thankYou,
-      returnPolicy: draft.ReceiptReturnPolicy ?? identity.returnPolicy,
+      sellerName: globalDraft("sellerName", "name", identity.sellerName),
+      taxNumber: globalDraft("taxNumber", "taxNumber", identity.taxNumber),
+      crNumber: globalDraft("crNumber", "CrNumber", identity.crNumber),
+      nationalAddress: globalDraft("nationalAddress", "NationalAddress", identity.nationalAddress),
+      phone: globalDraft("phone", "companyPhone", identity.phone),
+      email: globalDraft("email", "companyEmail", identity.email),
+      currency: globalDraft("currency", "currency", identity.currency),
+      salesTaxName: globalDraft("salesTaxName", "SalesTaxName", identity.salesTaxName),
+      header: globalDraft("header", "ReceiptHeader", identity.header),
+      footer: globalDraft("footer", "receiptFooter", identity.footer),
+      thankYou: globalDraft("thankYou", "ReceiptThankYou", identity.thankYou),
+      returnPolicy: globalDraft("returnPolicy", "ReceiptReturnPolicy", identity.returnPolicy),
+      logo: scopeDraft.logo ?? globalDraft("logo", "logo", identity.logo),
+      address: scopeDraft.address ?? identity.address,
+      branchCompanyName: scopeDraft.branchCompanyName ?? identity.branchCompanyName,
+      brandName: scopeDraft.brandName ?? identity.brandName,
     };
-  }, [identity, draft]);
+  }, [identity, sources, draft, scopeDraft]);
 
   /** Real preview: builds the EXACT HTML the cashier's print window renders
    *  (buildSaleReceiptHtml, the same function receipt.ts wraps), fed a sample
    *  invoice + the draft identity/showFields — not a mock card. */
   const previewHtml = (paperWidth: PaperWidth): string => {
     if (!preview) return "";
+    const vatRate = Number.isFinite(Number(preview.vatRate)) ? Math.max(0, Number(preview.vatRate)) : 15;
+    const sampleGross = 33;
+    const sampleVat = vatRate > 0 ? sampleGross * vatRate / (100 + vatRate) : 0;
     return buildSaleReceiptHtml({
       lines: [
         { name: t("administration.invoice.preview.line1"), qty: 2, unitPrice: 12, lineDiscount: 0 },
         { name: t("administration.invoice.preview.line2"), qty: 1, unitPrice: 9, lineDiscount: 0 },
       ],
-      payments: [{ method: "cash", amount: 33.35 }],
-      totals: { subtotal: 33, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 4.35, total: 33.35 },
+      payments: [{ method: "cash", amount: sampleGross }],
+      totals: { subtotal: sampleGross, lineDiscountTotal: 0, discountAmount: 0, vatTotal: sampleVat, total: sampleGross },
       invoiceNumber: "INV-PREVIEW-0001",
       fallbackSellerName: preview.sellerName || t("administration.invoice.preview.sellerFallback"),
       cashierName: t("administration.invoice.preview.cashier"),
-      vatRate: preview.vatRate || 15,
+      vatRate,
       paperWidth,
       identity: preview,
       showFields: {
@@ -261,7 +294,7 @@ export function InvoiceSettingsPage() {
         customer: showFields.customer !== false,
         qr: showFields.qr !== false,
       },
-      zatcaQrDataUrl: null,
+      zatcaQrDataUrl: PREVIEW_QR_DATA_URL,
     });
   };
 
@@ -529,12 +562,8 @@ export function InvoiceSettingsPage() {
                 onChange={(e) => setDraft((d) => ({ ...d, ReceiptLanguage: e.target.value }))}
               >
                 <option value="ar">{t("administration.invoice.lang.ar")}</option>
-                <option value="en" disabled title={t("administration.invoice.print.langEnTitle")}>
-                  {t("administration.invoice.lang.en")}
-                </option>
-                <option value="both" disabled title={t("administration.invoice.print.langBothTitle")}>
-                  {t("administration.invoice.lang.both")}
-                </option>
+                <option value="en">{t("administration.invoice.lang.en")}</option>
+                <option value="both">{t("administration.invoice.lang.both")}</option>
               </select>
             )}
           </Field>
@@ -575,14 +604,16 @@ export function InvoiceSettingsPage() {
           title={t("administration.invoice.previewPanel.title")}
           subtitle={t("administration.invoice.previewPanel.subtitle")}
         />
-        <div className="grid gap-4 p-5 lg:grid-cols-3">
-          {(["58", "80", "A4"] as const).map((w) => (
-            <div key={w} className="flex flex-col items-center gap-2">
-              <StatusBadge>{w === "A4" ? "A4" : `${w}mm`}</StatusBadge>
+        <div className="p-5">
+          <div
+            data-testid="invoice-live-preview"
+            className={`mx-auto flex w-full flex-col items-center gap-3 ${selectedPaperWidth === "A4" ? "max-w-5xl" : selectedPaperWidth === "80" ? "max-w-[430px]" : "max-w-[330px]"}`}
+          >
+              <StatusBadge>{selectedPaperWidth === "A4" ? "A4" : `${selectedPaperWidth}mm`}</StatusBadge>
               <iframe
-                title={t("administration.invoice.previewPanel.iframeTitle", { width: w })}
-                srcDoc={previewHtml(w)}
-                className="h-[520px] w-full rounded-xl border-2 border-dashed border-slate-300 bg-white"
+                title={t("administration.invoice.previewPanel.iframeTitle", { width: selectedPaperWidth })}
+                srcDoc={previewHtml(selectedPaperWidth)}
+                className={`w-full rounded-xl border-2 border-dashed border-slate-300 bg-white ${selectedPaperWidth === "A4" ? "h-[760px]" : "h-[620px]"}`}
                 // Tier A.3 Release Gate item 10 — a bare `sandbox=""` gives a
                 // srcDoc document a null/opaque origin, which throws a
                 // SecurityError (caught by nothing, surfacing as a page
@@ -602,8 +633,7 @@ export function InvoiceSettingsPage() {
                 // that combination is not used here.)
                 sandbox="allow-same-origin"
               />
-            </div>
-          ))}
+          </div>
         </div>
       </section>
 

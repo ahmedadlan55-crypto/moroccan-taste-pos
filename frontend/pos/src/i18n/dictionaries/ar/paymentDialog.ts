@@ -5,6 +5,15 @@ export const paymentDialog = {
   currency: "ر.س",
 
   totalDue: "الإجمالي المستحق",
+  orderSummary: "ملخص الطلب",
+  itemsInOrder: "{count} صنف",
+  walkInCustomer: "عميل نقدي",
+  selectedCustomer: "العميل: {name}",
+  paymentDetails: "تفاصيل الدفع",
+  keypadSection: "لوحة الأرقام اللمسية",
+  successSummary: "ملخص التحصيل",
+  paidTotal: "إجمالي الفاتورة",
+  receivedTotal: "المستلَم",
   noShiftOpen: "لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا من الشريط العلوي",
   openShiftButton: "افتح وردية الآن",
 

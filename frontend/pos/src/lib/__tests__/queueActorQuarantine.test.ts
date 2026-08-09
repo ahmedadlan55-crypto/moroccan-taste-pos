@@ -87,6 +87,7 @@ function makeHarness(actor: ActorIdentity | null) {
     debounceMs: 600,
     autoStart: false,
     currentActor: () => current,
+    enforceActorOwnership: true,
   });
   engine.onEvent((e) => events.push(e));
 
@@ -104,9 +105,9 @@ function makeHarness(actor: ActorIdentity | null) {
   };
 }
 
-const AMIN: ActorIdentity = { username: "amin", isSupervisor: false };
-const SARA: ActorIdentity = { username: "sara", isSupervisor: false };
-const MANAGER: ActorIdentity = { username: "hala", isSupervisor: true };
+const AMIN: ActorIdentity = { username: "amin", userId: "41", isSupervisor: false };
+const SARA: ActorIdentity = { username: "sara", userId: "42", isSupervisor: false };
+const MANAGER: ActorIdentity = { username: "hala", userId: "99", isSupervisor: true };
 
 let h: ReturnType<typeof makeHarness>;
 beforeEach(() => {
@@ -119,6 +120,7 @@ describe("the queue records who authored each op", () => {
     await h.engine.enqueue("upsert", "O1", { id: "O1", lines: [] });
     const [op] = await h.queue.getAll();
     expect(op.actor).toBe("amin");
+    expect(op.actorId).toBe("41");
   });
 
   it("leaves the stamp off when nobody is signed in, so nothing is quarantined later", async () => {
@@ -184,9 +186,10 @@ describe("after a cashier switch", () => {
     expect(h.engine.getStatus().orphanCount).toBe(0);
   });
 
-  it("still drains ops written by a build that had no actor field", async () => {
-    // Rows already sitting in IndexedDB on live devices. Withholding these would
-    // strand real sales on upgrade — the opposite of the fix's purpose.
+  it("quarantines ops written by a build that had no actor field", async () => {
+    // Rows already sitting in IndexedDB on live devices have no reliable owner.
+    // Guessing the signed-in cashier can delete a paid sale after a server
+    // denial, so preserve the row and let a manager recover it.
     await h.orders.put("O1", makeDoc("O1"));
     await h.queue.put("LEGACY1", {
       opId: "LEGACY1",
@@ -200,7 +203,25 @@ describe("after a cashier switch", () => {
     await h.signIn(SARA);
     await h.engine.flush();
 
+    expect(h.sent).toEqual([]);
+    expect(await h.queue.getAll()).toHaveLength(1);
+    expect(h.engine.getStatus().orphanUnknownCount).toBe(1);
+
+    await h.signIn(MANAGER);
+    await h.engine.flush();
     expect(h.sent).toEqual(["sync:upsert(O1)"]);
+    expect(await h.queue.getAll()).toHaveLength(0);
+  });
+
+  it("uses stable user id so a username rename does not create a false orphan", async () => {
+    await h.orders.put("O1", makeDoc("O1"));
+    await h.engine.enqueue("upsert", "O1", { id: "O1", lines: [] });
+
+    await h.signIn({ username: "amin.renamed", userId: "41", isSupervisor: false });
+    await h.engine.flush();
+
+    expect(h.sent).toEqual(["sync:upsert(O1)"]);
+    expect(h.engine.getStatus().orphanCount).toBe(0);
   });
 
   it("does not touch the new cashier's own ops queued alongside", async () => {
@@ -243,5 +264,31 @@ describe("what the till is told", () => {
     expect(s.queueCount).toBe(1);
     expect(s.orphanCount).toBe(0);
     expect(s.orphanActors).toEqual([]);
+  });
+});
+
+describe("cart restore on a shared device", () => {
+  it("does not restore the previous cashier's open cart after login switch", async () => {
+    await h.orders.put("AMIN-CART", makeDoc("AMIN-CART", {
+      ownerUserId: "41",
+      ownerUsername: "amin",
+      updatedAt: 3000,
+    }));
+    await h.orders.put("SARA-CART", makeDoc("SARA-CART", {
+      ownerUserId: "42",
+      ownerUsername: "sara",
+      updatedAt: 2000,
+    }));
+
+    await h.signIn(SARA);
+    expect((await h.engine.latestOpenOrder())?.id).toBe("SARA-CART");
+  });
+
+  it("keeps a legacy ownerless cart stored but never silently assigns it to the next cashier", async () => {
+    await h.orders.put("LEGACY-CART", makeDoc("LEGACY-CART", { updatedAt: 9000 }));
+    await h.signIn(SARA);
+
+    expect(await h.engine.latestOpenOrder()).toBeUndefined();
+    expect(await h.orders.get("LEGACY-CART")).toBeDefined();
   });
 });

@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { EyeOff, PackageSearch, ServerOff } from "lucide-react";
-import { PageHeader, Select, StatusBadge, Badge } from "@/shared/ui";
+import { DatePicker, PageHeader, Select, StatusBadge, Badge } from "@/shared/ui";
 import { DataTable, Pagination, type ColumnDef } from "@/shared/tables";
 import { usePermissions } from "@/shared/permissions";
 import { useDebounce } from "@/shared/hooks";
@@ -316,18 +316,16 @@ export function OperationsHubPage() {
           </option>
         ))}
       </Select>
-      <input
-        type="date"
-        className="field h-10 w-auto py-2"
+      <DatePicker
+        className="h-10 w-auto"
         value={dateFrom}
-        onChange={(e) => patch({ dateFrom: e.target.value })}
+        onChange={(v) => patch({ dateFrom: v })}
         aria-label={t("operations.hub.filter.dateFrom")}
       />
-      <input
-        type="date"
-        className="field h-10 w-auto py-2"
+      <DatePicker
+        className="h-10 w-auto"
         value={dateTo}
-        onChange={(e) => patch({ dateTo: e.target.value })}
+        onChange={(v) => patch({ dateTo: v })}
         aria-label={t("operations.hub.filter.dateTo")}
       />
     </>

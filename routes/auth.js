@@ -912,6 +912,11 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
         ['transaction_steps_log', 'action_by'],
         ['txn_recipients', 'recipient_username'],
         ['custody_users', 'linked_username'],
+        // POS keeps username as a human-readable snapshot, but ownership is
+        // keyed by owner_user_id. Updating the snapshot prevents legacy rows
+        // (owner_user_id NULL) from falsely becoming "another cashier" after
+        // the same account is renamed.
+        ['pos_orders', 'username'],
         ['hr_advances', 'approved_by'],
         ['hr_advances', 'rejected_by'],
         ['hr_leave_requests', 'branch_approved_by'],

@@ -63,6 +63,9 @@ export default defineConfig({
       // The spec reloads the SPA several times from one IP; keep the prod
       // rate limiter out of the way (same rationale as playwright.erp.config).
       RATE_LIMIT_MAX: "1000000",
+      // Test-only key paired with rtl-visual.spec.ts's detached-worktree
+      // fallback. Production always supplies its own secret through Railway.
+      JWT_SECRET: process.env.JWT_SECRET || "local-pos-e2e-signing-key-2026-do-not-use-in-production",
     },
   },
   projects: [

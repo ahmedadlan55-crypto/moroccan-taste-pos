@@ -145,4 +145,13 @@ describe("buildShiftReportHtml — X vs Z", () => {
     expect(buildShiftReportHtml(rep, { mode: "Z", paperWidth: "58" })).toContain("width: 48mm");
     expect(buildShiftReportHtml(rep, { mode: "Z" })).toContain("width: 72mm");
   });
+
+  it("prints an operational hierarchy with KPI, reconciliation and indivisible sections", () => {
+    const html = buildShiftReportHtml(rep, { mode: "Z" });
+    expect(html).toContain('class="report-head"');
+    expect(html).toContain('class="report-kpis"');
+    expect(html).toContain('class="report-totals"');
+    expect(html).toContain(".report-section { margin-top: 8px; break-inside: avoid;");
+    expect(html.match(/class="report-kpi"/g)).toHaveLength(3);
+  });
 });

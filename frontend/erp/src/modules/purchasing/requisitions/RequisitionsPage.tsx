@@ -17,6 +17,7 @@ import {
   ErrorState,
   PanelTitle,
   SearchableEntityCombobox,
+  DatePicker,
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { Can } from "@/shared/permissions";
@@ -265,7 +266,7 @@ function RequisitionFormDrawer({
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.requisitions.neededDate")}</span>
-            <input type="date" className="field w-full" value={neededDate} min={todayISO()} onChange={(e) => setNeededDate(e.target.value)} />
+            <DatePicker value={neededDate} min={todayISO()} onChange={setNeededDate} />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-extrabold text-slate-500">{t("purchasing.requisitions.warehouseOptional")}</span>

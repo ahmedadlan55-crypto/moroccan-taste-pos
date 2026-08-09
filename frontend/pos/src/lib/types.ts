@@ -265,6 +265,10 @@ export interface Payment {
 export interface LocalOrder {
   id: string; // client ULID — doubles as clientOrderId for /api/sales dedupe
   status: OrderStatus;
+  /** Stable users.id of the cashier who created this local cart. */
+  ownerUserId?: string | null;
+  /** Login-name snapshot for recovery UI; not authority when id exists. */
+  ownerUsername?: string | null;
   orderType: OrderType;
   tableNo: string | null;
   shiftId: string | null;
@@ -325,6 +329,8 @@ export interface QueueOp {
    * upgrade strands nothing.
    */
   actor?: string;
+  /** Stable users.id paired with actor; survives a username rename. */
+  actorId?: string;
 }
 
 export interface SyncOpReport {
@@ -361,6 +367,7 @@ export interface ServerOrder {
   tableNo: string | null;
   shiftId: string | null;
   username: string;
+  ownerUserId?: string | null;
   deviceId: string | null;
   customerId?: string | null;
   discountType: DiscountType | null;
@@ -459,6 +466,8 @@ export interface ShiftSummary {
 }
 
 export interface AuthUser {
+  /** Stable users.id from the JWT; optional for pre-deploy tokens/tests. */
+  id?: string;
   /** Login id — the value `sales.username` stores and every API scopes on. */
   username: string;
   role: string;

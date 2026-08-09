@@ -5,8 +5,8 @@ import { apiClient } from "@/shared/api";
 import {
   Badge,
   Button,
+  DatePicker,
   Dialog,
-  Input,
   PageHeader,
   Select,
   StatusBadge,
@@ -149,8 +149,8 @@ export default function AuditLogPage() {
         emptyBody={t("administration.auditLog.emptyBody")}
         filterBar={
           <div className="flex flex-wrap items-end gap-2">
-            {filterCtl(t("administration.auditLog.filter.from"), <Input className="w-40" type="date" dir="ltr" value={from} onChange={(e) => setFrom(e.target.value)} />)}
-            {filterCtl(t("administration.auditLog.filter.to"), <Input className="w-40" type="date" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} />)}
+            {filterCtl(t("administration.auditLog.filter.from"), <DatePicker className="w-40" value={from} onChange={setFrom} />)}
+            {filterCtl(t("administration.auditLog.filter.to"), <DatePicker className="w-40" value={to} onChange={setTo} />)}
             {filterCtl(
               t("administration.auditLog.filter.user"),
               <div className="w-40">

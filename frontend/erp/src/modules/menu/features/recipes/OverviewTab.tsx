@@ -6,7 +6,7 @@
  * cost by it, so a zeroed yield is rejected rather than silently coerced to 1
  * (which is exactly what the two legacy writers used to do).
  */
-import { Checkbox, Input, NumberInput } from "@/shared/ui";
+import { Checkbox, DatePicker, Input, NumberInput } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { formatCurrency, formatDateTime, formatNumber } from "@/shared/lib";
 import { useT } from "@/i18n";
@@ -65,25 +65,23 @@ export function OverviewTab({ header, onChange, recipe, product, lineCount, canE
         </Field>
         <Field label={t("recipes.detail.overview.effectiveFrom")}>
           {({ id }) => (
-            <Input
+            <DatePicker
               id={id}
-              type="date"
               className="h-11 w-full"
               value={header.effectiveFrom}
               disabled={!canEdit}
-              onChange={(e) => onChange({ effectiveFrom: e.target.value })}
+              onChange={(v) => onChange({ effectiveFrom: v })}
             />
           )}
         </Field>
         <Field label={t("recipes.detail.overview.effectiveTo")}>
           {({ id }) => (
-            <Input
+            <DatePicker
               id={id}
-              type="date"
               className="h-11 w-full"
               value={header.effectiveTo}
               disabled={!canEdit}
-              onChange={(e) => onChange({ effectiveTo: e.target.value })}
+              onChange={(v) => onChange({ effectiveTo: v })}
             />
           )}
         </Field>

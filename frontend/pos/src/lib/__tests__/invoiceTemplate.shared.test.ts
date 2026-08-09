@@ -77,6 +77,10 @@ describe("buildSaleReceiptHtml — identity reaches paper", () => {
 
   it("prints every owner-configured seller field", () => {
     const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('class="legal"');
+    expect(html).toContain(IDENTITY.legalName);
+    expect(html).toContain('class="brand"');
+    expect(html).toContain(IDENTITY.brandName);
     expect(html).toContain("310122393500003"); // taxNumber
     expect(html).toContain("1010999999"); // crNumber
     expect(html).toContain("RRRD2929 حي العليا، الرياض"); // nationalAddress
@@ -588,7 +592,7 @@ describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
     expect(html).toContain("Thank you for visiting us");
   });
 
-  it("language: 'both' renders BOTH the Arabic and English documents stacked in one page", () => {
+  it("language: 'both' renders one financial body with paired Arabic/English labels", () => {
     const html = buildSaleReceiptHtml(saleOpts({ identity: IDENTITY_BOTH }));
     expect(html).toContain('<html lang="ar" dir="rtl">');
     // Arabic block
@@ -597,7 +601,10 @@ describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
     // English block
     expect(html).toContain("Subtotal");
     expect(html).toContain("Grand Total");
-    expect(html).toContain('<div dir="ltr" lang="en">');
+    expect(html).toContain('class="bi-en" lang="en" dir="ltr"');
+    expect(html).not.toContain('<div dir="ltr" lang="en">');
+    expect(html.match(/INV-20260715-0001/g)).toHaveLength(1);
+    expect(html.match(/iVBORw0KGgoTEST/g)).toHaveLength(1);
   });
 });
 
@@ -645,13 +652,46 @@ describe("buildCreditNoteHtml — bilingual (identity.language)", () => {
     expect(html).toContain("sold");
   });
 
-  it("language: 'both' renders BOTH the Arabic and English credit notes stacked in one page", () => {
+  it("language: 'both' renders one bilingual credit-note body", () => {
     const html = buildCreditNoteHtml(cnOptsBase({ identity: IDENTITY_BOTH }));
     expect(html).toContain('<html lang="ar" dir="rtl">');
     expect(html).toContain('data-doc="credit-note"');
     expect(html).toContain("مرتجع");
     expect(html).toContain("RETURN · CREDIT NOTE");
-    expect(html).toContain('<div dir="ltr" lang="en">');
+    expect(html).toContain('class="bi-en" lang="en" dir="ltr"');
+    expect(html).not.toContain('<div dir="ltr" lang="en">');
+    expect(html.match(/CN-20260715-0007/g)).toHaveLength(1);
+  });
+});
+
+describe("professional print hierarchy", () => {
+  it("keeps the A4 settlement, QR and closing blocks indivisible", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4" }));
+    expect(html).toContain('class="settlement"');
+    expect(html).toContain('class="qr-zone"');
+    expect(html).toContain('class="closing"');
+    expect(html).toContain(".settlement { break-inside: avoid; page-break-inside: avoid; }");
+    expect(html).toContain("@page { size: A4; margin: 10mm; }");
+  });
+
+  it("uses the local Cairo face with an offline-safe fallback stack", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    expect(html).toContain('src: local("Cairo")');
+    expect(html).toContain('font-family: "Cairo Receipt", "Cairo", "Tajawal"');
+  });
+
+  it("uses the English branch master-data name on English and bilingual documents", () => {
+    const en = buildSaleReceiptHtml(saleOpts({
+      identity: { ...IDENTITY_EN, branchName: "فرع العليا", branchNameEn: "Olaya Branch" },
+    }));
+    expect(en).toContain('<div class="branch">Olaya Branch</div>');
+    expect(en).not.toContain('<div class="branch">فرع العليا</div>');
+
+    const both = buildSaleReceiptHtml(saleOpts({
+      identity: { ...IDENTITY_BOTH, branchName: "فرع العليا", branchNameEn: "Olaya Branch" },
+    }));
+    expect(both).toContain("فرع العليا");
+    expect(both).toContain("Olaya Branch");
   });
 });
 

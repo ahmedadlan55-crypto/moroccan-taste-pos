@@ -4,6 +4,7 @@ import {
   Button,
   Dialog,
   Input,
+  DatePicker,
   Select,
   StatusBadge,
   PageHeader,
@@ -153,7 +154,7 @@ function CreateClosingDialog({ onClose }: { onClose: () => void }) {
           </Select>
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={t("banking.shared.date")}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label={t("banking.shared.date")}><DatePicker value={date} onChange={setDate} /></Field>
           <Field label={t("banking.cashClosing.countedAmount")} required><Input value={counted} dir="ltr" onChange={(e) => setCounted(e.target.value)} /></Field>
         </div>
         {cashboxId && (

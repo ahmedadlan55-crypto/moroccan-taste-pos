@@ -30,6 +30,10 @@ describe("auth-get-current-user — decodeUser reads the shared pos_token", () =
     expect(u).toEqual({ username: "kashier1", role: "cashier", name: "kashier1" });
   });
 
+  it("carries the stable account id used by POS order ownership", () => {
+    expect(decodeUser(makeToken({ id: 41, username: "cashier.renamed", role: "cashier" }))?.id).toBe("41");
+  });
+
   it("decodes ARABIC usernames (UTF-8 payload)", () => {
     const u = decodeUser(makeToken({ username: "أحمد", role: "manager" }));
     expect(u?.username).toBe("أحمد");

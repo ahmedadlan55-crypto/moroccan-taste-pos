@@ -673,7 +673,23 @@ export interface InvoiceDetail {
   // lineId = the real ar_document_lines.id for this line (null for a
   // pre-O2C-projection sale, or when O2C is disabled) — ReturnRequestDialog
   // requires it as originalLineId; the array position is rejected server-side.
-  items: Array<{ name: string; qty: number; price: number; total: number; lineId: string | null }>;
+  items: Array<{
+    name: string;
+    qty: number;
+    price: number;
+    total: number;
+    lineId: string | null;
+    lineDiscount?: number;
+    vatCategory?: string;
+    taxInclusive?: boolean;
+    notes?: string;
+    enteredUnitId?: string;
+    enteredUnitCode?: string;
+    enteredUnitName?: string;
+    enteredQty?: number;
+    conversionFactorSnapshot?: number;
+    baseQty?: number;
+  }>;
   // ar_documents.version for this sale's O2C projection — required as
   // expectedVersion on a return create (null under the same conditions as lineId).
   version: number | null;
@@ -691,11 +707,18 @@ export interface InvoiceDetail {
    *  existing InvoiceDetail literal (tests, fixtures) compiling. */
   cashierEmpNo?: string;
   branchName: string;
+  branchNameEn?: string;
   branchAddress: string;
   branchCompanyName: string;
   companyName: string;
+  legalName?: string;
   taxNumber: string;
   currency: string;
+  /** Frozen receipt settings on invoices carrying an identity snapshot. null on
+   * pre-snapshot invoices, where the UI may only use the current fallback. */
+  receiptLanguage?: "ar" | "en" | "both" | null;
+  vatRate?: number | null;
+  salesTaxName?: string;
   companyPhone: string;
   companyEmail: string;
   /** Brand logo when the sale has one, else the company logo — the server
@@ -716,6 +739,7 @@ export interface InvoiceDetail {
   customerPhone: string;
   paymentNotes: string | null;
   zatcaType: string | null;
+  taxSubtotals?: { net?: number; vat?: number; byCategory?: Record<string, { net: number; vat: number }> } | null;
   zatcaQr: { qrBase64: string; qrDataUrl: string | null; stored: boolean } | null;
   invoiceNumber: string | null;
   voidSerial: string | null;

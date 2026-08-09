@@ -38,6 +38,7 @@ export * from "./unit-qty-input";
 export * from "./select";
 export * from "./combobox";
 export * from "./searchable-entity-combobox";
+export * from "./calendar";
 export * from "./date-picker";
 export * from "./checkbox";
 export * from "./toggle";

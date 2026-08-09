@@ -97,6 +97,39 @@ check('under-payment rejected', throws(() => M.validatePayments([{ method: 'cash
 check('over-payment rejected (change via cashTendered, not a payment line)', throws(() => M.validatePayments([{ method: 'cash', amount: 110 }], 104.4), 'PAYMENT_MISMATCH'));
 check('unknown method rejected', throws(() => M.validatePayments([{ method: 'bitcoin', amount: 104.4 }], 104.4), 'VALIDATION_ERROR'));
 check('empty payments rejected', throws(() => M.validatePayments([], 10), 'VALIDATION_ERROR'));
+
+// Owner-configured on-account methods must pass the same server policy as the
+// built-in credit tile. Assert exact domain codes so an unrelated 4xx cannot
+// make the security cases below pass accidentally.
+const ownerMethods = [
+  { id: '41', name: 'House Account', nameAr: 'حساب عميل', groupType: 'credit' },
+  { id: '42', name: 'Gift Card', nameAr: 'بطاقة هدية', groupType: 'voucher' },
+];
+check('custom credit group detected by id/name/nameAr',
+  M.paymentsCarryCredit([{ method: '41', amount: 25 }], ownerMethods)
+  && M.paymentsCarryCredit([{ method: 'house account', amount: 25 }], ownerMethods)
+  && M.paymentsCarryCredit([{ method: 'حساب عميل', amount: 25 }], ownerMethods));
+check('mixed tender cannot hide a custom credit leg',
+  M.paymentsCarryCredit([{ method: 'cash', amount: 10 }, { method: '41', amount: 15 }], ownerMethods));
+check('zero-value/non-credit custom legs remain unrestricted',
+  !M.paymentsCarryCredit([{ method: '41', amount: 0 }, { method: 'cash', amount: 25 }], ownerMethods)
+  && !M.paymentsCarryCredit([{ method: '42', amount: 25 }], ownerMethods));
+check('cashier custom credit denied with exact PERMISSION_DENIED',
+  throws(() => M.assertCreditPaymentPolicy([{ method: '41', amount: 25 }], ownerMethods,
+    { canSellOnCredit: false, requireCustomer: true, customerId: 'C-1' }), 'PERMISSION_DENIED'));
+check('authorised custom credit without customer has exact VALIDATION_ERROR',
+  throws(() => M.assertCreditPaymentPolicy([{ method: 'حساب عميل', amount: 25 }], ownerMethods,
+    { canSellOnCredit: true, requireCustomer: true, customerId: null }), 'VALIDATION_ERROR'));
+check('authorised custom credit with customer passes',
+  M.assertCreditPaymentPolicy([{ method: 'House Account', amount: 25 }], ownerMethods,
+    { canSellOnCredit: true, requireCustomer: true, customerId: 'C-1' }) === true);
+check('built-in credit still uses the identical permission gate',
+  throws(() => M.assertCreditPaymentPolicy([{ method: 'credit', amount: 25 }], ownerMethods,
+    { canSellOnCredit: false, requireCustomer: true, customerId: 'C-1' }), 'PERMISSION_DENIED'));
+check('cash bypasses the credit policy entirely',
+  M.assertCreditPaymentPolicy([{ method: 'cash', amount: 25 }], ownerMethods,
+    { canSellOnCredit: false, requireCustomer: true, customerId: null }) === false);
+
 let lp = M.legacyPaymentFields([{ method: 'cash', amount: 104.4 }]);
 check('single cash → paymentMethod كاش, no split', lp.paymentMethod === 'كاش' && lp.splitDetails === null, lp);
 lp = M.legacyPaymentFields([{ method: 'cash', amount: 50 }, { method: 'card', amount: 54.4 }]);

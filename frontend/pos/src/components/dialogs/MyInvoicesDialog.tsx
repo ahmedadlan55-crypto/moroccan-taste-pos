@@ -158,7 +158,10 @@ export function reprintHtmlFromInvoice(
   stampLabels?: { voided: string; returned: string },
 ): string {
   const cat = catalog as { identity?: ReceiptIdentity | null; receiptShowFields?: null; vatRate?: number } | null;
-  const vatRate = Number(cat?.vatRate) || 15;
+  const historicalVatRate = Number(inv.vatRate);
+  const vatRate = inv.vatRate != null && Number.isFinite(historicalVatRate)
+    ? historicalVatRate
+    : (Number(cat?.vatRate) || 15);
   const now = Date.now();
 
   const doc: LocalOrder = {
@@ -178,11 +181,17 @@ export function reprintHtmlFromInvoice(
     lines: (inv.items ?? []).map((it) => ({
       menuId: "",
       name: it.name,
-      qty: Number(it.qty) || 0,
+      qty: Number(it.enteredQty ?? it.qty) || 0,
       unitPrice: Number(it.price) || 0,
-      lineDiscount: 0,
-      vatCategory: "S",
-      notes: null,
+      lineDiscount: Number(it.lineDiscount) || 0,
+      vatCategory: (it.vatCategory === "Z" || it.vatCategory === "E" || it.vatCategory === "O" ? it.vatCategory : "S"),
+      taxInclusive: it.taxInclusive,
+      notes: it.notes ?? null,
+      enteredUnitId: it.enteredUnitId ?? null,
+      enteredUnitCode: it.enteredUnitCode ?? null,
+      enteredUnitName: it.enteredUnitName ?? null,
+      conversionFactorSnapshot: it.conversionFactorSnapshot,
+      baseQty: it.baseQty,
     })),
     serverVersion: null,
     invoiceNumber: inv.invoiceNumber,
@@ -205,7 +214,7 @@ export function reprintHtmlFromInvoice(
     ? {
         language: reprintLanguage,
         sellerName: inv.companyName,
-        legalName: "",
+        legalName: inv.legalName || "",
         taxNumber: inv.taxNumber || "",
         crNumber: inv.crNumber || "",
         address: inv.branchAddress || "",
@@ -218,11 +227,13 @@ export function reprintHtmlFromInvoice(
         logo: inv.receiptLogo || "",
         currency: inv.currency || "SAR",
         vatRate,
+        salesTaxName: inv.salesTaxName || "",
         header: inv.receiptHeader || "",
         footer: inv.receiptFooter || "",
         thankYou: inv.receiptThankYou || "",
         returnPolicy: inv.receiptReturnPolicy || "",
         branchName: inv.branchName || "",
+        branchNameEn: inv.branchNameEn || "",
         branchCompanyName: inv.branchCompanyName || "",
         brandName: inv.brandName || "",
       }

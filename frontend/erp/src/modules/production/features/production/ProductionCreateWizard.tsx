@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowRight, Check, Factory, Search, TriangleAlert } from "lucide-react";
 import { PageHeader } from "@/shared/ui";
 import { Button } from "@/shared/ui";
-import { StatusBadge } from "@/shared/ui";
+import { DatePicker, StatusBadge } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
@@ -169,7 +169,7 @@ export function ProductionCreateWizard({ editId }: { editId?: string }) {
             </label>
             <label className="block text-xs font-bold text-slate-500">
               {t("production.wizard.plannedDateLabel")}
-              <input type="date" className="field mt-1 w-full" value={plannedDate} onChange={(e) => setPlannedDate(e.target.value)} aria-label={t("production.wizard.plannedDateAria")} />
+              <DatePicker className="mt-1 block" value={plannedDate} onChange={setPlannedDate} aria-label={t("production.wizard.plannedDateAria")} />
             </label>
             <label className="block text-xs font-bold text-slate-500">
               {t("production.wizard.sourceWarehouseLabel")}

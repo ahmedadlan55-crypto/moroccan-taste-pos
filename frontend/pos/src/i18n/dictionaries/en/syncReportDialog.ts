@@ -49,6 +49,7 @@ export const syncReportDialog = {
   /** The withheld-ops explanation. Deliberately says what will release them
    *  instead of offering a button — no action available to this cashier can. */
   orphans: {
+    unknownOwner: "legacy operation with unverified ownership",
     // Templates, not arrow functions. t() calls a FUNCTION leaf with a plain
     // NUMBER (I18nProvider makeT → leaf(resolvePluralArg(vars))), so a leaf
     // declared `(p: { count, who })` receives 5, not the object — and renders

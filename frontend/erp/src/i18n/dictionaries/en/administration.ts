@@ -493,9 +493,9 @@ export const administration = {
       autoPrintOff: "Disabled",
       language: "Invoice language",
       languageHint:
-        "The current print template prints in Arabic only — the English/bilingual option is shown for documentation and will be enabled once the invoice template supports it.",
-      langEnTitle: "The invoice template does not support English yet",
-      langBothTitle: "The invoice template does not support bilingual printing yet",
+        "Choose Arabic, English, or one compact bilingual invoice. The live preview uses the same template as the cashier.",
+      langEnTitle: "Print the complete invoice in English",
+      langBothTitle: "Print one compact invoice with paired Arabic and English labels",
     },
     paper: {
       "58": "58mm (narrow thermal)",
@@ -504,8 +504,8 @@ export const administration = {
     },
     lang: {
       ar: "Arabic",
-      en: "English (not supported yet)",
-      both: "Bilingual (not supported yet)",
+      en: "English",
+      both: "Bilingual (Arabic / English)",
     },
     derivedPanel: {
       title: "Derived fields",

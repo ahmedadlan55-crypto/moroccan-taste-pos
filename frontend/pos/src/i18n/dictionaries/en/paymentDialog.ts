@@ -5,6 +5,15 @@ export const paymentDialog = {
   currency: "SAR",
 
   totalDue: "Total due",
+  orderSummary: "Order summary",
+  itemsInOrder: "{count} items",
+  walkInCustomer: "Walk-in customer",
+  selectedCustomer: "Customer: {name}",
+  paymentDetails: "Payment details",
+  keypadSection: "Touch keypad",
+  successSummary: "Payment summary",
+  paidTotal: "Invoice total",
+  receivedTotal: "Received",
   noShiftOpen: "Payment requires an open shift — open a shift first from the top bar",
   openShiftButton: "Open a shift now",
 

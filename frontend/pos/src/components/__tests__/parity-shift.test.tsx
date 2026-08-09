@@ -255,7 +255,7 @@ describe("إغلاق الوردية — التدفّق الكامل (close-start
 
     // shift-report-modal-fallback: the close report renders inline — ALWAYS,
     // not only when thermal printing throws like the legacy fallback
-    const report = screen.getByText("أُغلقت الوردية").closest("div") as HTMLElement;
+    const report = screen.getByTestId("shift-z-summary");
     expect(within(report).getByText("كاش")).toBeInTheDocument();
     expect(within(report).getByText("90.00")).toBeInTheDocument();
     expect(onShiftClosed).toHaveBeenCalled();

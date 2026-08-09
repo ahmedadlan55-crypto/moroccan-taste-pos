@@ -23,6 +23,8 @@ vi.mock("@/lib/legacyDrain", () => ({
 import { Header } from "../Header";
 import { CartPanel, type CartPanelProps } from "../CartPanel";
 import { productColumnsForWidth } from "../ProductGrid";
+import { PaymentDialog } from "../dialogs/PaymentDialog";
+import { ShiftDialog } from "../dialogs/ShiftDialog";
 // Header and CartPanel resolve strings via useT(), which throws without an
 // ancestor I18nProvider (see i18n/I18nProvider.tsx).
 import { I18nProvider } from "@/i18n/I18nProvider";
@@ -159,5 +161,56 @@ describe("cart line responsive structure", () => {
     const detailsButton = screen.getByRole("button", { name: `تفاصيل ${longName}` });
     expect(detailsButton).toHaveClass("min-w-0");
     expect(screen.getByRole("button", { name: `حذف ${longName}` })).toHaveClass("shrink-0");
+  });
+});
+
+describe("cashier operation workspaces", () => {
+  it("lays payment out as one clear mobile flow and a two-column desktop workspace", () => {
+    currentCtx = makeCtx({
+      cart: makeOrder({
+        orderType: "delivery",
+        customerName: "عميل اختبار",
+        lines: [makeLine({ qty: 2 })],
+      }),
+    });
+    render(
+      <I18nProvider>
+        <PaymentDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    const workspace = screen.getByTestId("payment-workspace");
+    expect(workspace).toHaveClass("grid");
+    expect(workspace.className).toContain("lg:grid-cols-[minmax(0,1fr)_21rem]");
+    expect(screen.getByText("2 صنف")).toBeVisible();
+    expect(screen.getByText("توصيل")).toBeVisible();
+    expect(screen.getByText("العميل: عميل اختبار")).toBeVisible();
+
+    const tabs = screen.getByRole("tablist", { name: "طريقة الدفع" });
+    expect(tabs).toHaveClass("overflow-x-auto");
+    expect(screen.getAllByRole("tab")[0]).toHaveClass("min-w-[6.75rem]");
+
+    fireEvent.click(screen.getByRole("tab", { name: "مختلط" }));
+    const splitGrid = screen.getByLabelText("كاش").parentElement?.parentElement;
+    expect(splitGrid).toHaveClass("grid-cols-1");
+    expect(splitGrid).toHaveClass("sm:grid-cols-3");
+
+    fireEvent.click(screen.getByRole("tab", { name: "شبكة" }));
+    expect(screen.getByTestId("numpad-decimal")).toBeDisabled();
+  });
+
+  it("turns opening a shift into a full responsive workspace instead of a narrow centered form", () => {
+    currentCtx = makeCtx({ cart: makeOrder({ shiftId: null }), shiftId: null });
+    render(
+      <I18nProvider>
+        <ShiftDialog open onClose={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    const workspace = screen.getByTestId("shift-open-workspace");
+    expect(workspace).toHaveClass("grid");
+    expect(workspace.className).toContain("lg:grid-cols-[minmax(0,1fr)_22rem]");
+    expect(screen.getByRole("button", { name: "فتح وردية" })).toHaveClass("min-h-14");
+    expect(screen.getByTestId("numpad")).toBeInTheDocument();
   });
 });

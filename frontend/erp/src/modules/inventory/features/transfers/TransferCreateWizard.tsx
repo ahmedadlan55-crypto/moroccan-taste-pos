@@ -14,7 +14,7 @@ import { useTransferDetail } from "@/modules/inventory/lib/hooks/useTransferDeta
 import { createTransferDraftInput, updateTransferDraftInput } from "@/modules/inventory/lib/schemas/transfer.schema";
 import { formatQty } from "@/shared/lib";
 import { useT } from "@/i18n";
-import { SearchableEntityCombobox } from "@/shared/ui";
+import { DatePicker, SearchableEntityCombobox } from "@/shared/ui";
 import { UnitQtyInput, baseFromValue, type ItemUnitLite, type UnitQtyValue } from "@/shared/ui";
 import { makeItemFetcher, type ItemHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
 
@@ -156,7 +156,7 @@ export function TransferCreateWizard() {
             </label>
             <label className="block">
               <span className="text-xs font-bold text-slate-600">{t("inventoryRest.transfers.wizard.transferDate")}</span>
-              <input type="date" className="field mt-1 w-full" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} />
+              <DatePicker className="mt-1 block" value={issueDate} onChange={setIssueDate} />
             </label>
             <label className="block">
               <span className="text-xs font-bold text-slate-600">{t("inventoryRest.transfers.wizard.notes")}</span>

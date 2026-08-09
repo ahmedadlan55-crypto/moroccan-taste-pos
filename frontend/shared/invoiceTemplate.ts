@@ -108,6 +108,8 @@ export function escFree(s: string): string {
 // is bilingual.
 export type DocumentLanguage = "ar" | "en" | "both";
 
+type RenderLanguage = DocumentLanguage;
+
 /** Defensive coercion: an old server / an unrecognized ReceiptLanguage setting
  *  value prints today's Arabic-only behavior instead of throwing. */
 function normalizeLanguage(raw: unknown): DocumentLanguage {
@@ -275,6 +277,37 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
   },
 };
 
+/** One compact bilingual label. Unlike the historical `both` mode, this keeps
+ * one set of document values (lines, totals, payments and QR) and pairs only
+ * the static chrome. That makes the receipt genuinely bilingual without
+ * printing the financial document twice. */
+function bilingualLabel(ar: string, en: string): string {
+  return `<span class="bi-ar" lang="ar" dir="rtl">${ar}</span><span class="bi-sep" aria-hidden="true"> / </span><span class="bi-en" lang="en" dir="ltr">${en}</span>`;
+}
+
+function labelsFor(lang: RenderLanguage): DocLabels {
+  if (lang !== "both") return LABELS[lang];
+
+  const ar = LABELS.ar;
+  const en = LABELS.en;
+  const merged: Record<string, unknown> = {};
+  for (const key of Object.keys(ar) as Array<keyof DocLabels>) {
+    if (key === "pay" || key === "orderType") continue;
+    merged[key] = bilingualLabel(ar[key] as string, en[key] as string);
+  }
+  merged.pay = {
+    cash: bilingualLabel(ar.pay.cash, en.pay.cash),
+    card: bilingualLabel(ar.pay.card, en.pay.card),
+    credit: bilingualLabel(ar.pay.credit, en.pay.credit),
+  };
+  merged.orderType = {
+    dine_in: bilingualLabel(ar.orderType.dine_in, en.orderType.dine_in),
+    delivery: bilingualLabel(ar.orderType.delivery, en.orderType.delivery),
+    takeaway: bilingualLabel(ar.orderType.takeaway, en.orderType.takeaway),
+  };
+  return merged as unknown as DocLabels;
+}
+
 // ── Paper width (owner setting: ReceiptPaperWidth '58'|'80'|'A4') ────────────
 // 58mm thermal paper prints ~48mm wide; 80mm paper prints ~72mm (the historical
 // hardcode); A4 gets a full-width layout.
@@ -307,14 +340,14 @@ export function baseCss(paper: PaperWidth): string {
   return `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   /* NO writing direction is declared here, deliberately. This rule used to pin
-     the body to RTL, which overrode the <html dir="ltr"> every builder emits for
-     an English document — so a shop set to English printed English text in a
-     right-to-left frame: "Invoice:" came out ":Invoice", "Table 12" came out
-     "12 Table", and the money column sat on the wrong edge. The direction is the
-     DOCUMENT's: declared once on <html> by whichever builder ran, inherited from
-     there, and overridden only by the <div dir="ltr"> wrapper of the English
-     half of a bilingual receipt. */
-  body { font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+     the body to RTL, which overrode the <html dir="ltr"> emitted for an English
+     document. The document owns its base direction; bilingual static labels
+     carry isolated directions without duplicating the financial body. */
+  /* Prefer the locally installed Cairo face used by both React apps. The
+     fallback stack remains entirely local/offline-safe for print windows. */
+  @font-face { font-family: "Cairo Receipt"; src: local("Cairo");
+               font-style: normal; font-weight: 200 1000; font-display: swap; }
+  body { font-family: "Cairo Receipt", "Cairo", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
          width: ${p.width}; margin: 0 auto; padding: ${p.pad};
          color: var(--mt-text, CanvasText); background: var(--mt-surface, Canvas); font-size: ${p.font};
          line-height: 1.42; -webkit-text-size-adjust: 100%; }
@@ -329,14 +362,17 @@ export function baseCss(paper: PaperWidth): string {
      column: there, plaintext also flips text-align:start per row, so an Arabic
      dish inside an English receipt would hug the right while the "Item" header
      hugs the left. A ragged column is worse than a neutral that leans. */
-  h1, .branch, .welcome, .sub, .foot, .policy { unicode-bidi: plaintext; }
+  h1, .brand, .legal, .branch, .welcome, .sub, .foot, .policy { unicode-bidi: plaintext; }
   /* Each meta value is its own bidi island, so a name and a phone number keep
      their order regardless of which script either one is in. */
   .bidi { unicode-bidi: isolate; }
   h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 1px; line-height: 1.18;
        font-weight: 800; letter-spacing: ${p.track}; }
   .sub { text-align: center; font-size: 0.92em; color: var(--mt-text-muted, GrayText); }
+  .brand { text-align: center; font-size: 0.95em; font-weight: 750; }
+  .legal { text-align: center; font-size: 0.88em; color: var(--mt-text-muted, GrayText); }
   .branch { text-align: center; font-size: 0.95em; font-weight: 700; }
+  .identity { break-inside: avoid; page-break-inside: avoid; }
   hr { border: none; border-top: 1px dashed currentColor; margin: 6px 0; }
   /* The ONE section boundary. Everything else is whitespace. */
   hr.rule { border-top: 1px solid currentColor; margin: 7px 0 5px; }
@@ -360,6 +396,9 @@ export function baseCss(paper: PaperWidth): string {
   .meta .k { width: 1%; white-space: nowrap; padding-inline-end: 10px;
              color: var(--mt-text-muted, GrayText); }
   .meta .v { text-align: end; font-weight: 700; }
+  .bi-ar, .bi-en { unicode-bidi: isolate; }
+  .bi-en { font-size: 0.9em; font-weight: 600; }
+  .bi-sep { padding-inline: 0.18em; color: var(--mt-text-muted, GrayText); }
 
   /* ── served by — the cashier credit, its own band, never a metadata crumb ─*/
   .served { text-align: center; margin: 6px 0 2px; padding: 4px 0;
@@ -412,11 +451,14 @@ export function baseCss(paper: PaperWidth): string {
              padding: 3px 0; border-top: 1px dotted currentColor;
              border-bottom: 1px dotted currentColor; }
   .change td { font-weight: 800; }
+  .settlement { break-inside: avoid; page-break-inside: avoid; }
 
   /* ── closing ──────────────────────────────────────────────────────────────*/
+  .closing { break-inside: avoid; page-break-inside: avoid; }
   .foot { text-align: center; margin-top: 9px; font-weight: 700; font-size: 1.05em; }
   .policy { text-align: center; font-size: 0.9em; color: var(--mt-text-muted, GrayText);
             margin-top: 3px; line-height: 1.35; }
+  .qr-zone { break-inside: avoid; page-break-inside: avoid; }
   .qr { text-align: center; margin-top: 9px; }
   .qr img { image-rendering: pixelated; }
   .qr-cap { text-align: center; font-size: 0.82em; margin-top: 2px;
@@ -426,13 +468,32 @@ export function baseCss(paper: PaperWidth): string {
   .kitchen { font-size: ${p.kitchen}; }
   .kitchen td { font-weight: 700; padding: 4px 0; }
   .kitchen .note { font-size: 0.8em; font-weight: 400; color: var(--mt-text, currentColor); }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
   /* On paper there is no "muted": a thermal head is 1-bit, so grey renders as a
      dither pattern and small dithered type turns to mush. The greys exist for
      the ERP's on-screen live preview only — printing takes full ink and lets
      size and weight carry the hierarchy instead. */
   @media print { .sub, .policy, .qr-cap, .line-note, .line-calc, .sec,
     .meta .k, .served .k { color: CanvasText; } }
-  ${paper === "A4" ? "" : "@media print { body { width: auto; } }"}
+  ${
+    paper === "A4"
+      ? `
+  @page { size: A4; margin: 10mm; }
+  .identity { padding-bottom: 7mm; border-bottom: 1px solid currentColor; margin-bottom: 5mm; }
+  .logo img { max-width: 38%; }
+  .doctype { margin: 5mm 0 4mm; padding: 2.5mm 0; font-size: 1.05em; }
+  .meta { margin-bottom: 3mm; }
+  .meta td { padding: 1.4mm 0; }
+  .items th { padding: 2.4mm 1.5mm; }
+  .items td { padding: 2.4mm 1.5mm; border-bottom: 1px solid color-mix(in srgb, currentColor 22%, transparent); }
+  .settlement { width: 54%; margin-inline-start: auto; margin-top: 5mm; }
+  .settlement .tot td { padding: 1.2mm 0; }
+  .qr-zone { margin-top: 6mm; }
+  .closing { margin-top: 5mm; }
+  `
+      : "@media print { body { width: auto; } }"
+  }
 `;
 }
 
@@ -465,6 +526,8 @@ export interface DocumentIdentity {
   thankYou: string;
   returnPolicy: string;
   branchName: string;
+  /** Optional English branch name from branches.name_en. */
+  branchNameEn?: string;
   branchCompanyName: string;
   brandName: string;
 }
@@ -534,8 +597,8 @@ export type ReceiptOrderType = "dine_in" | "takeaway" | "delivery";
 
 // ── Shared identity/QR helpers ───────────────────────────────────────────────
 
-function orderTypeLabel(orderType: ReceiptOrderType | null | undefined, lang: "ar" | "en"): string {
-  const t = LABELS[lang].orderType;
+function orderTypeLabel(orderType: ReceiptOrderType | null | undefined, lang: RenderLanguage): string {
+  const t = labelsFor(lang).orderType;
   return orderType === "dine_in" ? t.dine_in : orderType === "delivery" ? t.delivery : orderType === "takeaway" ? t.takeaway : "";
 }
 
@@ -543,9 +606,9 @@ function orderTypeLabel(orderType: ReceiptOrderType | null | undefined, lang: "a
  *  change; SAR (and an unset value — the historical default) keeps the localized
  *  "ر.س"/"SAR" glyph, any other currency prints its own code rather than lying
  *  about riyals. */
-function currencyLabel(idn: DocumentIdentity | null, lang: "ar" | "en"): string {
+function currencyLabel(idn: DocumentIdentity | null, lang: RenderLanguage): string {
   const code = String(idn?.currency ?? "").trim().toUpperCase();
-  return !code || code === "SAR" ? LABELS[lang].currency : esc(code);
+  return !code || code === "SAR" ? labelsFor(lang).currency : esc(code);
 }
 
 /** The owner's logo, when they configured one AND left the toggle on. Only an
@@ -575,13 +638,17 @@ function sellerBlock(
   idn: DocumentIdentity | null,
   show: DocumentShowFields | null,
   fallbackSellerName: string,
-  lang: "ar" | "en",
+  lang: RenderLanguage,
 ): { sellerName: string; lines: string[] } {
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
-  const t = LABELS[lang];
+  const t = labelsFor(lang);
   const sellerName = idn?.sellerName || idn?.brandName || fallbackSellerName;
   const lines: string[] = [];
   if (idn) {
+    const brandName = String(idn.brandName || "").trim();
+    const legalName = String(idn.branchCompanyName || idn.legalName || "").trim();
+    if (brandName && brandName !== sellerName) lines.push(`<div class="brand">${escFree(brandName)}</div>`);
+    if (legalName && legalName !== sellerName && legalName !== brandName) lines.push(`<div class="legal">${escFree(legalName)}</div>`);
     if (on("taxNumber") && idn.taxNumber) lines.push(`<div class="sub">${t.taxNumber} <span class="num">${esc(idn.taxNumber)}</span></div>`);
     if (on("crNumber") && idn.crNumber) lines.push(`<div class="sub">${t.crNumber} <span class="num">${esc(idn.crNumber)}</span></div>`);
     // nationalAddress (the ZATCA short address) is the authoritative one; the
@@ -602,6 +669,20 @@ function sellerBlock(
   return { sellerName, lines };
 }
 
+/** Branch is structured master data, so unlike other owner-entered free text it
+ * can carry a real English value. Use it for an English document and pair it in
+ * bilingual mode instead of printing the Arabic branch name under English UI. */
+function branchNameBlock(idn: DocumentIdentity | null, lang: RenderLanguage): string {
+  if (!idn) return "";
+  const ar = String(idn.branchName || "").trim();
+  const en = String(idn.branchNameEn || "").trim();
+  if (lang === "en") return en || ar ? `<div class="branch">${escFree(en || ar)}</div>` : "";
+  if (lang === "both" && ar && en && ar !== en) {
+    return `<div class="branch"><span lang="ar" dir="rtl">${escFree(ar)}</span><span class="bi-sep" aria-hidden="true"> / </span><span class="bi-en" lang="en" dir="ltr">${escFree(en)}</span></div>`;
+  }
+  return ar || en ? `<div class="branch">${escFree(ar || en)}</div>` : "";
+}
+
 /** The رسالة ترحيبية. Source of truth is settings.ReceiptHeader (resolved onto
  *  `identity.header`, snapshotted per invoice, catalog-shipped so it survives
  *  offline) — there is deliberately no second settings key for a greeting.
@@ -610,9 +691,10 @@ function sellerBlock(
  *  nothing. The two builders pass it only for a customer-facing till receipt on
  *  thermal paper: greeting an A4 B2B tax invoice or a credit note would be
  *  tone-deaf, so those print the owner's own words or nothing. */
-function welcomeBlock(idn: DocumentIdentity | null, lang: "ar" | "en", allowDefault: boolean): string {
-  const text = idn?.header || (allowDefault ? LABELS[lang].defaultWelcome : "");
-  return text ? `<div class="welcome">${escFree(text)}</div>` : "";
+function welcomeBlock(idn: DocumentIdentity | null, lang: RenderLanguage, allowDefault: boolean): string {
+  if (idn?.header) return `<div class="welcome">${escFree(idn.header)}</div>`;
+  const fallback = allowDefault ? labelsFor(lang).defaultWelcome : "";
+  return fallback ? `<div class="welcome">${fallback}</div>` : "";
 }
 
 /** The ZATCA QR block: the server-stamped PNG, an honest "arrives after sync"
@@ -621,23 +703,25 @@ function welcomeBlock(idn: DocumentIdentity | null, lang: "ar" | "en", allowDefa
  *
  *  120×120 css px is ~32mm on a 203dpi thermal head — comfortably scannable and
  *  still only two thirds of the 48mm printable width, so it must not shrink. */
-function qrBlock(zatcaQrDataUrl: string | null | undefined, offlineRef: boolean, showQr: boolean, lang: "ar" | "en"): string {
+function qrBlock(zatcaQrDataUrl: string | null | undefined, offlineRef: boolean, showQr: boolean, lang: RenderLanguage): string {
   if (!showQr) return "";
+  const t = labelsFor(lang);
   if (zatcaQrDataUrl) {
-    return `<div class="qr"><img src="${zatcaQrDataUrl}" alt="ZATCA QR" width="120" height="120"></div>
-  <div class="qr-cap">${LABELS[lang].qrCaption}</div>`;
+    return `<section class="qr-zone"><div class="qr"><img src="${zatcaQrDataUrl}" alt="ZATCA QR" width="120" height="120"></div>
+  <div class="qr-cap">${t.qrCaption}</div></section>`;
   }
-  if (offlineRef) return `<div class="sub">${LABELS[lang].qrPending}</div>`;
+  if (offlineRef) return `<section class="qr-zone"><div class="sub">${t.qrPending}</div></section>`;
   return "";
 }
 
 /** `defaultThankYou`, when passed, must already be the caller's language-correct
  *  fallback (the two builders below pass a per-language value from LABELS). */
-function footerBlock(idn: DocumentIdentity | null, lang: "ar" | "en", defaultThankYou?: string): string {
-  const thankYou = idn?.thankYou || defaultThankYou || LABELS[lang].defaultThankYou;
-  return `<div class="foot">${escFree(thankYou)}</div>
+function footerBlock(idn: DocumentIdentity | null, lang: RenderLanguage, defaultThankYou?: string): string {
+  const ownerThankYou = idn?.thankYou || "";
+  const thankYou = ownerThankYou ? escFree(ownerThankYou) : defaultThankYou || labelsFor(lang).defaultThankYou;
+  return `<footer class="closing"><div class="foot">${thankYou}</div>
   ${idn?.returnPolicy ? `<div class="policy">${escFree(idn.returnPolicy)}</div>` : ""}
-  ${idn?.footer ? `<div class="policy">${escFree(idn.footer)}</div>` : ""}`;
+  ${idn?.footer ? `<div class="policy">${escFree(idn.footer)}</div>` : ""}</footer>`;
 }
 
 /** One row of the transaction-meta grid. */
@@ -698,21 +782,20 @@ export interface SaleReceiptOptions {
  *  buyer. An offline queued sale is neither yet — it has no invoice number and
  *  no ZATCA stamp — so it is labelled a provisional receipt rather than claiming
  *  a tax-invoice title it has not earned. */
-function docTypeLabel(opts: SaleReceiptOptions, lang: "ar" | "en", thermal: boolean): string {
-  if (opts.docTitle != null) return opts.docTitle;
-  const t = LABELS[lang];
+function docTypeLabel(opts: SaleReceiptOptions, lang: RenderLanguage, thermal: boolean): string {
+  if (opts.docTitle != null) return esc(opts.docTitle);
+  const t = labelsFor(lang);
   if (opts.offlineRef) return t.provisionalReceipt;
   return thermal ? t.simplifiedTaxInvoice : t.taxInvoice;
 }
 
-/** Everything between `<body>` and `</body>` for one language — factored out so
- *  language==='both' can render the SAME content twice (ar, then en) inside one
- *  document shell without duplicating the whole builder. */
-function saleReceiptBody(opts: SaleReceiptOptions, lang: "ar" | "en", paper: PaperWidth): string {
+/** Everything between `<body>` and `</body>` for one language or for compact
+ *  paired-label bilingual mode. */
+function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: PaperWidth): string {
   const totals = opts.totals;
   const show = opts.showFields ?? null;
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
-  const t = LABELS[lang];
+  const t = labelsFor(lang);
   const idn = opts.identity ?? null;
   const thermal = paper !== "A4";
   // 48mm cannot carry four columns AND a readable dish name: the three numeric
@@ -799,11 +882,12 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: "ar" | "en", paper: Pap
   const taxName = idn?.salesTaxName ? esc(idn.salesTaxName) : t.vat;
   const docType = docTypeLabel(opts, lang, thermal);
 
-  return `${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
-  ${idn?.branchName ? `<div class="branch">${escFree(idn.branchName)}</div>` : ""}
-  ${welcomeBlock(idn, lang, thermal)}
+  return `<header class="identity">${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
+  ${branchNameBlock(idn, lang)}
   ${sellerLines.join("\n  ")}
-  ${docType ? `<div class="doctype">${esc(docType)}</div>` : ""}
+  ${welcomeBlock(idn, lang, thermal)}
+  </header>
+  ${docType ? `<div class="doctype">${docType}</div>` : ""}
   ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
   <table class="meta">
     ${metaRows}
@@ -816,6 +900,7 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: "ar" | "en", paper: Pap
     <tbody>${linesHtml}</tbody>
   </table>
   <hr class="rule">
+  <section class="settlement">
   <table class="tot">
     <tr><td>${t.itemsCount}</td>${money(String(opts.lines.length))}</tr>
     <tr><td>${t.subtotal}</td>${money(fmt2(totals.subtotal))}</tr>
@@ -832,6 +917,7 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: "ar" | "en", paper: Pap
     ${opts.cashTendered ? `<tr><td>${t.received}</td>${money(fmt2(opts.cashTendered))}</tr>` : ""}
     ${opts.changeDue ? `<tr class="change"><td>${t.change}</td>${money(fmt2(opts.changeDue))}</tr>` : ""}
   </table>
+  </section>
   ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"), lang)}
   ${footerBlock(idn, lang)}`;
 }
@@ -841,20 +927,11 @@ export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
   const language = normalizeLanguage(opts.identity?.language);
 
   if (language === "both") {
-    // Stacked (not side-by-side): the least invasive way to fit a full second
-    // language block into the existing thermal/A4 layout without redesigning
-    // every table into two columns. Arabic block first (today's primary
-    // audience), English block second, separated by a heavier divider.
-    const arBody = saleReceiptBody(opts, "ar", paper);
-    const enBody = saleReceiptBody(opts, "en", paper);
+    const body = saleReceiptBody(opts, "both", paper);
     return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
   <title>${LABELS.ar.receiptTitle} / ${LABELS.en.receiptTitle}</title><style>${baseCss(paper)}</style></head>
   <body data-paper="${paper}" data-lang="both">
-  ${arBody}
-  <hr style="border-top: 3px double currentColor; margin: 10px 0;">
-  <div dir="ltr" lang="en">
-  ${enBody}
-  </div>
+  ${body}
   </body></html>`;
   }
 
@@ -898,18 +975,18 @@ export interface CreditNoteOptions {
   customerPhone?: string | null;
 }
 
-/** Everything between `<body>` and `</body>` for one language — factored out for
- *  the same reason as saleReceiptBody above (language==='both' reuses it twice). */
-function creditNoteBody(opts: CreditNoteOptions, lang: "ar" | "en", paper: PaperWidth): string {
+/** Everything between `<body>` and `</body>` for one language or for compact
+ *  paired-label bilingual mode. */
+function creditNoteBody(opts: CreditNoteOptions, lang: RenderLanguage, paper: PaperWidth): string {
   const totals = opts.totals;
   const show = opts.showFields ?? null;
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
-  const t = LABELS[lang];
+  const t = labelsFor(lang);
   const idn = opts.identity ?? null;
   const cur = currencyLabel(idn, lang);
   const compact = paper === "58";
   // The default stamp is what distinguishes this from a sale receipt at a glance.
-  const stamp = opts.stamp || t.creditNoteDefaultStamp;
+  const stamp = opts.stamp ? esc(opts.stamp) : t.creditNoteDefaultStamp;
 
   const linesHtml = opts.lines
     .map((l) => {
@@ -963,11 +1040,12 @@ function creditNoteBody(opts: CreditNoteOptions, lang: "ar" | "en", paper: Paper
 
   // A credit note carries the owner's header if they wrote one, but never the
   // default greeting — "أهلاً وسهلاً بكم" on a refund document reads as sarcasm.
-  return `${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
-  ${idn?.branchName ? `<div class="branch">${escFree(idn.branchName)}</div>` : ""}
-  ${welcomeBlock(idn, lang, false)}
+  return `<header class="identity">${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
+  ${branchNameBlock(idn, lang)}
   ${sellerLines.join("\n  ")}
-  <div class="stamp">${esc(stamp)}</div>
+  ${welcomeBlock(idn, lang, false)}
+  </header>
+  <div class="stamp">${stamp}</div>
   <div class="doctype">${t.creditNoteSubtitle}</div>
   <table class="meta">
     ${metaRows}
@@ -978,6 +1056,7 @@ function creditNoteBody(opts: CreditNoteOptions, lang: "ar" | "en", paper: Paper
     <tbody>${linesHtml}</tbody>
   </table>
   <hr class="rule">
+  <section class="settlement">
   <table class="tot">
     <tr><td>${t.itemsCount}</td>${money(String(opts.lines.length))}</tr>
     <tr><td>${t.subtotal}</td>${money(fmt2(totals.subtotal))}</tr>
@@ -987,6 +1066,7 @@ function creditNoteBody(opts: CreditNoteOptions, lang: "ar" | "en", paper: Paper
   <table class="tot total-tbl">
     <tr class="total"><td>${t.creditGrandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
   </table>
+  </section>
   ${qrBlock(opts.zatcaQrDataUrl, false, on("qr"), lang)}
   ${footerBlock(idn, lang, t.creditNoteSubtitle)}`;
 }
@@ -996,16 +1076,11 @@ export function buildCreditNoteHtml(opts: CreditNoteOptions): string {
   const language = normalizeLanguage(opts.identity?.language);
 
   if (language === "both") {
-    const arBody = creditNoteBody(opts, "ar", paper);
-    const enBody = creditNoteBody(opts, "en", paper);
+    const body = creditNoteBody(opts, "both", paper);
     return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
   <title>${LABELS.ar.creditNoteTitle} / ${LABELS.en.creditNoteTitle}</title><style>${baseCss(paper)}</style></head>
   <body data-paper="${paper}" data-doc="credit-note" data-lang="both">
-  ${arBody}
-  <hr style="border-top: 3px double currentColor; margin: 10px 0;">
-  <div dir="ltr" lang="en">
-  ${enBody}
-  </div>
+  ${body}
   </body></html>`;
   }
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
-import { FileUploader, Button, Dialog, Input, Select, safeUserMessage, useToast } from "@/shared/ui";
+import { FileUploader, Button, DatePicker, Dialog, Input, Select, safeUserMessage, useToast } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import { peopleApi } from "../../lib/api";
 import { qk } from "../../lib/query-keys";
@@ -200,7 +200,7 @@ export function ExpenseDialog({
             <span className="text-xs font-bold text-slate-600">
               {t("people.custody.expense.date")} <span className="text-rose-600">*</span>
             </span>
-            <Input className="mt-1" type="date" dir="ltr" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+            <DatePicker className="mt-1 block" value={expenseDate} onChange={setExpenseDate} />
           </label>
           <label className="block">
             <span className="text-xs font-bold text-slate-600">

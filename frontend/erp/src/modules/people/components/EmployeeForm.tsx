@@ -1,8 +1,8 @@
 import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { Field, FormActions, zodResolver } from "@/shared/forms";
 import { z, money, optionalEmail, saudiPhone } from "@/shared/schemas";
-import { Button, Checkbox, Input, Select } from "@/shared/ui";
+import { Button, Checkbox, DatePicker, Input, Select } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import type { TFunction } from "@/i18n";
 import type { Department, EmployeeDetail, EmployeeInput } from "../lib/types";
@@ -59,6 +59,7 @@ export function EmployeeForm({ employee, departments, submitting, onSubmit, onCa
   ];
   const {
     register,
+    control,
     handleSubmit,
     formState: { errors },
   } = useForm<EmployeeFormValues>({
@@ -171,10 +172,26 @@ export function EmployeeForm({ employee, departments, submitting, onSubmit, onCa
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label={t("people.employeeForm.hireDate")} error={errors.hireDate}>
-          {({ id }) => <Input id={id} type="date" dir="ltr" {...register("hireDate")} />}
+          {({ id }) => (
+            <Controller
+              name="hireDate"
+              control={control}
+              render={({ field }) => (
+                <DatePicker id={id} name={field.name} ref={field.ref} value={field.value ?? ""} onChange={field.onChange} onBlur={field.onBlur} />
+              )}
+            />
+          )}
         </Field>
         <Field label={t("people.employeeForm.contractEnd")} error={errors.contractEndDate}>
-          {({ id }) => <Input id={id} type="date" dir="ltr" {...register("contractEndDate")} />}
+          {({ id }) => (
+            <Controller
+              name="contractEndDate"
+              control={control}
+              render={({ field }) => (
+                <DatePicker id={id} name={field.name} ref={field.ref} value={field.value ?? ""} onChange={field.onChange} onBlur={field.onBlur} />
+              )}
+            />
+          )}
         </Field>
       </div>
 

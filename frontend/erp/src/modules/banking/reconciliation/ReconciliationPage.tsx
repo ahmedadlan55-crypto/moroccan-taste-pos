@@ -6,6 +6,7 @@ import {
   Dialog,
   ConfirmDialog,
   Input,
+  DatePicker,
   Select,
   StatusBadge,
   Card,
@@ -178,8 +179,8 @@ function CreateStatementDialog({ onClose, onCreated }: { onClose: () => void; on
             </Select>
           </Field>
           <Field label={t("banking.reconciliation.fields.closingBalance")}><Input value={closing} dir="ltr" onChange={(e) => setClosing(e.target.value)} /></Field>
-          <Field label={t("banking.shared.dateFrom")}><Input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></Field>
-          <Field label={t("banking.shared.dateTo")}><Input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></Field>
+          <Field label={t("banking.shared.dateFrom")}><DatePicker value={periodFrom} onChange={setPeriodFrom} /></Field>
+          <Field label={t("banking.shared.dateTo")}><DatePicker value={periodTo} onChange={setPeriodTo} /></Field>
         </div>
         <Field label={t("banking.reconciliation.fields.linesLabel")}>
           <textarea

@@ -39,6 +39,7 @@ export const header = {
    *  lib/offline.ts splitByActor(). Label prefix only; the "(count)" renders
    *  as its own node, same pattern as the queue-count chips. */
   orphanQueue: {
+    unknownOwner: "legacy operation needing manager review",
     label: "Another cashier",
     title: "Unsynced operations belonging to {who} — they will sync when that cashier signs in, or a manager can release them",
     titleSales:

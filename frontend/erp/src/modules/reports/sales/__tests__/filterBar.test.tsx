@@ -123,6 +123,18 @@ function renderHub(path = "/reports/sales/executive") {
 
 const searchString = () => screen.getByTestId("search").textContent ?? "";
 
+const PERIOD_PRESETS = {
+  today: "اليوم",
+} as const;
+
+/** Select a period inside the shared calendar without bypassing its Apply step. */
+function pickPeriodPreset(preset: keyof typeof PERIOD_PRESETS) {
+  fireEvent.click(screen.getByRole("button", { name: AR.period }));
+  const panel = screen.getByTestId("date-range-popover");
+  fireEvent.click(within(panel).getByRole("button", { name: PERIOD_PRESETS[preset] }));
+  fireEvent.click(within(panel).getByRole("button", { name: AR.apply }));
+}
+
 beforeEach(() => {
   for (const k of Object.keys(caps)) delete caps[k];
   caps["analytics.view"] = true;
@@ -141,7 +153,7 @@ describe("the collapsed bar", () => {
 
     for (const name of [AR.period, AR.branch, AR.compare]) {
       expect(
-        within(bar).getByRole(name === AR.branch ? "button" : "combobox", { name }),
+        within(bar).getByRole(name === AR.compare ? "combobox" : "button", { name }),
         `${name} must be visible without expanding anything`,
       ).toBeInTheDocument();
     }
@@ -169,8 +181,8 @@ describe("the collapsed bar", () => {
     const primary = screen.getByTestId("analytics-primary-filters");
     expect(primary).toHaveClass("grid-cols-1", "sm:grid-cols-2");
 
-    const period = screen.getByRole("combobox", { name: AR.period });
-    expect(period.closest("span")?.parentElement).toHaveClass("w-full", "[&>span]:w-full");
+    const period = screen.getByRole("button", { name: AR.period });
+    expect(period.parentElement).toHaveClass("w-full", "[&>span]:w-full");
     const branch = screen.getByRole("button", { name: AR.branch });
     expect(branch.parentElement).toHaveClass("w-full");
     const compare = screen.getByRole("combobox", { name: AR.compare });
@@ -244,9 +256,7 @@ describe("more filters", () => {
 describe("editing a filter", () => {
   it("does not touch the committed state until Apply", () => {
     const { patch } = renderBar();
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     expect(patch, "an edit must not commit").not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: AR.apply }));
@@ -286,9 +296,7 @@ describe("editing a filter", () => {
     const before = posts.length;
     const searchBefore = searchString();
 
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     // Give react-query every chance to fire: the point is that it cannot,
     // because nothing the queries key off has changed.
     await act(async () => {
@@ -335,9 +343,7 @@ describe("the results region", () => {
     expect(chips).toHaveTextContent("2032");
     const committedLabel = chips.textContent;
 
-    fireEvent.change(screen.getByRole("combobox", { name: AR.period }), {
-      target: { value: "today" },
-    });
+    pickPeriodPreset("today");
     expect(
       screen.getByTestId("active-filter-chips").textContent,
       "an uncommitted draft must not rewrite the label on the numbers",

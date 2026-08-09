@@ -34,6 +34,8 @@ function serverToLocal(so: ServerOrder): LocalOrder {
   return {
     id: so.id,
     status: so.status,
+    ownerUserId: so.ownerUserId ?? null,
+    ownerUsername: so.username ?? null,
     orderType: so.orderType,
     tableNo: so.tableNo,
     shiftId: so.shiftId,

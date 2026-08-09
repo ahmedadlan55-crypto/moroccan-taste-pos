@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { CalendarRange, KeyRound, Lock, LockOpen, Plus, ShieldHalf } from "lucide-react";
 import {
-  Button, ConfirmDialog, Dialog, EmptyState, ErrorState, Input, LoadingState,
+  Button, ConfirmDialog, DatePicker, Dialog, EmptyState, ErrorState, Input, LoadingState,
   PageHeader, PanelTitle, StatusBadge, useToast,
 } from "@/shared/ui";
 import { Field } from "@/shared/forms";
@@ -53,7 +53,7 @@ export function PeriodsPage() {
   const [creating, setCreating] = useState(false);
   const [pending, setPending] = useState<{ period: AccountingPeriod; to: PeriodStatus; force: boolean } | null>(null);
 
-  const { register, handleSubmit, reset, formState: { errors } } = useForm<PeriodForm>({
+  const { register, control, handleSubmit, reset, formState: { errors } } = useForm<PeriodForm>({
     defaultValues: { periodName: "", startDate: "", endDate: "" },
   });
 
@@ -165,12 +165,26 @@ export function PeriodsPage() {
           </Field>
           <Field label={t("accounting.periods.field.start")} required error={errors.startDate}>
             {({ id, invalid }) => (
-              <Input id={id} invalid={invalid} type="date" {...register("startDate", { required: t("accounting.periods.validation.start") })} />
+              <Controller
+                name="startDate"
+                control={control}
+                rules={{ required: t("accounting.periods.validation.start") }}
+                render={({ field }) => (
+                  <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                )}
+              />
             )}
           </Field>
           <Field label={t("accounting.periods.field.end")} required error={errors.endDate}>
             {({ id, invalid }) => (
-              <Input id={id} invalid={invalid} type="date" {...register("endDate", { required: t("accounting.periods.validation.end") })} />
+              <Controller
+                name="endDate"
+                control={control}
+                rules={{ required: t("accounting.periods.validation.end") }}
+                render={({ field }) => (
+                  <DatePicker id={id} invalid={invalid} name={field.name} ref={field.ref} value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+                )}
+              />
             )}
           </Field>
           <div className="flex justify-end gap-2">

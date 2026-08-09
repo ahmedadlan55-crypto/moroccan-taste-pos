@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calculator, CheckCircle2, Crown, Trash2, Wallet } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import {
-  Button, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, PageHeader, PanelTitle,
+  Button, ConfirmDialog, DatePicker, Dialog, EmptyState, ErrorState, LoadingState, PageHeader, PanelTitle,
   StatusBadge, useToast,
 } from "@/shared/ui";
 import { usePermissions } from "@/app/providers";
@@ -232,11 +232,11 @@ function ComputeDialog({ onClose, onCreated }: { onClose: () => void; onCreated:
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
             {t("accounting.royalties.compute.from")}
-            <input dir="ltr" type="date" className="field tabular-nums" value={periodStart} onChange={(e) => { setPeriodStart(e.target.value); setPreview(null); }} />
+            <DatePicker value={periodStart} onChange={(v) => { setPeriodStart(v); setPreview(null); }} />
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
             {t("accounting.royalties.compute.to")}
-            <input dir="ltr" type="date" className="field tabular-nums" value={periodEnd} onChange={(e) => { setPeriodEnd(e.target.value); setPreview(null); }} />
+            <DatePicker value={periodEnd} onChange={(v) => { setPeriodEnd(v); setPreview(null); }} />
           </label>
         </div>
 

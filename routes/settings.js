@@ -29,6 +29,15 @@ router.get('/invoice-identity', verifyToken, MGR, async (req, res) => {
   try {
     const scope = { branchId: req.query.branchId || null, brandId: req.query.brandId || null };
     const { identity, sources, receiptSettings } = await invoiceIdentity.resolveIdentity(db, scope);
+    // The editor writes GLOBAL settings even while previewing a branch/brand.
+    // Returning only the effective scoped identity made those inputs display a
+    // company/brand value and then save it into settings.CompanyName/logo — a
+    // different record — so Save appeared to do nothing. Ship the real global
+    // editing baseline separately; `identity` remains the effective preview.
+    const { identity: globalIdentity, sources: globalSources } =
+      scope.branchId || scope.brandId
+        ? await invoiceIdentity.resolveIdentity(db, {})
+        : { identity, sources };
     const [branches] = await db.query('SELECT id, name FROM branches ORDER BY name').catch(() => [[]]);
     const [brands] = await db.query('SELECT id, name FROM brands ORDER BY name').catch(() => [[]]);
     // The print toggles (settings.ReceiptShowFields): parsed for the editor's
@@ -40,7 +49,7 @@ router.get('/invoice-identity', verifyToken, MGR, async (req, res) => {
       if (sf.length) showFieldsRaw = sf[0].setting_value;
     } catch (_) { /* settings table missing → defaults */ }
     res.json({
-      success: true, scope, identity, sources, branches, brands,
+      success: true, scope, identity, sources, globalIdentity, globalSources, branches, brands,
       showFields: invoiceIdentity.showFields(showFieldsRaw),
       showFieldsRaw,
       receiptSettings,

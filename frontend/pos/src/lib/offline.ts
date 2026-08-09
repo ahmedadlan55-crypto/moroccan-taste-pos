@@ -61,7 +61,7 @@ const baseT: TFunction = makeT("ar");
  *  the queue's notion of "who am I" can never drift from the server's. */
 const defaultActor = (): ActorIdentity | null => {
   const u = currentUser();
-  return u ? { username: u.username, isSupervisor: isSupervisor(u) } : null;
+  return u ? { username: u.username, userId: u.id, isSupervisor: isSupervisor(u) } : null;
 };
 
 // CO-1 — the stores the ordering critical section spans. 'orders' is in here
@@ -104,15 +104,22 @@ export interface EngineDeps {
   /**
    * Who is signed in right now. Defaults to reading the shared pos_token, so
    * production needs no wiring; tests inject a fake to drive the quarantine
-   * (see QueueOp.actor). Returning null disables quarantining entirely — an
-   * engine that cannot name the current user must not start withholding ops.
+   * (see QueueOp.actor). Returning null quarantines until a cashier signs in.
    */
   currentActor?: () => ActorIdentity | null;
+  /**
+   * Enforce per-cashier local-cart/queue isolation. The production singleton
+   * always enables this explicitly. It remains injectable so actor-free unit
+   * harnesses can test queue mechanics independently of authentication.
+   */
+  enforceActorOwnership?: boolean;
 }
 
 /** The signed-in identity, as far as the queue is concerned. */
 export interface ActorIdentity {
   username: string;
+  /** Stable users.id from the JWT. Old tokens may omit it. */
+  userId?: string;
   /** admin/manager — the server lets them act on any cashier's order. */
   isSupervisor: boolean;
 }
@@ -134,6 +141,8 @@ export interface EngineStatus {
   orphanSaleCount: number;
   /** Distinct usernames the orphaned ops belong to, for the notice. */
   orphanActors: string[];
+  /** Legacy rows written before author stamping. Never auto-claimed. */
+  orphanUnknownCount?: number;
   lastReport: SyncReport | null;
 }
 
@@ -259,6 +268,7 @@ export class OfflineEngine {
       orphanCount: 0,
       orphanSaleCount: 0,
       orphanActors: [],
+      orphanUnknownCount: 0,
       lastReport: null,
     };
     this.seqReady = this.initSeq();
@@ -290,13 +300,20 @@ export class OfflineEngine {
    *     manager signing in is the recovery path.
    */
   private splitByActor(ops: QueueOp[]): { mine: QueueOp[]; orphans: QueueOp[] } {
+    if (!this.deps.enforceActorOwnership) return { mine: ops, orphans: [] };
     const me = this.actor();
-    if (!me || me.isSupervisor) return { mine: ops, orphans: [] };
+    if (me?.isSupervisor) return { mine: ops, orphans: [] };
+    // No authenticated identity means no safe authorisation decision. Keep the
+    // queue intact and avoid a pointless 401 drain before login.
+    if (!me) return { mine: [], orphans: ops };
     const mine: QueueOp[] = [];
     const orphans: QueueOp[] = [];
     for (const op of ops) {
-      if (!op.actor || op.actor === me.username) mine.push(op);
-      else orphans.push(op);
+      const sameStableId = !!op.actorId && !!me.userId && op.actorId === me.userId;
+      const differentStableId = !!op.actorId && !!me.userId && op.actorId !== me.userId;
+      const sameName = !!op.actor && op.actor.trim().toLocaleLowerCase("en-US") === me.username.trim().toLocaleLowerCase("en-US");
+      if (sameStableId || (!differentStableId && sameName)) mine.push(op);
+      else orphans.push(op); // includes legacy rows with no author: safe quarantine
     }
     return { mine, orphans };
   }
@@ -487,6 +504,7 @@ export class OfflineEngine {
       orphanCount: this.orphans.length,
       orphanSaleCount: this.orphans.filter(op_isCheckout).length,
       orphanActors: Array.from(new Set(this.orphans.map((o) => o.actor).filter((a): a is string => !!a))),
+      orphanUnknownCount: this.orphans.filter((o) => !o.actor && !o.actorId).length,
       lastReport: this.lastReport,
     };
     this.listeners.forEach((fn) => fn());
@@ -543,13 +561,30 @@ export class OfflineEngine {
     return this.deps.orders.getAll();
   }
   async localHeldOrders(): Promise<LocalOrder[]> {
-    return (await this.deps.orders.getAll()).filter((o) => o.status === "held");
+    const me = this.actor();
+    return (await this.deps.orders.getAll()).filter((o) => o.status === "held" && this.localOrderOwnedBy(o, me, true));
   }
   /** Most recently updated open local doc — cart restore after refresh. */
   async latestOpenOrder(): Promise<LocalOrder | undefined> {
-    const all = (await this.deps.orders.getAll()).filter((o) => o.status === "open");
+    const me = this.actor();
+    const all = (await this.deps.orders.getAll()).filter((o) => o.status === "open" && this.localOrderOwnedBy(o, me, false));
     all.sort((a, b) => b.updatedAt - a.updatedAt);
     return all[0];
+  }
+
+  /** Never restore somebody else's cart into the new cashier's screen. */
+  private localOrderOwnedBy(doc: LocalOrder, me: ActorIdentity | null, allowSupervisorRecovery: boolean): boolean {
+    if (!this.deps.enforceActorOwnership) return true;
+    if (!me) return false;
+    if (me.isSupervisor && allowSupervisorRecovery) return true;
+    if (doc.ownerUserId) return !!me.userId && doc.ownerUserId === me.userId;
+    if (doc.ownerUsername) {
+      return doc.ownerUsername.trim().toLocaleLowerCase("en-US") === me.username.trim().toLocaleLowerCase("en-US");
+    }
+    // Pre-ownership documents are preserved in IndexedDB but deliberately not
+    // claimed by whoever happens to log in next. Their queue rows appear in the
+    // recovery report and a manager can safely release them.
+    return false;
   }
 
   /**
@@ -756,7 +791,9 @@ export class OfflineEngine {
         // Stamp the author at ENQUEUE, not at drain: by drain time the till may
         // already be showing a different cashier, which is precisely the case
         // this exists to survive (QueueOp.actor).
-        const author = this.actor()?.username;
+        const authorIdentity = this.actor();
+        const author = authorIdentity?.username;
+        const authorId = authorIdentity?.userId;
         const appended: QueueOp[] = spec.append.map((a) => {
           const op: QueueOp = {
             opId: this.deps.newId(),
@@ -766,6 +803,7 @@ export class OfflineEngine {
             ts: this.deps.now(),
             seq: ++seq,
             ...(author ? { actor: author } : {}),
+            ...(authorId ? { actorId: authorId } : {}),
           };
           txn.put("queue", op.opId, op);
           return op;
@@ -1398,6 +1436,8 @@ export function getEngine(): OfflineEngine {
       newId: ulid,
       debounceMs: 600,
       autoStart: true,
+      // Shared devices must never restore or submit a previous cashier's cart.
+      enforceActorOwnership: true,
     });
     void engineSingleton.pruneTerminalDocs();
   }

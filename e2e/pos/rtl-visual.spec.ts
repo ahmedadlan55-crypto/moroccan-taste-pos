@@ -66,8 +66,16 @@ import path from "path";
 const jwt = require("jsonwebtoken");
 
 function readEnv(): Record<string, string> {
-  const values: Record<string, string> = {};
-  const txt = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
+  const values: Record<string, string> = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  const envPath = path.join(process.cwd(), ".env");
+  // Detached worktrees intentionally do not copy the ignored .env file. The
+  // visual suite uses an isolated database, so a fixed TEST-ONLY signing key
+  // is safe and keeps the browser and its temporary server deterministic.
+  values.JWT_SECRET ||= "local-pos-e2e-signing-key-2026-do-not-use-in-production";
+  if (!fs.existsSync(envPath)) return values;
+  const txt = fs.readFileSync(envPath, "utf8");
   for (const line of txt.split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/);
     if (match) values[match[1]] = match[2];
@@ -158,6 +166,24 @@ for (const lang of LANGS) {
       await expect(dialog).toBeVisible({ timeout: 10_000 });
       await expect(dialog.getByTestId("numpad")).toBeVisible();
       await expect(page).toHaveScreenshot(`pos-shift-dialog-${lang}.png`, {
+        fullPage: true,
+        animations: "disabled",
+        maxDiffPixelRatio: 0.02,
+      });
+    });
+
+    test(`Payment workspace (${lang})`, async ({ page }) => {
+      await gotoAsAdmin(page, lang);
+      const catalogSection = page.locator(`section[aria-label="${lang === "ar" ? "الأصناف" : "Items"}"]`);
+      const productCards = catalogSection.locator("button").filter({ has: page.locator("p") });
+      await productCards.first().click();
+      // F4 is the cashier's native payment shortcut and works identically when
+      // the cart panel is collapsed on the 390px layout.
+      await page.keyboard.press("F4");
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByTestId("payment-workspace")).toBeVisible({ timeout: 10_000 });
+      await expect(dialog.getByTestId("numpad")).toBeVisible();
+      await expect(page).toHaveScreenshot(`pos-payment-dialog-${lang}.png`, {
         fullPage: true,
         animations: "disabled",
         maxDiffPixelRatio: 0.02,

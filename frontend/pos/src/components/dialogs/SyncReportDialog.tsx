@@ -44,6 +44,10 @@ export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: ()
   const t = useT();
   const { engine, engineStatus, supervisor, user } = usePos();
   const { online, syncing, queueCount, orphanCount, orphanSaleCount, orphanActors, lastReport } = engineStatus;
+  const orphanWho = [
+    ...orphanActors,
+    ...((engineStatus.orphanUnknownCount ?? 0) > 0 ? [t("syncReportDialog.orphans.unknownOwner")] : []),
+  ];
   const [pending, setPending] = useState<QueueOp[]>([]);
   const [tab, setTab] = useState<Tab>("sync");
   /** Inline two-step confirm rather than window.confirm — the same pattern the
@@ -130,7 +134,7 @@ export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: ()
           className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900"
         >
           <p className="font-extrabold">
-            {t("syncReportDialog.orphans.heading", { count: orphanCount, who: orphanActors.join("، ") })}
+            {t("syncReportDialog.orphans.heading", { count: orphanCount, who: orphanWho.join("، ") })}
           </p>
           {orphanSaleCount > 0 ? (
             <p className="mt-1 font-bold">{t("syncReportDialog.orphans.sales", { count: orphanSaleCount })}</p>
@@ -144,7 +148,13 @@ export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: ()
           <p className="mb-2 text-xs font-extrabold text-slate-500">{t("syncReportDialog.queue.heading")}</p>
           <ul className="space-y-1">
             {pending.map((op) => {
-              const foreign = !!op.actor && !!user && op.actor !== user.username;
+              const foreign = !!user && (
+                op.actorId && user.id
+                  ? op.actorId !== user.id
+                  : op.actor
+                    ? op.actor.trim().toLocaleLowerCase("en-US") !== user.username.trim().toLocaleLowerCase("en-US")
+                    : true
+              );
               return (
               <li
                 key={op.opId}
@@ -159,7 +169,7 @@ export function SyncReportDialog({ open, onClose }: { open: boolean; onClose: ()
                     {t("syncReportDialog.order")} <Money value={shortRef(op.orderId)} />
                   </span>
                   {foreign ? (
-                    <span className="ms-2 font-bold text-amber-800">{t("syncReportDialog.orphans.byTag", { who: op.actor ?? "" })}</span>
+                    <span className="ms-2 font-bold text-amber-800">{t("syncReportDialog.orphans.byTag", { who: op.actor ?? t("syncReportDialog.orphans.unknownOwner") })}</span>
                   ) : null}
                 </span>
                 <Money value={fmtDateTime(op.ts)} className="font-bold text-slate-400" />

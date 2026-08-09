@@ -6166,6 +6166,7 @@ async function runMigrations() {
       table_no VARCHAR(20) NULL,
       shift_id VARCHAR(40) NULL,
       username VARCHAR(100) NULL,
+      owner_user_id INT NULL,
       device_id VARCHAR(60) NULL,
       warehouse_id VARCHAR(50) NULL,
       channel_id VARCHAR(50) NULL,
@@ -6200,6 +6201,13 @@ async function runMigrations() {
   // table's own creation — see the Tier A.2 Section 6 comment near the old
   // location). Must run AFTER the CREATE TABLE immediately above.
   await addColumnIfMissing('pos_orders', 'branch_id', "VARCHAR(50) NULL");
+  await addColumnIfMissing('pos_orders', 'owner_user_id', "INT NULL");
+  try {
+    await db.query(
+      'UPDATE pos_orders po JOIN users u ON u.username = po.username ' +
+      'SET po.owner_user_id = u.id WHERE po.owner_user_id IS NULL');
+  } catch (e) { console.error('[startup] pos_orders owner backfill failed:', e.message); }
+  try { await db.query('CREATE INDEX idx_pos_orders_owner ON pos_orders(owner_user_id)'); } catch (e) {}
   try { await db.query('CREATE INDEX idx_pos_orders_branch ON pos_orders(branch_id)'); } catch (e) {}
   await createTableIfMissing('pos_order_lines', `
     CREATE TABLE pos_order_lines (

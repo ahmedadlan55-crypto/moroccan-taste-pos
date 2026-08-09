@@ -32,13 +32,16 @@ import {
   Hash,
   Loader2,
   Printer,
+  ShoppingBag,
   SplitSquareHorizontal,
+  UserRound,
+  UtensilsCrossed,
   Wallet,
 } from "lucide-react";
 import { usePos } from "@/state/store";
 import { round2, paymentsError } from "@/lib/cartMath";
 import { tenderLadder } from "@/lib/tender";
-import { fmt2, shortRef } from "@/lib/format";
+import { fmt2, fmtQty, shortRef } from "@/lib/format";
 import {
   buildKitchenTicketHtml,
   buildReceiptHtml,
@@ -79,6 +82,17 @@ const REFERENCE_GROUPS = new Set(["card", "bank", "transfer", "wallet", "cheque"
 function methodTakesReference(m: CatalogPaymentMethod | null): boolean {
   if (!m || methodNeedsNote(m)) return false;
   return REFERENCE_GROUPS.has(String(m.groupType ?? "").toLowerCase());
+}
+
+/** Future-safe owner credit methods must never bypass the built-in credit
+ * policy just because the owner renamed the tile. Current catalogs mainly use
+ * the built-in `credit`, but the server policy accepts group-based methods too. */
+function methodIsCredit(m: CatalogPaymentMethod | null): boolean {
+  if (!m) return false;
+  const group = String(m.groupType ?? "").trim().toLowerCase();
+  const name = String(m.name ?? "").trim().toLowerCase();
+  const nameAr = String(m.nameAr ?? "").trim();
+  return group === "credit" || name === "credit" || nameAr === "آجل";
 }
 
 /** What the one permanent keypad is wired to right now. */
@@ -136,6 +150,13 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
   const canCredit = supervisor || posCan("pos.sale.credit");
   const online = engineStatus.online;
   const total = totals.total;
+  const itemCount = useMemo(() => cart.lines.reduce((sum, line) => sum + line.qty, 0), [cart.lines]);
+  const orderTypeLabel =
+    cart.orderType === "dine_in"
+      ? t("cartPanel.orderTypes.dineIn")
+      : cart.orderType === "delivery"
+        ? t("cartPanel.orderTypes.delivery")
+        : t("cartPanel.orderTypes.takeaway");
   // Offline the live shift query is disabled — fall back to the shift stored
   // on the cart doc (the server re-validates o.shift_id at replay anyway).
   const effectiveShiftId = shiftId ?? cart.shiftId;
@@ -200,8 +221,18 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
   const ownerMethod = tab.startsWith("owner:")
     ? ownerMethods.find((m) => `owner:${m.name}` === tab) ?? null
     : null;
+  const ownerMethodLabel = (method: CatalogPaymentMethod) =>
+    lang === "en" ? method.name : method.nameAr || method.name;
+  const paymentMethodLabel = (method: string) => {
+    if (method === "cash") return t("paymentDialog.methodCash");
+    if (method === "card") return t("paymentDialog.methodCard");
+    if (method === "credit") return t("paymentDialog.methodCredit");
+    const configured = ownerMethods.find((item) => item.name === method);
+    return configured ? ownerMethodLabel(configured) : method;
+  };
   const noteRequired = methodNeedsNote(ownerMethod);
   const noteTooShort = noteRequired && payNote.trim().length < 3;
+  const ownerMethodIsCredit = methodIsCredit(ownerMethod);
 
   // Reset per open.
   useEffect(() => {
@@ -336,7 +367,11 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
 
   // Order-to-Cash credit gate: any credit portion needs a REAL linked customer
   // (server enforces too — this blocks earlier with a clear message).
-  const creditAmount = round2(payments.filter((p) => p.method === "credit").reduce((s, p) => s + p.amount, 0));
+  const creditAmount = round2(
+    payments
+      .filter((p) => p.method === "credit" || methodIsCredit(ownerMethods.find((m) => m.name === p.method) ?? null))
+      .reduce((s, p) => s + p.amount, 0),
+  );
   const creditNeedsCustomer = o2cEnabled && creditAmount > 0;
   const creditBlocked = creditNeedsCustomer && !cart.customerId;
 
@@ -350,6 +385,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
     (tab === "cash" && tendered !== "" && tenderedNum < total) ||
     (tab === "split" && !!splitError) ||
     splitCreditNeedsSupervisor ||
+    (ownerMethodIsCredit && !canCredit) ||
     creditBlocked ||
     noteTooShort ||
     !effectiveShiftId;
@@ -547,8 +583,21 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
       open={open}
       onClose={phase.name === "success" ? finishAndNew : onClose}
       title={t("paymentDialog.title")}
-      widthClass="max-w-xl"
+      widthClass="max-w-5xl"
       locked={locked}
+      footer={phase.name === "form" || phase.name === "failed" ? (
+        <div className="flex w-full lg:justify-end">
+          <Button
+            variant="primary"
+            size="lg"
+            className="min-h-14 w-full shadow-lg shadow-teal-900/10 lg:w-[21rem]"
+            onClick={() => void confirm()}
+            disabled={confirmDisabled}
+          >
+            {t("paymentDialog.confirmButtonPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}
+          </Button>
+        </div>
+      ) : undefined}
     >
       {phase.name === "form" || phase.name === "failed" ? (
         <div>
@@ -576,16 +625,50 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
             </div>
           ) : null}
 
-          {/* Total */}
-          <div className="mb-4 rounded-2xl bg-ink px-5 py-4 text-center text-white">
-            <p className="text-xs font-bold text-slate-300">{t("paymentDialog.totalDue")}</p>
-            <p className="text-3xl font-extrabold">
-              <Money value={fmt2(total)} /> <span className="text-sm font-bold text-slate-300">{t("paymentDialog.currency")}</span>
-            </p>
+          <div
+            data-testid="payment-workspace"
+            className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-5"
+          >
+          <section className="min-w-0" aria-label={t("paymentDialog.paymentDetails")}>
+          {/* Total + transaction context. The cashier should be able to verify
+              the bill, order type and customer without leaving payment. */}
+          <div className="mb-4 overflow-hidden rounded-2xl bg-ink px-4 py-4 text-white shadow-sm sm:px-5">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold text-slate-300">{t("paymentDialog.totalDue")}</p>
+                <p className="mt-0.5 text-3xl font-extrabold sm:text-4xl">
+                  <Money value={fmt2(total)} />{" "}
+                  <span className="text-sm font-bold text-slate-300">{t("paymentDialog.currency")}</span>
+                </p>
+              </div>
+              <p className="hidden text-xs font-extrabold text-slate-300 sm:block">{t("paymentDialog.orderSummary")}</p>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/10 pt-3 text-xs font-bold text-slate-200 sm:grid-cols-3">
+              <span className="flex min-w-0 items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+                <ShoppingBag className="h-4 w-4 shrink-0 text-teal-300" aria-hidden />
+                {t("paymentDialog.itemsInOrder", { count: fmtQty(itemCount) })}
+              </span>
+              <span className="flex min-w-0 items-center gap-2 rounded-xl bg-white/5 px-3 py-2">
+                <UtensilsCrossed className="h-4 w-4 shrink-0 text-teal-300" aria-hidden />
+                {orderTypeLabel}
+              </span>
+              <span className="col-span-2 flex min-w-0 items-center gap-2 truncate rounded-xl bg-white/5 px-3 py-2 sm:col-span-1">
+                <UserRound className="h-4 w-4 shrink-0 text-teal-300" aria-hidden />
+                <span className="truncate">
+                  {cart.customerName
+                    ? t("paymentDialog.selectedCustomer", { name: cart.customerName })
+                    : t("paymentDialog.walkInCustomer")}
+                </span>
+              </span>
+            </div>
           </div>
 
           {/* Method tiles — built-ins always; owner methods appended (pay-method-tiles) */}
-          <div className="mb-4 grid grid-cols-4 gap-1.5" role="tablist" aria-label={t("paymentDialog.methodTablistLabel")}>
+          <div
+            className="scrollbar-thin mb-4 flex snap-x gap-2 overflow-x-auto pb-1"
+            role="tablist"
+            aria-label={t("paymentDialog.methodTablistLabel")}
+          >
             {(
               [
                 { key: "cash" as Tab, label: t("paymentDialog.methodCash"), icon: Banknote, disabled: false, tip: undefined },
@@ -616,10 +699,14 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
                 },
                 ...ownerMethods.map((m) => ({
                   key: `owner:${m.name}` as Tab,
-                  label: m.nameAr || m.name,
+                  label: ownerMethodLabel(m),
                   icon: Wallet,
-                  disabled: !online,
-                  tip: !online ? t("paymentDialog.ownerMethodOfflineTip") : undefined,
+                  disabled: !online || (methodIsCredit(m) && !canCredit),
+                  tip: !online
+                    ? t("paymentDialog.ownerMethodOfflineTip")
+                    : methodIsCredit(m) && !canCredit
+                      ? t("paymentDialog.creditNeedsSupervisorTip")
+                      : undefined,
                 })),
               ] as ReadonlyArray<{ key: Tab; label: string; icon: typeof Banknote; disabled: boolean; tip: string | undefined }>
             ).map(({ key, label, icon: Icon, disabled, tip }) => (
@@ -632,7 +719,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
                 title={tip}
                 onClick={() => setTab(key)}
                 className={cn(
-                  "btn-press flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl border py-2 text-xs font-extrabold transition disabled:cursor-not-allowed disabled:opacity-40",
+                  "btn-press flex min-h-14 min-w-[6.75rem] flex-1 snap-start flex-col items-center justify-center gap-1 rounded-xl border px-2 py-2 text-xs font-extrabold transition disabled:cursor-not-allowed disabled:opacity-40",
                   tab === key ? "border-teal-600 bg-teal-50 text-teal-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50",
                 )}
               >
@@ -664,7 +751,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
                   ladder length instead of a fixed grid-cols-4. */}
               {ladder.length > 0 ? (
                 <div
-                  className="mb-2 grid gap-1.5"
+                  className="mb-2 grid gap-2"
                   style={{ gridTemplateColumns: `repeat(${ladder.length}, minmax(0, 1fr))` }}
                 >
                   {ladder.map((v, i) => (
@@ -672,7 +759,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
                       key={v}
                       variant="secondary"
                       onClick={() => setTendered(String(v))}
-                      className={cn("px-1", i === 0 ? "text-[11px] leading-tight" : "num")}
+                      className={cn("min-h-11 px-2", i === 0 ? "text-[11px] leading-tight" : "num")}
                     >
                       {i === 0 ? t("paymentDialog.exactAmount") : tenderLabel(v)}
                     </Button>
@@ -711,7 +798,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
           {/* Split */}
           {tab === "split" ? (
             <div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <label className="block">
                   <span className="mb-1 flex items-center gap-1 text-[11px] font-extrabold text-slate-500">
                     <Banknote className="h-3.5 w-3.5" aria-hidden /> {t("paymentDialog.methodCash")}
@@ -817,7 +904,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
               <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-500">
                 {t("paymentDialog.cardCollectInfoPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}{" "}
                 {t("paymentDialog.ownerCollectInfoMiddle")}
-                {ownerMethod.nameAr || ownerMethod.name}
+                {ownerMethodLabel(ownerMethod)}
                 {t("paymentDialog.ownerCollectInfoSuffix")}
               </p>
               {noteRequired ? (
@@ -826,7 +913,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
                     <span className="mb-1 flex items-center justify-between text-[11px] font-extrabold text-slate-500">
                       <span>
                         {t("paymentDialog.ownerNoteLabelPrefix")}
-                        {ownerMethod.nameAr || ownerMethod.name}
+                        {ownerMethodLabel(ownerMethod)}
                         {t("paymentDialog.ownerNoteLabelSuffix")}
                       </span>
                       <span
@@ -869,26 +956,34 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
             </p>
           ) : null}
           </div>
+          </section>
 
           {/* ── The keypad — SAME SLOT ON EVERY TAB ───────────────────────────
               Mounted once, unconditionally. `pad` decides what it edits (and
               whether it edits anything at all); the hint line above it is
               always rendered, so even the wording changing cannot move the
               keys. The system keyboard still works on every bound input. */}
-          <p className="mt-3 text-[11px] font-bold text-slate-400" data-testid="numpad-hint">
+          <aside
+            className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm lg:sticky lg:top-0 lg:p-4"
+            aria-label={t("paymentDialog.keypadSection")}
+          >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-xs font-extrabold text-slate-600">{t("paymentDialog.keypadSection")}</p>
+            <Money value={`${fmt2(total)} ${t("paymentDialog.currency")}`} className="text-sm font-extrabold text-ink" />
+          </div>
+          <p className="min-h-8 text-[11px] font-bold leading-4 text-slate-400" data-testid="numpad-hint">
             {pad.hint}
           </p>
           <Numpad
             value={pad.value}
             onChange={pad.onChange}
             apply={pad.apply}
+            allowDecimal={!pad.apply}
             disabled={pad.disabled}
             className="mt-1"
           />
-
-          <Button variant="primary" size="lg" className="mt-4 w-full" onClick={() => void confirm()} disabled={confirmDisabled}>
-            {t("paymentDialog.confirmButtonPrefix")} <Money value={fmt2(total)} /> {t("paymentDialog.currency")}
-          </Button>
+          </aside>
+          </div>
         </div>
       ) : null}
 
@@ -899,7 +994,7 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
           <p className="text-sm font-extrabold text-slate-600" role="status">
             {stageLabels[phase.stage]}
           </p>
-          <ol className="flex items-center gap-2 text-[11px] font-bold text-slate-400">
+          <ol className="flex flex-wrap items-center justify-center gap-2 text-[11px] font-bold text-slate-400">
             {(["submit", "sale", "complete"] as const).map((s, i) => (
               <li
                 key={s}
@@ -953,11 +1048,35 @@ export function PaymentDialog({ open, onClose, onOpenShift }: PaymentDialogProps
               </p>
             </>
           )}
-          {phase.changeDue > 0 ? (
-            <p className="rounded-xl bg-saffron-50 px-4 py-2 text-sm font-extrabold text-saffron-600">
-              {t("paymentDialog.changeDueLabelColon")} <Money value={fmt2(phase.changeDue)} /> {t("paymentDialog.currency")}
-            </p>
-          ) : null}
+          <section className="w-full rounded-2xl border border-slate-200 bg-slate-50/80 p-3 text-start" aria-label={t("paymentDialog.successSummary")}>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                <p className="text-[11px] font-bold text-slate-400">{t("paymentDialog.paidTotal")}</p>
+                <Money value={`${fmt2(total)} ${t("paymentDialog.currency")}`} className="text-base font-extrabold text-ink" />
+              </div>
+              <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                <p className="text-[11px] font-bold text-slate-400">{t("paymentDialog.receivedTotal")}</p>
+                <Money
+                  value={`${fmt2(phase.cashTendered > 0 ? phase.cashTendered : phase.payments.reduce((sum, payment) => sum + payment.amount, 0))} ${t("paymentDialog.currency")}`}
+                  className="text-base font-extrabold text-ink"
+                />
+              </div>
+              <div className={cn("rounded-xl px-3 py-2 shadow-sm", phase.changeDue > 0 ? "bg-saffron-50" : "bg-white")}>
+                <p className="text-[11px] font-bold text-slate-400">{t("paymentDialog.changeDueLabel")}</p>
+                <Money
+                  value={`${fmt2(phase.changeDue)} ${t("paymentDialog.currency")}`}
+                  className={cn("text-base font-extrabold", phase.changeDue > 0 ? "text-saffron-700" : "text-ink")}
+                />
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {phase.payments.map((payment, index) => (
+                <span key={`${payment.method}-${index}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600">
+                  {paymentMethodLabel(payment.method)} · <Money value={fmt2(payment.amount)} />
+                </span>
+              ))}
+            </div>
+          </section>
           <div className="mt-2 grid w-full grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => printReceipt(phase)}>
               <Printer className="h-4 w-4" aria-hidden />

@@ -117,7 +117,7 @@ async function seed() {
     r = await req('POST', API + '/orders', c1, { ...cart1, lines: [{ menuId: M1, qty: 1 }], expectedVersion: 99 });
     check('stale version update → 409', r.status === 409 && r.body.code === 'VERSION_CONFLICT', r.body);
     r = await req('POST', API + '/orders', c2, { ...cart1, expectedVersion: 1 });
-    check('another cashier updating → 403', r.status === 403, r.body);
+    check('another cashier updating → 403 ownership code', r.status === 403 && r.body.code === 'ORDER_OWNERSHIP_CONFLICT', r.body);
     r = await req('POST', API + '/orders', c1, { ...cart1, lines: [{ menuId: M1, qty: 2 }, { menuId: M2, qty: 3 }], expectedVersion: 1 });
     check('owner update → v2', r.status === 200 && r.body.data.version === 2, r.body);
     r = await req('POST', API + '/orders', c1, { id: ulid(9), lines: [{ menuId: M3, qty: 1 }] });
@@ -203,6 +203,10 @@ async function seed() {
     // Double-POST the SAME payload → idempotent replay, same sale.
     r = await req('POST', '/api/sales', c1, payload);
     check('duplicate /api/sales → idempotent same sale', (r.status === 200) && r.body.idempotent === true && (r.body.orderId === saleId), r.body);
+    // Complete link is ownership-protected too. Before this fix the final
+    // lifecycle endpoint had no owner guard at all.
+    r = await req('POST', API + `/orders/${O1}/complete`, c2, { saleId });
+    check('another cashier cannot complete the order', r.status === 403 && r.body.code === 'ORDER_OWNERSHIP_CONFLICT', r.body);
     // Complete link.
     r = await req('POST', API + `/orders/${O1}/complete`, c1, { saleId });
     check('complete → completed', r.status === 200 && r.body.status === 'completed', r.body);

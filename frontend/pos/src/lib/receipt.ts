@@ -327,38 +327,60 @@ export function buildShiftReportHtml(
     : "";
 
   const variance = f.variance ?? 0;
+  const reportCss = `
+  .shift-report { line-height: 1.45; }
+  .report-head { break-inside: avoid; page-break-inside: avoid; text-align: center; }
+  .report-head h1 { margin-bottom: 3px; }
+  .report-meta { margin-top: 6px; padding: 6px 0; border-top: 1px solid currentColor; border-bottom: 1px solid currentColor; }
+  .report-meta .sub { display: flex; justify-content: space-between; gap: 8px; text-align: start; }
+  .report-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 7px 0; break-inside: avoid; page-break-inside: avoid; }
+  .report-kpi { border: 1px solid currentColor; border-radius: 5px; padding: 5px 3px; text-align: center; }
+  .report-kpi .k { display: block; font-size: 0.78em; line-height: 1.2; }
+  .report-kpi .v { display: block; margin-top: 2px; font-size: 1.08em; font-weight: 800; }
+  .report-section { margin-top: 8px; break-inside: avoid; page-break-inside: avoid; }
+  .report-section.allow-break { break-inside: auto; page-break-inside: auto; }
+  .report-section-title { border-bottom: 2px solid currentColor; padding-bottom: 3px; margin-bottom: 3px; font-size: 0.9em; font-weight: 800; }
+  .report-totals { border: 2px solid currentColor; border-radius: 5px; padding: 3px 6px; break-inside: avoid; page-break-inside: avoid; }
+  .report-actions-note { margin-top: 8px; border-top: 1px dashed currentColor; padding-top: 5px; text-align: start; }
+  @media print { .report-kpi, .report-totals { border-color: CanvasText; } }
+  `;
 
   return `<!doctype html><html lang="${language}" dir="${dir}"><head><meta charset="utf-8">
-  <title>${title}</title><style>${baseCss(paper)}</style></head><body data-paper="${paper}">
+  <title>${title}</title><style>${baseCss(paper)}${reportCss}</style></head><body class="shift-report" data-paper="${paper}">
+  <header class="report-head">
   <h1>${esc(rep.company?.name || rep.company?.nameAr || brandNameFallback())}</h1>
   ${rep.branch?.name ? `<div class="sub">${esc(rep.branch.name)}</div>` : ""}
   <div class="stamp">${title}</div>
+  <div class="report-meta">
   <div class="sub">${t.shift} <span class="num">${esc(rep.shiftId)}</span></div>
   <div class="sub">${t.cashier} ${esc(cashier.name || cashier.username || t.dash)}${cashier.empNo ? ` · <span class="num">${esc(cashier.empNo)}</span>` : ""}</div>
   ${rep.times?.start ? `<div class="sub">${t.start} <span class="num">${fmtDateTime(new Date(rep.times.start))}</span></div>` : ""}
   ${isZ && rep.times?.end ? `<div class="sub">${t.end} <span class="num">${fmtDateTime(new Date(rep.times.end))}</span></div>` : ""}
   <div class="sub">${t.printed} <span class="num">${fmtDateTime(new Date())}</span></div>
-  <hr>
-  <table class="tot">
-    <tr><td>${t.orderCount}</td><td class="l num">${Number(rep.orderCount ?? 0)}</td></tr>
-    <tr><td>${t.itemsCount}</td><td class="l num">${Number(rep.itemsCount ?? 0)}</td></tr>
-    <tr><td>${t.openingFloat}</td><td class="l num">${fmt2(f.openingFloat ?? 0)}</td></tr>
-  </table>
-  <hr>
+  </div>
+  </header>
+  <section class="report-kpis">
+    <div class="report-kpi"><span class="k">${t.orderCount}</span><span class="v num">${Number(rep.orderCount ?? 0)}</span></div>
+    <div class="report-kpi"><span class="k">${t.itemsCount}</span><span class="v num">${Number(rep.itemsCount ?? 0)}</span></div>
+    <div class="report-kpi"><span class="k">${t.openingFloat}</span><span class="v num">${fmt2(f.openingFloat ?? 0)}</span></div>
+  </section>
+  <section class="report-section">
+  <div class="report-section-title">${t.paymentMethod}</div>
   <table>
     <thead><tr><th>${t.paymentMethod}</th><th class="l">${t.expected}</th>${isZ ? `<th class="l">${t.counted}</th><th class="l">${t.variance}</th>` : ""}</tr></thead>
     <tbody>${methodRows}</tbody>
   </table>
-  <table class="tot">
+  <div class="report-totals"><table class="tot">
     <tr class="grand"><td>${t.expectedTotal}</td><td class="l num">${fmt2(f.expectedTotal ?? 0)}</td></tr>
     ${isZ ? `<tr class="grand"><td>${t.countedTotal}</td><td class="l num">${fmt2(f.actualTotal ?? 0)}</td></tr>
     <tr class="grand"><td>${t.difference}</td><td class="l num">${variance > 0 ? "+" : ""}${fmt2(variance)}</td></tr>` : ""}
     ${(f.unmatched ?? 0) > 0 ? `<tr><td>${t.unmatched}</td><td class="l num">${fmt2(f.unmatched ?? 0)}</td></tr>` : ""}
-  </table>
+  </table></div>
+  </section>
   ${movementsBlock}
-  ${isZ && denomRows ? `<hr><table><thead><tr><th>${t.denomFace}</th><th class="l">${t.count}</th><th class="l">${t.total}</th></tr></thead><tbody>${denomRows}</tbody></table>` : ""}
-  ${itemRows ? `<hr><table><thead><tr><th>${t.item}</th><th class="l">${t.qty}</th><th class="l">${t.itemTotal}</th></tr></thead><tbody>${itemRows}</tbody></table>` : ""}
-  ${rep.notes ? `<hr><div class="sub">${esc(rep.notes)}</div>` : ""}
+  ${isZ && denomRows ? `<section class="report-section allow-break"><div class="report-section-title">${t.denomFace}</div><table><thead><tr><th>${t.denomFace}</th><th class="l">${t.count}</th><th class="l">${t.total}</th></tr></thead><tbody>${denomRows}</tbody></table></section>` : ""}
+  ${itemRows ? `<section class="report-section allow-break"><div class="report-section-title">${t.item}</div><table><thead><tr><th>${t.item}</th><th class="l">${t.qty}</th><th class="l">${t.itemTotal}</th></tr></thead><tbody>${itemRows}</tbody></table></section>` : ""}
+  ${rep.notes ? `<div class="report-actions-note">${esc(rep.notes)}</div>` : ""}
   ${!isZ ? `<div class="foot">${t.footerX}</div>` : `<div class="foot">${t.footerZ}</div>`}
   </body></html>`;
 }

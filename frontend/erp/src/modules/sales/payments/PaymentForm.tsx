@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { HandCoins, Plus, Trash2 } from "lucide-react";
-import { Drawer, Button, safeUserMessage } from "@/shared/ui";
+import { Drawer, Button, DatePicker, safeUserMessage } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 import { Field } from "@/shared/forms";
 import { formatCurrency } from "@/shared/lib";
@@ -60,7 +60,7 @@ export function PaymentForm({ open, onClose, onCreated, presetCustomerId }: { op
         <Field label={t("sales.col.customer")} required><CustomerPicker value={customer} onChange={(c) => { setCustomer(c); setAllocs([]); }} disabled={!!presetCustomerId && !!customer} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label={t("sales.col.amount")} required><input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" value={amount || ""} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
-          <Field label={t("sales.col.date")} required><input dir="ltr" type="date" className="field w-full tabular-nums" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <Field label={t("sales.col.date")} required><DatePicker value={date} onChange={setDate} /></Field>
           <Field label={t("sales.payments.form.method")}>
             <select className="field w-full" value={method} onChange={(e) => { setMethod(e.target.value); setDest(e.target.value === "bank" || e.target.value === "transfer" || e.target.value === "card" ? "bank" : "cash"); }}>
               <option value="cash">{t("sales.payments.methodOpt.cash")}</option>

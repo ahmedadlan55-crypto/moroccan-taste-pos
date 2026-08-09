@@ -165,6 +165,9 @@ async function cleanup() {
 
     const idnBranch = await req('GET', `/api/settings/invoice-identity?branchId=${encodeURIComponent(BRANCH)}`, adminTok);
     check('resolved identity FOR THE BRANCH shows the override', idnBranch.body?.identity?.address === NEW_ADDR, idnBranch.body?.identity?.address);
+    check('the same response keeps a separate GLOBAL editing baseline',
+      (idnBranch.body?.globalIdentity?.address ?? '') === globalAddressBefore,
+      { effective: idnBranch.body?.identity?.address, global: idnBranch.body?.globalIdentity?.address });
     check('  …with the branch as the reported source', idnBranch.body?.sources?.address === 'branches.location', idnBranch.body?.sources?.address);
     check('  …operating company too', idnBranch.body?.identity?.branchCompanyName === NEW_CO);
 

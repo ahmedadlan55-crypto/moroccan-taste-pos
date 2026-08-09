@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import { ar } from "@/i18n/dictionaries/ar";
 import {
   DateRangePicker,
   ComparePicker,
@@ -20,6 +21,9 @@ const LABELS = {
   from: "From",
   to: "To",
   presetAriaLabel: "Range preset",
+  title: "Select a time period",
+  apply: "Apply",
+  cancel: "Cancel",
 };
 
 describe("computePresetRange (fixed local date 2026-08-20)", () => {
@@ -116,6 +120,12 @@ describe("computeCompareRange", () => {
   });
 });
 
+/* ── the panel ───────────────────────────────────────────────────────────────
+ * The control is a trigger plus a popover: two contiguous month grids, the
+ * preset rail, and Cancel / Apply. The contract every test below defends is
+ * DRAFT → COMMIT: nothing the panel does reaches `onChange` until Apply.
+ */
+
 describe("DateRangePicker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -127,50 +137,283 @@ describe("DateRangePicker", () => {
 
   const value: DateRange = { from: "2026-08-20", to: "2026-08-20", preset: "today" };
 
-  it("emits the computed range when a preset is picked", () => {
+  const trigger = () => screen.getByRole("button", { name: "Range preset" });
+  const panel = () => screen.getByTestId("date-range-popover");
+  const openPanel = () => {
+    fireEvent.click(trigger());
+    return panel();
+  };
+  const gridOf = (idx: number) => within(panel()).getAllByRole("grid")[idx];
+  /** A day cell in the LEFT (0) or RIGHT (1) month — the same ISO day can sit
+   *  in both grids at a month boundary, so the column must be explicit. */
+  const dayIn = (idx: number, iso: string): HTMLButtonElement => {
+    const el = gridOf(idx).querySelector<HTMLButtonElement>(`[data-day="${iso}"]`);
+    if (!el) throw new Error(`no day cell for ${iso} in grid ${idx}`);
+    return el;
+  };
+  const presetBtn = (p: DateRangePreset) => within(panel()).getByRole("button", { name: `preset-${p}` });
+  const apply = () => within(panel()).getByRole("button", { name: "Apply" });
+  const cancel = () => within(panel()).getByRole("button", { name: "Cancel" });
+
+  function renderPicker(v: DateRange = value) {
     const onChange = vi.fn();
-    render(<DateRangePicker value={value} onChange={onChange} labels={LABELS} />);
-    fireEvent.change(screen.getByLabelText("Range preset"), { target: { value: "last7" } });
-    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-14", to: "2026-08-20", preset: "last7" });
+    render(<DateRangePicker value={v} onChange={onChange} labels={LABELS} />);
+    return onChange;
+  }
+
+  it("shows the committed period on the trigger and opens the panel", () => {
+    renderPicker();
+    expect(trigger()).toHaveTextContent("preset-today");
+    expect(screen.queryByTestId("date-range-popover")).toBeNull();
+
+    openPanel();
+    expect(screen.getByRole("dialog", { name: "Select a time period" })).toBeInTheDocument();
+    expect(trigger()).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("offers every declared preset — the option list is not a second, hand-kept list", () => {
-    // The select renders from DATE_RANGE_PRESETS and labels from the caller's
-    // record, so adding a preset in one place and forgetting the other yields
-    // either a missing option or an option labelled with its raw id.
-    render(<DateRangePicker value={value} onChange={vi.fn()} labels={LABELS} />);
-    const options = [...screen.getByLabelText("Range preset").querySelectorAll("option")];
-    expect(options.map((o) => o.getAttribute("value"))).toEqual([...DATE_RANGE_PRESETS]);
-    for (const o of options) expect(o.textContent).not.toBe(o.getAttribute("value"));
+  it("names a custom period by its DATES, not by the word custom", () => {
+    renderPicker({ from: "2026-08-01", to: "2026-08-07", preset: "custom" });
+    expect(trigger()).toHaveTextContent("01 Aug 2026 – 07 Aug 2026");
   });
 
-  it("picking a closed period emits that whole period, not a to-date window", () => {
-    const onChange = vi.fn();
-    render(<DateRangePicker value={value} onChange={onChange} labels={LABELS} />);
-    fireEvent.change(screen.getByLabelText("Range preset"), { target: { value: "lastMonth" } });
-    expect(onChange).toHaveBeenCalledWith({ from: "2026-07-01", to: "2026-07-31", preset: "lastMonth" });
+  it("shows two CONTIGUOUS months, a From/To header each, and the preset rail", () => {
+    renderPicker();
+    const p = openPanel();
+    expect(within(p).getByText("2026 AUGUST")).toBeInTheDocument();
+    expect(within(p).getByText("2026 SEPTEMBER")).toBeInTheDocument();
+    expect(within(p).getAllByRole("grid")).toHaveLength(2);
+    expect(within(p).getByText("From")).toBeInTheDocument();
+    expect(within(p).getByText("To")).toBeInTheDocument();
+
+    // The rail is the complete preset list, rendered from DATE_RANGE_PRESETS —
+    // not a second, hand-kept list that can drift from the enum.
+    const rail = within(p).getByRole("group", { name: ar.sharedUi.dateRangePicker.presets });
+    const buttons = within(rail).getAllByRole("button");
+    expect(buttons).toHaveLength(DATE_RANGE_PRESETS.length);
+    for (const preset of DATE_RANGE_PRESETS) {
+      const btn = presetBtn(preset);
+      expect(btn).toBeInTheDocument();
+      // A missing label would render the raw id.
+      expect(btn.textContent).not.toBe(preset);
+    }
+    // The active preset is the filled pill.
+    expect(presetBtn("today")).toHaveAttribute("aria-pressed", "true");
+    expect(presetBtn("last7")).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("keeps the current range when switching to custom and shows the two date inputs", () => {
-    const onChange = vi.fn();
-    const { rerender } = render(<DateRangePicker value={value} onChange={onChange} labels={LABELS} />);
-    // preset mode → no date inputs
-    expect(screen.queryByLabelText("From")).not.toBeInTheDocument();
+  /* ── every preset, asserted as DATES ─────────────────────────────────────
+   * "a handler fired" would pass even if the rail were wired to the wrong
+   * preset; only the emitted pair proves the rail means what it says. */
+  const EXPECTED: Array<[Exclude<DateRangePreset, "custom">, string, string]> = [
+    ["today", "2026-08-20", "2026-08-20"],
+    ["yesterday", "2026-08-19", "2026-08-19"],
+    ["last7", "2026-08-14", "2026-08-20"],
+    ["last30", "2026-07-22", "2026-08-20"],
+    ["mtd", "2026-08-01", "2026-08-20"],
+    ["lastMonth", "2026-07-01", "2026-07-31"],
+    ["qtd", "2026-07-01", "2026-08-20"],
+    ["lastQuarter", "2026-04-01", "2026-06-30"],
+    ["ytd", "2026-01-01", "2026-08-20"],
+    ["lastYear", "2025-01-01", "2025-12-31"],
+  ];
 
-    fireEvent.change(screen.getByLabelText("Range preset"), { target: { value: "custom" } });
-    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-20", to: "2026-08-20", preset: "custom" });
+  it.each(EXPECTED)("preset %s commits exactly %s .. %s", (preset, from, to) => {
+    const onChange = renderPicker({ from: "2026-01-01", to: "2026-01-31", preset: "custom" });
+    openPanel();
+    fireEvent.click(presetBtn(preset));
+    expect(onChange, "a preset is a DRAFT edit, not a commit").not.toHaveBeenCalled();
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from, to, preset });
+  });
 
-    rerender(
-      <DateRangePicker
-        value={{ from: "2026-08-20", to: "2026-08-20", preset: "custom" }}
-        onChange={onChange}
-        labels={LABELS}
-      />,
-    );
-    const fromInput = screen.getByLabelText("From");
-    expect(fromInput).toBeInTheDocument();
-    fireEvent.change(fromInput, { target: { value: "2026-08-01" } });
-    expect(onChange).toHaveBeenLastCalledWith({ from: "2026-08-01", to: "2026-08-20", preset: "custom" });
+  it("moves the calendars onto the preset's own months", () => {
+    renderPicker();
+    const p = openPanel();
+    fireEvent.click(presetBtn("lastQuarter")); // 2026-04-01 .. 2026-06-30
+    expect(within(p).getByText("2026 APRIL")).toBeInTheDocument();
+    expect(within(p).getByText("2026 MAY")).toBeInTheDocument();
+  });
+
+  /* ── draft → commit ─────────────────────────────────────────────────────── */
+
+  it("Cancel throws the draft away and leaves the committed value alone", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(presetBtn("lastMonth"));
+    fireEvent.click(cancel());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("date-range-popover")).toBeNull();
+    expect(trigger()).toHaveTextContent("preset-today");
+
+    // Reopening starts from the COMMITTED value, not the abandoned draft.
+    openPanel();
+    expect(presetBtn("today")).toHaveAttribute("aria-pressed", "true");
+    expect(presetBtn("lastMonth")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("Escape and an outside click behave like Cancel", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(presetBtn("ytd"));
+    fireEvent.keyDown(document.activeElement ?? document, { key: "Escape" });
+    expect(screen.queryByTestId("date-range-popover")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+
+    openPanel();
+    fireEvent.click(presetBtn("ytd"));
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId("date-range-popover")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /* ── picking days ───────────────────────────────────────────────────────── */
+
+  it("start then end produces that range, as a custom period", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(dayIn(0, "2026-08-05"));
+    fireEvent.click(dayIn(0, "2026-08-12"));
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-05", to: "2026-08-12", preset: "custom" });
+  });
+
+  it("picking the END before the START swaps, it does not invert", () => {
+    // An inverted range is not "no rows" to the engine — it is a 422 about a
+    // window the analyst never asked for.
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(dayIn(0, "2026-08-12"));
+    fireEvent.click(dayIn(0, "2026-08-05"));
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-05", to: "2026-08-12", preset: "custom" });
+  });
+
+  it("spans the two months when the range crosses the boundary", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(dayIn(0, "2026-08-25"));
+    fireEvent.click(dayIn(1, "2026-09-10"));
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-25", to: "2026-09-10", preset: "custom" });
+  });
+
+  it("marks both endpoints selected and bands the days between", () => {
+    renderPicker();
+    openPanel();
+    fireEvent.click(dayIn(0, "2026-08-05"));
+    fireEvent.click(dayIn(0, "2026-08-08"));
+    const cellOf = (iso: string) => dayIn(0, iso).closest('[role="gridcell"]') as HTMLElement;
+    expect(cellOf("2026-08-05")).toHaveAttribute("aria-selected", "true");
+    expect(cellOf("2026-08-08")).toHaveAttribute("aria-selected", "true");
+    expect(cellOf("2026-08-06")).toHaveAttribute("aria-selected", "false");
+    expect(cellOf("2026-08-06")).toHaveClass("bg-teal-50");
+    expect(cellOf("2026-08-09")).not.toHaveClass("bg-teal-50");
+  });
+
+  it("pages both months together, keeping them contiguous", () => {
+    renderPicker();
+    const p = openPanel();
+    fireEvent.click(within(p).getByRole("button", { name: `${ar.sharedUi.datePicker.prevMonth} (From)` }));
+    expect(within(p).getByText("2026 JULY")).toBeInTheDocument();
+    expect(within(p).getByText("2026 AUGUST")).toBeInTheDocument();
+    fireEvent.click(within(p).getByRole("button", { name: `${ar.sharedUi.datePicker.nextMonth} (To)` }));
+    expect(within(p).getByText("2026 AUGUST")).toBeInTheDocument();
+    expect(within(p).getByText("2026 SEPTEMBER")).toBeInTheDocument();
+  });
+
+  /* ── typing ─────────────────────────────────────────────────────────────── */
+
+  it("accepts a typed ISO date in either field", () => {
+    const onChange = renderPicker();
+    const p = openPanel();
+    fireEvent.change(within(p).getByLabelText("From"), { target: { value: "2026-03-04" } });
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-03-04", to: "2026-08-20", preset: "custom" });
+  });
+
+  it("orders a typed pair that arrives inverted", () => {
+    const onChange = renderPicker();
+    const p = openPanel();
+    fireEvent.change(within(p).getByLabelText("From"), { target: { value: "2026-12-31" } });
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-20", to: "2026-12-31", preset: "custom" });
+  });
+
+  it("cannot apply an incomplete range", () => {
+    renderPicker({ from: "", to: "", preset: "custom" });
+    openPanel();
+    expect(apply()).toBeDisabled();
+    fireEvent.click(dayIn(0, "2026-08-05"));
+    expect(apply()).toBeEnabled();
+  });
+
+  /* ── keyboard ───────────────────────────────────────────────────────────── */
+
+  it("opens with focus on the selected day and navigates with the arrows", () => {
+    renderPicker();
+    openPanel();
+    expect(document.activeElement).toBe(dayIn(0, "2026-08-20"));
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(dayIn(0, "2026-08-27"));
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Home" });
+    expect(document.activeElement).toBe(dayIn(0, "2026-08-24"));
+  });
+
+  it("selects a whole range with Enter, without touching the mouse", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Enter" }); // start = Aug 20
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowRight" });
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowRight" });
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Enter" }); // end = Aug 22
+    fireEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ from: "2026-08-20", to: "2026-08-22", preset: "custom" });
+  });
+
+  it("follows the focused day onto a month the panel is not showing", () => {
+    renderPicker();
+    const p = openPanel();
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "PageUp" }); // → 2026-07-20
+    expect(within(p).getByText("2026 JULY")).toBeInTheDocument();
+    expect(document.activeElement).toBe(dayIn(0, "2026-07-20"));
+  });
+
+  /* ── the English date policy ────────────────────────────────────────────── */
+
+  it("renders English months and Latin digits on an Arabic document", () => {
+    document.documentElement.lang = "ar";
+    document.documentElement.dir = "rtl";
+    try {
+      renderPicker();
+      const p = openPanel();
+      expect(within(p).getByText("2026 AUGUST")).toBeInTheDocument();
+      expect(within(p).getAllByRole("columnheader").map((h) => h.textContent).join("")).toBe("MTWTFSSMTWTFSS");
+      expect(dayIn(0, "2026-08-20")).toHaveAttribute("aria-label", "Thursday, 20 August 2026");
+      // The From/To header dates are English too.
+      expect(within(p).getAllByText("20 Aug 2026").length).toBeGreaterThan(0);
+    } finally {
+      document.documentElement.lang = "en";
+      document.documentElement.dir = "ltr";
+    }
+  });
+
+  it("emits ISO, never a formatted date", () => {
+    const onChange = renderPicker();
+    openPanel();
+    fireEvent.click(dayIn(0, "2026-08-03"));
+    fireEvent.click(apply());
+    const emitted = onChange.mock.calls[0][0] as DateRange;
+    expect(emitted.from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(emitted.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("does not open when disabled", () => {
+    render(<DateRangePicker value={value} onChange={vi.fn()} labels={LABELS} disabled />);
+    expect(trigger()).toBeDisabled();
+    fireEvent.click(trigger());
+    expect(screen.queryByTestId("date-range-popover")).toBeNull();
   });
 });
 

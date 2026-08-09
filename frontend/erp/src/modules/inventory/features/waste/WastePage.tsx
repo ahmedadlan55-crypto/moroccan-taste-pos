@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PackageMinus, Plus, Trash2 } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import {
-  Button, ConfirmDialog, Dialog, EmptyState, ErrorState, LoadingState, PageHeader, PanelTitle,
-  StatusBadge, useToast,
+  Button, ConfirmDialog, DatePicker, Dialog, EmptyState, ErrorState, LoadingState, PageHeader,
+  PanelTitle, StatusBadge, useToast,
 } from "@/shared/ui";
 import { useT, translateApiError } from "@/i18n";
 import type { TFunction } from "@/i18n";
@@ -323,7 +323,7 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
             {t("inventoryRest.waste.dialog.date")}
-            <input dir="ltr" type="date" className="field tabular-nums" value={wasteDate} onChange={(e) => setWasteDate(e.target.value)} />
+            <DatePicker value={wasteDate} onChange={setWasteDate} />
           </label>
           <label className="flex flex-col gap-1 text-xs font-bold text-slate-600">
             {t("inventoryRest.waste.dialog.reasonLabel")}

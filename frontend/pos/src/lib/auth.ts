@@ -81,7 +81,13 @@ export function decodeUser(token: string | null): AuthUser | null {
     const username = String(payload.username ?? payload.name ?? "");
     if (!username) return null;
     const claimed = typeof payload.displayName === "string" ? payload.displayName.trim() : "";
-    return { username, role: String(payload.role ?? "cashier"), name: claimed || username };
+    const stableId = payload.id == null ? "" : String(payload.id).trim();
+    return {
+      ...(stableId ? { id: stableId } : {}),
+      username,
+      role: String(payload.role ?? "cashier"),
+      name: claimed || username,
+    };
   } catch {
     return null;
   }

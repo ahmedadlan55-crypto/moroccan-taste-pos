@@ -349,20 +349,33 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} title={t("shiftDialog.dialogTitle")} widthClass="max-w-2xl" locked={busy}>
+      <Dialog open={open} onClose={onClose} title={t("shiftDialog.dialogTitle")} widthClass="max-w-5xl" locked={busy}>
       {!shiftId && mode !== "closed" ? (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <Clock3 className="h-12 w-12 text-slate-300" aria-hidden />
-          <p className="text-sm font-extrabold text-slate-600">{t("shiftDialog.noShift.title")}</p>
-          <p className="text-xs font-bold text-slate-400">{t("shiftDialog.noShift.subtitle")}</p>
+        <div
+          data-testid="shift-open-workspace"
+          className="grid items-stretch gap-4 py-2 lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-5"
+        >
+          <section className="flex min-h-64 flex-col justify-between overflow-hidden rounded-2xl bg-ink p-5 text-start text-white sm:p-7">
+            <div>
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
+                <Clock3 className="h-6 w-6 text-teal-300" aria-hidden />
+              </span>
+              <p className="mt-5 text-xl font-extrabold">{t("shiftDialog.noShift.title")}</p>
+              <p className="mt-2 max-w-xl text-sm font-bold leading-6 text-slate-300">{t("shiftDialog.noShift.subtitle")}</p>
+            </div>
+            <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs font-bold text-slate-300">{t("shiftDialog.noShift.openingFloatLabel")}</p>
+              <Money
+                value={`${fmt2(Number(openingFloatInput) || 0)} ${t("shiftDialog.currency")}`}
+                className="mt-1 block text-3xl font-extrabold text-white"
+              />
+            </div>
+          </section>
 
-          {/* Opening float (الرصيد الافتتاحي) — real cash the drawer starts with.
-              Recorded server-side so the close reconciliation accounts for it. */}
-          <div className="w-full max-w-xs">
-            <label className="mb-1 block text-start text-xs font-extrabold text-slate-500">
-              {t("shiftDialog.noShift.openingFloatLabel")}
-            </label>
-            <div className="mb-2 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          {/* Opening float — real cash the drawer starts with. The desktop
+              workspace keeps the keypad in a dedicated, repeatable touch zone. */}
+          <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 shadow-sm sm:p-4">
+            <div className="mb-2 flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm">
               <span className="text-xs font-bold text-slate-400">{t("shiftDialog.noShift.amountLabel")}</span>
               <Money
                 value={`${fmt2(Number(openingFloatInput) || 0)} ${t("shiftDialog.currency")}`}
@@ -370,35 +383,35 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
               />
             </div>
             <Numpad value={openingFloatInput} onChange={setOpeningFloatInput} />
-          </div>
-
-          <Button
-            variant="saffron"
-            size="lg"
-            onClick={() => openShiftNow(round2(Number(openingFloatInput) || 0))}
-            loading={openingShift}
-            disabled={!online}
-            title={online ? undefined : t("shiftDialog.noShift.openOfflineTooltip")}
-          >
-            {t("shiftDialog.noShift.openButton")}
-          </Button>
-          {!online ? <p className="text-[11px] font-bold text-amber-700">{t("shiftDialog.noShift.offlineNote")}</p> : null}
+            <Button
+              variant="saffron"
+              size="lg"
+              className="mt-3 min-h-14 w-full shadow-lg shadow-amber-900/10"
+              onClick={() => openShiftNow(round2(Number(openingFloatInput) || 0))}
+              loading={openingShift}
+              disabled={!online}
+              title={online ? undefined : t("shiftDialog.noShift.openOfflineTooltip")}
+            >
+              {t("shiftDialog.noShift.openButton")}
+            </Button>
+            {!online ? <p className="mt-2 text-center text-[11px] font-bold text-amber-700">{t("shiftDialog.noShift.offlineNote")}</p> : null}
+          </section>
         </div>
       ) : null}
 
       {shiftId && mode === "info" ? (
-        <div>
-          <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3">
-            <p className="text-xs font-bold text-slate-400">{t("shiftDialog.info.currentShiftLabel")}</p>
-            <p className="text-lg font-extrabold text-ink">
+        <div data-testid="shift-info-workspace">
+          <div className="mb-4 flex items-center justify-between gap-4 rounded-2xl bg-ink px-4 py-4 text-white sm:px-5">
+            <p className="text-xs font-bold text-slate-300">{t("shiftDialog.info.currentShiftLabel")}</p>
+            <p className="text-xl font-extrabold text-white">
               <Money value={shiftId} />
             </p>
           </div>
 
           {online ? (
             summary ? (
-              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 p-3">
+              <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <p className="mb-2 text-xs font-extrabold text-slate-500">{t("shiftDialog.info.byStatusHeading")}</p>
                   {Object.keys(summary.byStatus).length === 0 ? (
                     <p className="text-xs text-slate-400">{t("shiftDialog.info.noOrdersYet")}</p>
@@ -415,7 +428,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
                     </ul>
                   )}
                 </div>
-                <div className="rounded-2xl border border-slate-200 p-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <p className="mb-2 text-xs font-extrabold text-slate-500">{t("shiftDialog.info.completedByMethodHeading")}</p>
                   {Object.keys(summary.completedByMethod).length === 0 ? (
                     <p className="text-xs text-slate-400">{t("shiftDialog.info.noPaymentsYet")}</p>
@@ -455,9 +468,10 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
 
           {error ? <ErrorBanner message={error} /> : null}
 
+          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-3">
           <Button
             variant="secondary"
-            className="mt-2 w-full"
+            className="min-h-14 w-full"
             onClick={() => setMovementOpen(true)}
             disabled={!online}
             title={online ? t("shiftDialog.info.cashMovementTooltip") : t("shiftDialog.info.cashMovementOfflineTooltip")}
@@ -468,7 +482,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
 
           <Button
             variant="secondary"
-            className="mt-2 w-full"
+            className="min-h-14 w-full"
             onClick={() => void printReport("X", shiftId)}
             loading={printing}
             disabled={!online}
@@ -481,7 +495,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
           <Button
             variant="dark"
             size="lg"
-            className="mt-2 w-full"
+            className="min-h-14 w-full"
             onClick={() => void startClosing()}
             loading={busy}
             disabled={!online}
@@ -490,6 +504,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
             <Lock className="h-4 w-4" aria-hidden />
             {t("shiftDialog.info.closeShiftButton")}
           </Button>
+          </div>
           {!online ? (
             <p className="mt-2 text-center text-[11px] font-bold text-amber-700">{t("shiftDialog.info.closeOfflineNote")}</p>
           ) : null}
@@ -497,8 +512,8 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
       ) : null}
 
       {mode === "closing" && closing ? (
-        <div>
-          <p className="mb-3 text-xs font-bold text-slate-500">
+        <div data-testid="shift-closing-workspace">
+          <p className="mb-3 rounded-2xl bg-ink px-4 py-3 text-xs font-bold leading-5 text-slate-200">
             {t("shiftDialog.closing.countInstructionsPrefix")} <span className="num">{fmtInt(closing.orderCount)}</span>{" "}
             {t("shiftDialog.closing.invoiceCountSuffix")}
           </p>
@@ -550,7 +565,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
                   </span>
                 ) : null}
               </summary>
-              <div className="grid grid-cols-3 gap-1.5 px-3 pb-3 sm:grid-cols-5" data-testid="denom-grid">
+              <div className="grid grid-cols-3 gap-1.5 px-3 pb-3 sm:grid-cols-5 lg:grid-cols-7" data-testid="denom-grid">
                 {CASH_DENOMS.map((d) => {
                   const key = String(d);
                   const count = Number(denoms[key]) || 0;
@@ -586,7 +601,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
             </details>
           ) : null}
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white px-3 shadow-sm">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-400">
@@ -719,7 +734,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           ) : null}
 
-          <div className="mt-4 flex gap-2">
+          <div className="sticky bottom-0 z-10 -mx-3 mt-4 flex gap-2 border-t border-slate-200 bg-white/95 px-3 py-3 backdrop-blur sm:-mx-4 sm:px-4">
             <Button variant="secondary" className="flex-1" onClick={() => setMode("info")} disabled={busy}>
               {t("common.back")}
             </Button>
@@ -739,10 +754,31 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
       ) : null}
 
       {mode === "closed" && result ? (
-        <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <CheckCircle2 className="h-14 w-14 text-teal-500" aria-hidden />
-          <p className="text-lg font-extrabold text-ink">{t("shiftDialog.closed.title")}</p>
-          <div className="w-full overflow-x-auto">
+        <div className="flex flex-col items-center gap-4 py-2 text-center" data-testid="shift-z-summary">
+          <div className="flex w-full items-center gap-3 rounded-2xl bg-teal-50 px-4 py-3 text-start">
+            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm">
+              <CheckCircle2 className="h-7 w-7 text-teal-500" aria-hidden />
+            </span>
+            <p className="text-lg font-extrabold text-ink">{t("shiftDialog.closed.title")}</p>
+          </div>
+          <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm">
+              <p className="text-[11px] font-bold text-slate-400">{t("shiftDialog.table.expected")}</p>
+              <Money value={`${fmt2(result.expectedTotal ?? 0)} ${t("shiftDialog.currency")}`} className="text-lg font-extrabold text-ink" />
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-3 text-start shadow-sm">
+              <p className="text-[11px] font-bold text-slate-400">{t("shiftDialog.table.actual")}</p>
+              <Money value={`${fmt2(result.actualTotal ?? 0)} ${t("shiftDialog.currency")}`} className="text-lg font-extrabold text-ink" />
+            </div>
+            <div className={cn("rounded-2xl border p-3 text-start shadow-sm", (result.variance ?? 0) === 0 ? "border-teal-200 bg-teal-50" : "border-red-200 bg-red-50")}>
+              <p className="text-[11px] font-bold text-slate-400">{t("shiftDialog.table.variance")}</p>
+              <Money
+                value={`${(result.variance ?? 0) > 0 ? "+" : ""}${fmt2(result.variance ?? 0)} ${t("shiftDialog.currency")}`}
+                className={cn("text-lg font-extrabold", (result.variance ?? 0) === 0 ? "text-teal-700" : "text-red-700")}
+              />
+            </div>
+          </div>
+          <div className="w-full overflow-x-auto rounded-2xl border border-slate-200 bg-white px-3 shadow-sm">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-400">
@@ -773,14 +809,6 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
               </tbody>
             </table>
           </div>
-          <p className="text-sm font-extrabold">
-            {t("shiftDialog.closed.totalVarianceLabel")}{" "}
-            <Money
-              value={`${(result.variance ?? 0) > 0 ? "+" : ""}${fmt2(result.variance ?? 0)}`}
-              className={(result.variance ?? 0) === 0 ? "text-teal-600" : (result.variance ?? 0) > 0 ? "text-teal-600" : "text-red-600"}
-            />{" "}
-            {t("shiftDialog.currency")}
-          </p>
           <div className="grid w-full grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => void printReport("Z", closedShiftId)} loading={printing}>
               <Printer className="h-4 w-4" aria-hidden />

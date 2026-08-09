@@ -91,7 +91,11 @@ export function OrphanQueueChip({ onOpenReport }: { onOpenReport: () => void }) 
   const orphanCount = engineStatus.orphanCount ?? 0;
   const orphanSaleCount = engineStatus.orphanSaleCount ?? 0;
   if (orphanCount <= 0) return null;
-  const who = (engineStatus.orphanActors ?? []).join("، ");
+  const unknown = engineStatus.orphanUnknownCount ?? 0;
+  const who = [
+    ...(engineStatus.orphanActors ?? []),
+    ...(unknown > 0 ? [t("header.orphanQueue.unknownOwner")] : []),
+  ].join("، ");
   return (
     <button
       type="button"

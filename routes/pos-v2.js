@@ -27,6 +27,7 @@ const C = require('../lib/inventoryTxContract');
 const UC = require('../lib/unitConversion');
 const IDEM = require('../lib/idempotencyStore');
 const invoiceIdentity = require('../lib/invoiceIdentity');
+const orderOwnership = require('../lib/posOrderOwnership');
 const requireRole = require('../middleware/auth').requireRole;
 const hasCapability = require('../middleware/requireCapability').hasCapability;
 
@@ -43,9 +44,17 @@ const BRAND_SCOPE_CAP = 'pos.catalog.viewAllBrands';
 const MAX_CASHIER_DISC_PCT = (() => { const n = Number(process.env.POS_MAX_CASHIER_DISCOUNT_PCT); return Number.isFinite(n) && n >= 0 ? n : 10; })();
 
 function _userName(user) { return (user && (user.username || user.name)) || ''; }
-function _userIsSuper(user) { return ['admin', 'manager'].includes(String((user && user.role) || '').toLowerCase()) || !!(user && user.isDeveloper); }
+function _userIsSuper(user) { return orderOwnership.isSupervisor(user); }
+function _userId(user) { return orderOwnership.stableUserId(user && user.id); }
+function _assertOrderOwner(order, user) {
+  if (!orderOwnership.isOwnedBy(order, user)) throw _err('ORDER_OWNERSHIP_CONFLICT', orderOwnership.ownershipMessage());
+}
 function _err(code, msg) { const e = new Error(msg || code); e.code = code; return e; }
 function _fail(res, codeOrErr, message) {
+  const rawCode = typeof codeOrErr === 'string' ? codeOrErr : codeOrErr && codeOrErr.code;
+  if (rawCode === 'ORDER_OWNERSHIP_CONFLICT') {
+    return res.status(403).json({ success: false, code: rawCode, error: message || (codeOrErr && codeOrErr.message) || orderOwnership.ownershipMessage() });
+  }
   const code = C.isCanonical(codeOrErr) ? codeOrErr : C.mapError(codeOrErr);
   const msg = message || (codeOrErr && codeOrErr.message) || code;
   return res.status(C.httpFor(code)).json(C.errorBody(code, msg));
@@ -100,6 +109,19 @@ async function _ensureSchema() {
   if (!bcol.length) {
     await db.query('ALTER TABLE pos_orders ADD COLUMN branch_id VARCHAR(50) NULL');
     console.log('[pos-v2] added pos_orders.branch_id');
+  }
+  const [ownerCol] = await db.query(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pos_orders' AND COLUMN_NAME = 'owner_user_id'");
+  if (!ownerCol.length) {
+    await db.query('ALTER TABLE pos_orders ADD COLUMN owner_user_id INT NULL AFTER username');
+    console.log('[pos-v2] added pos_orders.owner_user_id');
+  }
+  await db.query(
+    'UPDATE pos_orders po JOIN users u ON u.username = po.username ' +
+    'SET po.owner_user_id = u.id WHERE po.owner_user_id IS NULL');
+  try { await db.query('CREATE INDEX idx_pos_orders_owner ON pos_orders(owner_user_id)'); } catch (e) {
+    if (!/Duplicate key name/i.test(String(e && e.message))) throw e;
   }
   const [catTbl] = await db.query(
     "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES " +
@@ -223,7 +245,9 @@ async function _vatRatePct(conn) {
 function _publicOrder(o, lines, payments) {
   return {
     id: o.id, status: o.status, orderType: o.order_type, tableNo: o.table_no,
-    shiftId: o.shift_id, username: o.username, deviceId: o.device_id,
+    shiftId: o.shift_id, username: o.username,
+    ownerUserId: o.owner_user_id != null ? String(o.owner_user_id) : null,
+    deviceId: o.device_id,
     warehouseId: o.warehouse_id, customerId: o.customer_id,
     discountType: o.discount_type, discountValue: Number(o.discount_value), discountName: o.discount_name,
     subtotal: Number(o.subtotal), lineDiscountTotal: Number(o.line_discount_total),
@@ -566,10 +590,10 @@ async function doUpsert(user, body) {
       // name_snapshot / channel_name. Powers the brand-scoped GET /orders.
       const branchId = await _cashierBranchId(conn, user);
       await conn.query(
-        `INSERT INTO pos_orders (id, status, order_type, table_no, shift_id, username, device_id, warehouse_id, branch_id, channel_id, channel_name, customer_id,
+        `INSERT INTO pos_orders (id, status, order_type, table_no, shift_id, username, owner_user_id, device_id, warehouse_id, branch_id, channel_id, channel_name, customer_id,
            discount_type, discount_value, discount_name, subtotal, line_discount_total, discount_total, vat_total, total, note, origin, version)
-         VALUES (?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
-        [id, orderType, (b.tableNo || '').toString().slice(0, 20) || null, shiftId, actor,
+         VALUES (?,'open',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`,
+        [id, orderType, (b.tableNo || '').toString().slice(0, 20) || null, shiftId, actor, _userId(user),
          (b.deviceId || '').toString().slice(0, 60) || null,
          (b.warehouseId || '').toString().slice(0, 50) || null,
          branchId,
@@ -584,7 +608,7 @@ async function doUpsert(user, body) {
       return { version: 1, created: true };
     }
     M.assertCanEdit(existing.status);
-    if (!_userIsSuper(user) && existing.username && existing.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
+    _assertOrderOwner(existing, user);
     if (!Number.isFinite(expected)) throw _err('VALIDATION_ERROR', 'expectedVersion مطلوب لتعديل طلب موجود');
     const [r] = await conn.query(
       `UPDATE pos_orders SET order_type=?, table_no=?, shift_id=?, warehouse_id=?, channel_id=?, channel_name=?, customer_id=?,
@@ -616,7 +640,7 @@ async function doTransition(user, id, action, body) {
   return db.withTransaction(async (conn) => {
     const o = await _loadOrder(id, conn); // FOR UPDATE
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
+    _assertOrderOwner(o, user);
     if (Number.isFinite(expected) && Number(o.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الطلب — أعد التحميل');
     let sql, params, to;
     if (action === 'hold') {
@@ -652,7 +676,7 @@ async function doSubmit(user, id, body) {
   return db.withTransaction(async (conn) => {
     const o = await _loadOrder(id, conn); // FOR UPDATE
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(user) && o.username && o.username !== actor) throw _err('PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
+    _assertOrderOwner(o, user);
     M.assertCanSubmit(o.status);
     if (Number.isFinite(expected) && Number(o.version) !== expected) throw _err('VERSION_CONFLICT', 'تغيّر الطلب — أعد التحميل');
     if (!o.shift_id) throw _err('VALIDATION_ERROR', 'لا يمكن الدفع بلا وردية مفتوحة — افتح وردية أولًا');
@@ -691,17 +715,31 @@ async function doSubmit(user, id, body) {
     if (noteMethod && String(b.paymentNotes || '').trim().length < 3) {
       throw _err('VALIDATION_ERROR', 'طريقة الدفع "' + (noteMethod.nameAr || noteMethod.name) + '" تتطلب ملاحظة دفع (3 أحرف على الأقل)');
     }
-    // Credit sales are supervisor-gated (AR exposure).
-    if (payments.some((p) => p.method === 'credit') && !_userIsSuper(user)) throw _err('PERMISSION_DENIED', 'البيع الآجل يتطلب مشرفًا/مديرًا');
+    // Credit sales are capability-gated (AR exposure). This covers BOTH the
+    // built-in `credit` key and owner-configured methods whose group_type is
+    // `credit`; matching only the literal key let a renamed/custom credit
+    // method bypass the authority and customer gates below.
+    const carriesCredit = M.paymentsCarryCredit(payments, ownerMethods);
+    let canSellOnCredit = _userIsSuper(user);
+    if (carriesCredit && !canSellOnCredit) {
+      try {
+        // Same authority accepted by the downstream /api/sales write path.
+        canSellOnCredit = await hasCapability(user, 'credit.override');
+      } catch (e) {
+        console.error('[pos-v2] credit.override lookup failed — denying credit sale:', e && (e.code || e.message));
+        canSellOnCredit = false; // fail closed
+      }
+    }
     // Order-to-Cash: a credit sale MUST be attached to a real customer (the AR
     // subledger has nowhere to book it otherwise). Flag-gated so the legacy POS
     // (flag OFF) keeps its prior behavior (customer name/phone in the note). The
     // /api/sales creditSaleGate is the security backstop; this just fails earlier
     // with a clear message before the financial write.
-    if (/^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim())
-        && payments.some((p) => p.method === 'credit') && !o.customer_id) {
-      throw _err('VALIDATION_ERROR', 'البيع الآجل يتطلب اختيار عميل');
-    }
+    M.assertCreditPaymentPolicy(payments, ownerMethods, {
+      canSellOnCredit,
+      requireCustomer: /^(1|true|on|yes)$/i.test(String(process.env.ORDER_TO_CASH_ENABLE || '').trim()),
+      customerId: o.customer_id,
+    });
 
     await conn.query('DELETE FROM pos_payments WHERE order_id=?', [id]);
     for (const p of payments) {
@@ -730,6 +768,7 @@ async function doComplete(user, id, body) {
   return db.withTransaction(async (conn) => {
     const o = await _loadOrder(id, conn); // FOR UPDATE
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
+    _assertOrderOwner(o, user);
     if (o.status === 'completed') {
       if (o.sale_id === saleId) return { success: true, idempotent: true, data: { id, saleId }, status: 'completed', version: Number(o.version) };
       throw _err('VERSION_CONFLICT', 'الطلب مكتمل ببيع مختلف (' + o.sale_id + ')');
@@ -1087,7 +1126,14 @@ router.get('/orders', POS, async (req, res) => {
     let join = '';
     if (!_userIsSuper(req.user)) {
       // Cashiers/employees always see only their own orders — unchanged.
-      where.push('pos_orders.username=?'); params.push(_userName(req.user));
+      const uid = _userId(req.user);
+      if (uid != null) {
+        where.push('(pos_orders.owner_user_id=? OR (pos_orders.owner_user_id IS NULL AND pos_orders.username=?))');
+        params.push(uid, _userName(req.user));
+      } else {
+        where.push('pos_orders.owner_user_id IS NULL AND pos_orders.username=?');
+        params.push(_userName(req.user));
+      }
     } else {
       // Supervisors: brand-scoped by DEFAULT via the order's branch snapshot
       // (branch_id) joined to branches.brand_id. NULL branch_id (pre-migration
@@ -1117,7 +1163,7 @@ router.get('/orders/:id', POS, async (req, res) => {
   try {
     const o = await _loadOrder(req.params.id);
     if (!o) { const e = new Error('الطلب غير موجود'); e.status = 404; throw e; }
-    if (!_userIsSuper(req.user) && o.username && o.username !== _userName(req.user)) return _fail(res, 'PERMISSION_DENIED', 'هذا الطلب يخص كاشيرًا آخر · This order belongs to another cashier — it can only be sent by the cashier who created it');
+    if (!orderOwnership.isOwnedBy(o, req.user)) return _fail(res, 'ORDER_OWNERSHIP_CONFLICT', orderOwnership.ownershipMessage());
     // Supervisors: same brand-scope as the list route, with the same
     // allBranches+capability bypass. Reuses PERMISSION_DENIED — no new code.
     if (_userIsSuper(req.user) && o.branch_id) {

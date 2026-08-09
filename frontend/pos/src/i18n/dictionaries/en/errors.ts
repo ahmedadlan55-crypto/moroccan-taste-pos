@@ -11,6 +11,8 @@
  *  here would REPLACE every one of those precise sentences with one vague line.
  */
 export const errors = {
+  ORDER_OWNERSHIP_CONFLICT:
+    "This order is protected under another cashier account — sign in as its owner, or ask a manager to resume it",
   VERSION_CONFLICT: "This item was changed on another device — please reload and try again",
   UNAUTHORIZED: "Your session has expired or is unauthorized — please sign in again",
   SERVER_ERROR: "A server error occurred — please try again later",

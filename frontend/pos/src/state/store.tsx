@@ -292,11 +292,13 @@ async function loadCatalogForChannel(channelId: string | null): Promise<ChannelL
   }
 }
 
-function newLocalOrder(shiftId: string | null, deviceId: string): LocalOrder {
+function newLocalOrder(shiftId: string | null, deviceId: string, owner?: AuthUser | null): LocalOrder {
   const now = Date.now();
   return {
     id: ulid(),
     status: "open",
+    ownerUserId: owner?.id ?? null,
+    ownerUsername: owner?.username ?? null,
     orderType: "takeaway",
     tableNo: null,
     shiftId,
@@ -734,7 +736,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [queryClient, user?.username]);
 
   // ── Cart (LocalOrder doc) ──────────────────────────────────────────────────
-  const [cart, setCart] = useState<LocalOrder>(() => newLocalOrder(null, deviceId));
+  const [cart, setCart] = useState<LocalOrder>(() => newLocalOrder(null, deviceId, user));
   const skipNextSave = useRef(true); // initial mount / doc loads don't re-save
   const restoredRef = useRef(false);
 
@@ -1058,8 +1060,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Reading `prev` inside the updater keeps the cart out of the dep list.
   const startNewOrder = useCallback(() => {
     skipNextSave.current = false; // the new empty doc still saves locally
-    setCart((prev) => newLocalOrder(shiftId ?? persistedShiftId ?? prev.shiftId, deviceId));
-  }, [shiftId, persistedShiftId, deviceId]);
+    setCart((prev) => newLocalOrder(shiftId ?? persistedShiftId ?? prev.shiftId, deviceId, user));
+  }, [shiftId, persistedShiftId, deviceId, user]);
 
   const loadOrderDoc = useCallback((doc: LocalOrder) => {
     skipNextSave.current = true;

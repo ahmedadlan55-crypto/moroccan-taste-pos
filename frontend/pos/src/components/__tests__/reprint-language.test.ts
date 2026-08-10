@@ -158,7 +158,8 @@ describe("the reprinted document actually changes language", () => {
 
     const html = reprintHtmlFromInvoice(historical, currentCatalog, "fallback");
     expect(html).toContain('lang="en"');
-    expect(html).toContain("Issue-time VAT (5%");
+    expect(html).toContain('<span class="tax-name">Issue-time VAT</span>');
+    expect(html).toContain('<span class="num">5%</span> included in total');
     expect(html).not.toContain("Current VAT");
     expect(html).toContain("data:image/png;base64,ISSUED");
     expect(html).not.toContain("data:image/png;base64,CURRENT");
@@ -223,7 +224,8 @@ describe("the reprinted document actually changes language", () => {
 
     for (const token of [
       'lang="en"', "Issued seller", "Issued operator", "311111111111113",
-      "Issue-time VAT (5%", "data:image/png;base64,ISSUED", "Historical item", "Issue-time note",
+      '<span class="tax-name">Issue-time VAT</span>', '<span class="num">5%</span> included in total',
+      "data:image/png;base64,ISSUED", "Historical item", "Issue-time note",
     ]) {
       expect(first, `first print missing ${token}`).toContain(token);
       expect(reprint, `reprint missing ${token}`).toContain(token);

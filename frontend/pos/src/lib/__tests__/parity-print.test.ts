@@ -61,7 +61,9 @@ describe("receipt-tendered-change + receipt-tax-snapshot", () => {
 
   it("prints the VAT line (tax-inclusive snapshot) and the grand total", () => {
     // a RATE prints as a rate ("15%"), not as money ("15.00%") — 2026-07-28 redesign
-    expect(html).toContain("الضريبة (15% مشمولة)");
+    expect(html).toContain('data-row="vat"');
+    expect(html).toContain('<span class="tax-name">الضريبة</span>');
+    expect(html).toContain('<span class="num">15%</span> ضمن الإجمالي');
     expect(html).toContain("6.00"); // VAT inside 46 at 15% inclusive
     expect(html).toContain("الإجمالي");
     expect(html).toContain("46.00");

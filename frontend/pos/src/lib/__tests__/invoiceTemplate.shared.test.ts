@@ -71,7 +71,8 @@ function saleOpts(partial?: Partial<SaleReceiptOptions>): SaleReceiptOptions {
 describe("buildSaleReceiptHtml — identity reaches paper", () => {
   it("prints the CONFIGURED seller, not the fallback name", () => {
     const html = buildSaleReceiptHtml(saleOpts());
-    expect(html).toContain("مطاعم الأصالة");
+    expect(html).toContain("<h1>الأصالة</h1>");
+    expect(html).toContain('class="legal">مطاعم الأصالة');
     expect(html).not.toContain("المذاق المغربي");
   });
 
@@ -79,8 +80,7 @@ describe("buildSaleReceiptHtml — identity reaches paper", () => {
     const html = buildSaleReceiptHtml(saleOpts());
     expect(html).toContain('class="legal"');
     expect(html).toContain(IDENTITY.legalName);
-    expect(html).toContain('class="brand"');
-    expect(html).toContain(IDENTITY.brandName);
+    expect(html).toContain(`<h1>${IDENTITY.brandName}</h1>`);
     expect(html).toContain("310122393500003"); // taxNumber
     expect(html).toContain("1010999999"); // crNumber
     expect(html).toContain("RRRD2929 حي العليا، الرياض"); // nationalAddress
@@ -191,7 +191,7 @@ describe("buildSaleReceiptHtml — paper width, reprint, payments", () => {
 
   it("a plain invoice with no cashier renders no served-by band at all", () => {
     const html = buildSaleReceiptHtml(saleOpts({ cashierName: undefined, orderType: null }));
-    expect(html).not.toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain("الكاشير:");
     expect(html).not.toContain('class="served"');
   });
 });
@@ -202,23 +202,19 @@ describe("buildSaleReceiptHtml — paper width, reprint, payments", () => {
 // 80mm.
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe("«تم خدمتكم عن طريق» — the person, named, in a band of their own", () => {
-  it("prints the served-by band with the cashier's name", () => {
+describe("cashier identity — compact, inside the transaction metadata", () => {
+  it("prints the cashier as a compact labelled row", () => {
     const html = buildSaleReceiptHtml(saleOpts({ cashierName: "أحمد عدلان" }));
-    expect(html).toContain('<div class="served">');
-    expect(html).toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain('<div class="served">');
+    expect(html).toContain("الكاشير:");
     expect(html).toContain("أحمد عدلان");
   });
 
-  it("is NOT buried in the order-type crumb — order type lives in the meta grid", () => {
+  it("keeps cashier and service type in distinct metadata rows", () => {
     const html = buildSaleReceiptHtml(saleOpts({ cashierName: "أحمد عدلان", orderType: "dine_in", tableNo: "7" }));
-    // the served band carries the name and nothing else
-    const band = html.slice(html.indexOf('<div class="served">'), html.indexOf('<hr class="rule">'));
-    expect(band).toContain("أحمد عدلان");
-    expect(band).not.toContain("محلي");
-    expect(band).not.toContain("طاولة");
-    // …and the service context is a labelled meta row instead
-    expect(html).toContain("الطلب");
+    const meta = html.slice(html.indexOf('<table class="meta">'), html.indexOf('<hr class="rule">'));
+    expect(meta).toContain("أحمد عدلان");
+    expect(meta).toContain("نوع الطلب:");
     expect(html).toContain("محلي");
     expect(html).toContain("طاولة");
   });
@@ -235,7 +231,7 @@ describe("«تم خدمتكم عن طريق» — the person, named, in a band o
         showFields: { logo: true, taxNumber: true, crNumber: true, nationalAddress: true, phone: true, email: true, cashier: false, customer: true, qr: true },
       }),
     );
-    expect(html).not.toContain("تم خدمتكم عن طريق");
+    expect(html).not.toContain("الكاشير:");
     expect(html).not.toContain("أحمد عدلان");
   });
 });
@@ -308,11 +304,18 @@ describe("document type — the receipt finally says what it legally is", () => 
 describe("ZATCA — every legally required field still reaches paper after the redesign", () => {
   const html = buildSaleReceiptHtml(saleOpts({ printedAt: new Date("2026-07-15T14:05:00") }));
 
-  it("seller name", () => expect(html).toContain("<h1>مطاعم الأصالة</h1>"));
+  it("seller identity", () => {
+    expect(html).toContain("<h1>الأصالة</h1>");
+    expect(html).toContain('class="legal">مطاعم الأصالة');
+  });
   it("VAT registration number", () => expect(html).toContain("الرقم الضريبي:"));
   it("VAT registration number value", () => expect(html).toContain("310122393500003"));
   it("timestamp", () => expect(html).toContain("2026-07-15 14:05"));
-  it("VAT total", () => expect(html).toContain("الضريبة (15% مشمولة)"));
+  it("VAT total", () => {
+    expect(html).toContain('data-row="vat"');
+    expect(html).toContain('<span class="tax-name">الضريبة</span>');
+    expect(html).toContain('<span class="num">15%</span> ضمن الإجمالي');
+  });
   it("total with VAT", () => expect(html).toContain("40.00 ر.س"));
   it("the server-stamped TLV QR at a scannable 120px", () =>
     expect(html).toContain('<img src="data:image/png;base64,iVBORw0KGgoTEST" alt="ZATCA QR" width="120" height="120">'));
@@ -366,7 +369,7 @@ describe("more detail — the fields that were shipped to the client and never p
     const html = buildSaleReceiptHtml(
       saleOpts({ lines: [{ name: "أ", qty: 1, unitPrice: 5 }, { name: "ب", qty: 2, unitPrice: 5 }] }),
     );
-    expect(html).toContain("عدد الأصناف");
+    expect(html).toContain("عدد البنود");
     expect(html).toContain('<td class="money"><span class="n">2</span></td>');
   });
 
@@ -380,7 +383,7 @@ describe("more detail — the fields that were shipped to the client and never p
   });
 
   it("labels the payment block", () => {
-    expect(buildSaleReceiptHtml(saleOpts())).toContain('<div class="sec">المدفوع</div>');
+    expect(buildSaleReceiptHtml(saleOpts())).toContain('<div class="sec">تفاصيل الدفع</div>');
   });
 
   it("captions the QR", () => {
@@ -410,7 +413,17 @@ describe("orphan identity fields that used to print the wrong words", () => {
 
   it("a custom sales-tax name replaces the hardcoded الضريبة", () => {
     const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, salesTaxName: "ضريبة القيمة المضافة" } }));
-    expect(html).toContain("ضريبة القيمة المضافة (15% مشمولة)");
+    expect(html).toContain('<span class="tax-name">ضريبة القيمة المضافة</span>');
+    expect(html).toContain('<span class="num">15%</span> ضمن الإجمالي');
+  });
+
+  it("prints a configured tax percentage exactly once", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ identity: { ...IDENTITY, salesTaxName: "ضريبة القيمة المضافة %15" } }));
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const vatRow = doc.querySelector('[data-row="vat"]');
+    expect(vatRow).not.toBeNull();
+    expect(vatRow?.querySelector(".tax-name")?.textContent).toBe("ضريبة القيمة المضافة");
+    expect(vatRow?.textContent?.match(/15%/g)).toHaveLength(1);
   });
 });
 
@@ -447,7 +460,7 @@ describe("the money column — one decimal axis, both languages", () => {
 
   it("the grand total is the only row with a double rule", () => {
     const html = buildSaleReceiptHtml(saleOpts());
-    expect(html).toContain('<tr class="total">');
+    expect(html).toContain('<tr class="total" data-row="grand-total">');
     expect(html).toContain("border-bottom: 3px double currentColor;");
   });
 
@@ -568,7 +581,7 @@ describe("buildSaleReceiptHtml — bilingual (identity.language)", () => {
     expect(html).toContain("Cash");
     expect(html).toContain("Card");
     expect(html).toContain("Dine-in");
-    expect(html).toContain("Served by");
+    expect(html).toContain("Cashier:");
     expect(html).toContain("Simplified Tax Invoice");
   });
 
@@ -665,6 +678,37 @@ describe("buildCreditNoteHtml — bilingual (identity.language)", () => {
 });
 
 describe("professional print hierarchy", () => {
+  it.each([
+    ["58", 2],
+    ["80", 4],
+  ] as const)("%smm uses a stable item-table contract", (paperWidth, columns) => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth }));
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const table = doc.querySelector('[data-section="items"]');
+    expect(doc.body.dataset.paper).toBe(paperWidth);
+    expect(table?.querySelectorAll("col")).toHaveLength(columns);
+    expect(table?.querySelectorAll("thead th")).toHaveLength(columns);
+    expect(table?.querySelectorAll("tbody tr:first-child > td")).toHaveLength(columns);
+  });
+
+  it("prints structured contact details once and suppresses a legacy contact-only footer", () => {
+    const html = buildSaleReceiptHtml(
+      saleOpts({ identity: { ...IDENTITY, footer: `${IDENTITY.phone} · ${IDENTITY.email}` } }),
+    );
+    expect(html.match(/0112345678/g)).toHaveLength(1);
+    expect(html.match(/info@example\.com/g)).toHaveLength(1);
+    expect(html).toContain('<div class="contact">');
+    expect(html).toContain('<span class="ltr">info@example.com</span>');
+  });
+
+  it("preserves a real custom footer while keeping contacts out of the header", () => {
+    const html = buildSaleReceiptHtml(saleOpts());
+    const header = html.slice(html.indexOf('<header class="identity">'), html.indexOf("</header>"));
+    expect(header).not.toContain(IDENTITY.phone);
+    expect(header).not.toContain(IDENTITY.email);
+    expect(html).toContain("سجل معنا في برنامج الولاء");
+  });
+
   it("keeps the A4 settlement, QR and closing blocks indivisible", () => {
     const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4" }));
     expect(html).toContain('class="settlement"');

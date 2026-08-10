@@ -182,14 +182,14 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     orderType: { dine_in: "محلي", delivery: "توصيل", takeaway: "سفري" },
     taxNumber: "الرقم الضريبي:",
     crNumber: "س.ت:",
-    servedBy: "تم خدمتكم عن طريق",
+    servedBy: "الكاشير:",
     dateLabel: "التاريخ:",
-    serviceType: "الطلب:",
+    serviceType: "نوع الطلب:",
     table: "طاولة",
     customer: "العميل:",
     offlineRef: "مرجع محلي:",
     offlineRefNote: "سيُرحَّل عند عودة الاتصال",
-    invoiceRef: "فاتورة:",
+    invoiceRef: "رقم الفاتورة:",
     simplifiedTaxInvoice: "فاتورة ضريبية مبسطة",
     taxInvoice: "فاتورة ضريبية",
     provisionalReceipt: "إيصال مبدئي — لم يُرحَّل بعد",
@@ -198,15 +198,15 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     colQty: "كمية",
     colPrice: "سعر",
     colTotal: "إجمالي",
-    itemsCount: "عدد الأصناف",
-    subtotal: "المجموع",
+    itemsCount: "عدد البنود",
+    subtotal: "المجموع الفرعي",
     lineDiscounts: "خصومات الأسطر",
     discount: "الخصم",
     vat: "الضريبة",
-    vatIncluded: "مشمولة",
+    vatIncluded: "ضمن الإجمالي",
     grandTotal: "الإجمالي",
     youSaved: "وفّرت في هذه الفاتورة",
-    paymentSection: "المدفوع",
+    paymentSection: "تفاصيل الدفع",
     received: "المستلَم",
     change: "الباقي",
     currency: "ر.س",
@@ -231,14 +231,14 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     orderType: { dine_in: "Dine-in", delivery: "Delivery", takeaway: "Takeaway" },
     taxNumber: "VAT Number:",
     crNumber: "CR:",
-    servedBy: "Served by",
+    servedBy: "Cashier:",
     dateLabel: "Date:",
-    serviceType: "Order:",
+    serviceType: "Order type:",
     table: "Table",
     customer: "Customer:",
     offlineRef: "Local ref:",
     offlineRefNote: "will sync once back online",
-    invoiceRef: "Invoice:",
+    invoiceRef: "Invoice no.:",
     simplifiedTaxInvoice: "Simplified Tax Invoice",
     taxInvoice: "Tax Invoice",
     provisionalReceipt: "Provisional receipt — not filed yet",
@@ -247,15 +247,15 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     colQty: "Qty",
     colPrice: "Price",
     colTotal: "Total",
-    itemsCount: "Items",
+    itemsCount: "Line items",
     subtotal: "Subtotal",
     lineDiscounts: "Line discounts",
     discount: "Discount",
     vat: "VAT",
-    vatIncluded: "incl.",
+    vatIncluded: "included in total",
     grandTotal: "Grand Total",
     youSaved: "You saved on this invoice",
-    paymentSection: "Paid",
+    paymentSection: "Payment details",
     received: "Received",
     change: "Change",
     currency: "SAR",
@@ -346,7 +346,7 @@ export function baseCss(paper: PaperWidth): string {
   /* Prefer the locally installed Cairo face used by both React apps. The
      fallback stack remains entirely local/offline-safe for print windows. */
   @font-face { font-family: "Cairo Receipt"; src: local("Cairo");
-               font-style: normal; font-weight: 200 1000; font-display: swap; }
+               font-style: normal; font-weight: 400 700; font-display: swap; }
   body { font-family: "Cairo Receipt", "Cairo", "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
          width: ${p.width}; margin: 0 auto; padding: ${p.pad};
          color: var(--mt-text, CanvasText); background: var(--mt-surface, Canvas); font-size: ${p.font};
@@ -366,11 +366,12 @@ export function baseCss(paper: PaperWidth): string {
   /* Each meta value is its own bidi island, so a name and a phone number keep
      their order regardless of which script either one is in. */
   .bidi { unicode-bidi: isolate; }
-  h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 1px; line-height: 1.18;
-       font-weight: 800; letter-spacing: ${p.track}; }
+  h1 { font-size: ${p.h1}; text-align: center; margin-bottom: 2px; line-height: 1.22;
+       font-weight: 700; letter-spacing: ${p.track}; overflow-wrap: anywhere; }
   .sub { text-align: center; font-size: 0.92em; color: var(--mt-text-muted, GrayText); }
-  .brand { text-align: center; font-size: 0.95em; font-weight: 750; }
-  .legal { text-align: center; font-size: 0.88em; color: var(--mt-text-muted, GrayText); }
+  .brand { text-align: center; font-size: 0.95em; font-weight: 700; }
+  .legal { text-align: center; font-size: 0.86em; line-height: 1.32;
+           color: var(--mt-text-muted, GrayText); }
   .branch { text-align: center; font-size: 0.95em; font-weight: 700; }
   .identity { break-inside: avoid; page-break-inside: avoid; }
   hr { border: none; border-top: 1px dashed currentColor; margin: 6px 0; }
@@ -385,31 +386,33 @@ export function baseCss(paper: PaperWidth): string {
   /* ── identity ─────────────────────────────────────────────────────────────*/
   .logo { text-align: center; margin-bottom: 3px; }
   .logo img { max-width: 62%; max-height: ${p.logo}; object-fit: contain; }
-  .welcome { text-align: center; font-weight: 700; font-size: 1.05em; margin: 5px 0 4px;
+  .welcome { text-align: center; font-weight: 700; font-size: 1em; margin: 5px 0 4px;
              line-height: 1.35; }
-  .doctype { text-align: center; font-weight: 800; font-size: 0.95em; letter-spacing: ${p.track};
+  .doctype { text-align: center; font-weight: 700; font-size: 0.95em; letter-spacing: ${p.track};
              border-top: 1px solid currentColor; border-bottom: 1px solid currentColor;
-             padding: 2px 0; margin: 6px 0 5px; }
+             padding: 3px 0; margin: 7px 0 5px; }
 
   /* ── transaction meta (label → value, value pinned to the far edge) ───────*/
   .meta td { padding: 1px 0; font-size: 0.95em; }
   .meta .k { width: 1%; white-space: nowrap; padding-inline-end: 10px;
              color: var(--mt-text-muted, GrayText); }
-  .meta .v { text-align: end; font-weight: 700; }
+  .meta .v { text-align: end; font-weight: 650; }
   .bi-ar, .bi-en { unicode-bidi: isolate; }
   .bi-en { font-size: 0.9em; font-weight: 600; }
   .bi-sep { padding-inline: 0.18em; color: var(--mt-text-muted, GrayText); }
 
   /* ── served by — the cashier credit, its own band, never a metadata crumb ─*/
-  .served { text-align: center; margin: 6px 0 2px; padding: 4px 0;
-            border-top: 1px dotted currentColor; border-bottom: 1px dotted currentColor; }
-  .served .k { display: block; font-size: 0.85em; letter-spacing: ${p.track};
-               color: var(--mt-text-muted, GrayText); }
-  .served .v { display: block; font-size: 1.12em; font-weight: 800; margin-top: 1px; }
-
   /* ── items — whitespace separates rows; no rule per row ───────────────────*/
-  .items td { padding: 3px 0; }
-  .items .nm { overflow-wrap: anywhere; padding-inline-end: 8px; }
+  .items { table-layout: fixed; }
+  .items col.item { width: 46%; }
+  .items col.qty { width: 12%; }
+  .items col.price { width: 19%; }
+  .items col.line-total { width: 23%; }
+  .items.compact col.item { width: 66%; }
+  .items.compact col.line-total { width: 34%; }
+  .items td { padding: 4px 0; }
+  .items tbody tr + tr td { border-top: 1px dotted currentColor; }
+  .items .nm { overflow-wrap: anywhere; padding-inline-end: 8px; font-weight: 600; }
   .items td.money.b { font-weight: 700; }
   .line-note { font-size: 0.85em; font-weight: 400; color: var(--mt-text-muted, GrayText); }
   /* "2 × 68.00" under the item name — the 58mm layout's unit economics. Kept in
@@ -432,12 +435,15 @@ export function baseCss(paper: PaperWidth): string {
          and the gutter opens on the wrong side. */
   td.money, th.mh { text-align: right; width: 1%; white-space: nowrap;
                     padding-inline-start: 7px; }
+  .items td.money, .items th.mh { width: auto; }
   td.money .n { display: inline-block; }
 
   /* ── money ────────────────────────────────────────────────────────────────*/
   .sec { font-size: 0.85em; font-weight: 700; letter-spacing: ${p.track};
-         color: var(--mt-text-muted, GrayText); margin: 5px 0 1px; }
-  .grand { font-size: ${p.grand}; font-weight: 800; border-top: 1px solid currentColor; }
+         color: var(--mt-text-muted, GrayText); margin: 6px 0 2px; }
+  .tax-meta { display: block; margin-top: 1px; font-size: 0.8em;
+              color: var(--mt-text-muted, GrayText); white-space: nowrap; }
+  .grand { font-size: ${p.grand}; font-weight: 700; border-top: 1px solid currentColor; }
   /* The total, and only the total, gets the double rule. It also lives in its
      OWN table: sharing one with the subtotal/VAT rows let the widest amount
      (the total, which carries a currency suffix) size the whole money column,
@@ -445,25 +451,31 @@ export function baseCss(paper: PaperWidth): string {
      NOTE: comments in here ship inside every printed document, so keep them
      ASCII and backtick-free (this is a JS template literal) — a stray currency
      glyph shows up in a not.toContain test and in the document's own source. */
-  .total-tbl td { font-size: ${p.grand}; font-weight: 900; padding: 4px 0;
+  .total-tbl td { font-size: ${p.grand}; font-weight: 700; padding: 5px 0 4px;
                   border-top: 1px solid currentColor; border-bottom: 3px double currentColor; }
   .savings { text-align: center; font-weight: 700; font-size: 0.95em; margin: 5px 0;
              padding: 3px 0; border-top: 1px dotted currentColor;
              border-bottom: 1px dotted currentColor; }
-  .change td { font-weight: 800; }
+  .change td { font-weight: 700; }
   .settlement { break-inside: avoid; page-break-inside: avoid; }
 
   /* ── closing ──────────────────────────────────────────────────────────────*/
   .closing { break-inside: avoid; page-break-inside: avoid; }
-  .foot { text-align: center; margin-top: 9px; font-weight: 700; font-size: 1.05em; }
+  .foot { text-align: center; margin-top: 8px; font-weight: 700; font-size: 1.03em; }
+  .contact { display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+             gap: 2px 7px; margin-top: 4px; font-size: 0.85em;
+             color: var(--mt-text-muted, GrayText); }
+  .contact .ltr, .contact .num { white-space: nowrap; }
   .policy { text-align: center; font-size: 0.9em; color: var(--mt-text-muted, GrayText);
             margin-top: 3px; line-height: 1.35; }
   .qr-zone { break-inside: avoid; page-break-inside: avoid; }
-  .qr { text-align: center; margin-top: 9px; }
-  .qr img { image-rendering: pixelated; }
+  .qr { text-align: center; margin-top: 7px; }
+  .qr img { display: block; width: ${paper === "58" ? "25mm" : paper === "80" ? "28mm" : "30mm"};
+            height: auto; margin: 0 auto; padding: 1.2mm; box-sizing: content-box;
+            background: #fff; image-rendering: pixelated; }
   .qr-cap { text-align: center; font-size: 0.82em; margin-top: 2px;
             color: var(--mt-text-muted, GrayText); }
-  .stamp { border: 2px solid currentColor; text-align: center; font-weight: 900;
+  .stamp { border: 2px solid currentColor; text-align: center; font-weight: 700;
            letter-spacing: ${p.track}; padding: 3px 8px; margin: 6px auto; width: fit-content; }
   .kitchen { font-size: ${p.kitchen}; }
   .kitchen td { font-weight: 700; padding: 4px 0; }
@@ -475,7 +487,7 @@ export function baseCss(paper: PaperWidth): string {
      the ERP's on-screen live preview only — printing takes full ink and lets
      size and weight carry the hierarchy instead. */
   @media print { .sub, .policy, .qr-cap, .line-note, .line-calc, .sec,
-    .meta .k, .served .k { color: CanvasText; } }
+    .meta .k, .tax-meta, .contact { color: CanvasText; } }
   ${
     paper === "A4"
       ? `
@@ -492,7 +504,8 @@ export function baseCss(paper: PaperWidth): string {
   .qr-zone { margin-top: 6mm; }
   .closing { margin-top: 5mm; }
   `
-      : "@media print { body { width: auto; } }"
+      : `@page { margin: 0; }
+  @media print { body { width: ${p.width}; max-width: ${p.width}; margin: 0 auto; } }`
   }
 `;
 }
@@ -642,13 +655,18 @@ function sellerBlock(
 ): { sellerName: string; lines: string[] } {
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
   const t = labelsFor(lang);
-  const sellerName = idn?.sellerName || idn?.brandName || fallbackSellerName;
+  const brandName = String(idn?.brandName || "").trim();
+  const registeredName = String(idn?.sellerName || "").trim();
+  // The customer recognises the trading brand first. The registered seller is
+  // still printed directly below it for the legal/tax identity, but must not
+  // dominate a narrow receipt with a long company name.
+  const sellerName = brandName || registeredName || fallbackSellerName;
   const lines: string[] = [];
   if (idn) {
-    const brandName = String(idn.brandName || "").trim();
-    const legalName = String(idn.branchCompanyName || idn.legalName || "").trim();
-    if (brandName && brandName !== sellerName) lines.push(`<div class="brand">${escFree(brandName)}</div>`);
-    if (legalName && legalName !== sellerName && legalName !== brandName) lines.push(`<div class="legal">${escFree(legalName)}</div>`);
+    const legalNames = [registeredName, String(idn.legalName || "").trim(), String(idn.branchCompanyName || "").trim()].filter(
+      (value, index, all) => value && value !== sellerName && all.indexOf(value) === index,
+    );
+    legalNames.forEach((name) => lines.push(`<div class="legal">${escFree(name)}</div>`));
     if (on("taxNumber") && idn.taxNumber) lines.push(`<div class="sub">${t.taxNumber} <span class="num">${esc(idn.taxNumber)}</span></div>`);
     if (on("crNumber") && idn.crNumber) lines.push(`<div class="sub">${t.crNumber} <span class="num">${esc(idn.crNumber)}</span></div>`);
     // nationalAddress (the ZATCA short address) is the authoritative one; the
@@ -659,12 +677,6 @@ function sellerBlock(
     // break every caller that builds the 9-key literal.
     const place = on("nationalAddress") ? idn.nationalAddress || idn.address || "" : "";
     if (place) lines.push(`<div class="sub">${escFree(place)}</div>`);
-    // Phone and e-mail share one line: two contact crumbs, one row of paper.
-    const contact = [
-      on("phone") && idn.phone ? `<span class="num">${esc(idn.phone)}</span>` : "",
-      on("email") && idn.email ? esc(idn.email) : "",
-    ].filter(Boolean);
-    if (contact.length) lines.push(`<div class="sub">${contact.join(" · ")}</div>`);
   }
   return { sellerName, lines };
 }
@@ -716,12 +728,62 @@ function qrBlock(zatcaQrDataUrl: string | null | undefined, offlineRef: boolean,
 
 /** `defaultThankYou`, when passed, must already be the caller's language-correct
  *  fallback (the two builders below pass a per-language value from LABELS). */
-function footerBlock(idn: DocumentIdentity | null, lang: RenderLanguage, defaultThankYou?: string): string {
+function contactBlock(idn: DocumentIdentity | null, show: DocumentShowFields | null): string {
+  if (!idn) return "";
+  const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
+  const parts = [
+    on("phone") && idn.phone ? `<span class="num">${esc(idn.phone)}</span>` : "",
+    on("email") && idn.email ? `<span class="ltr">${esc(idn.email)}</span>` : "",
+  ].filter(Boolean);
+  return parts.length ? `<div class="contact">${parts.join('<span aria-hidden="true">·</span>')}</div>` : "";
+}
+
+function normalizedContactText(value: string): string {
+  return value.toLocaleLowerCase().replace(/[\s·|,،;:()\-_/+.]+/gu, "");
+}
+
+/** Some older settings stored the phone/e-mail inside ReceiptFooter. Once the
+ * structured contact block is rendered that legacy value would print the same
+ * information twice, so suppress it only when nothing except those contacts
+ * remains. Any real policy or custom prose is preserved verbatim. */
+function isContactOnlyFooter(footer: string, idn: DocumentIdentity | null): boolean {
+  if (!footer || !idn) return false;
+  let remainder = normalizedContactText(footer);
+  let matched = false;
+  for (const value of [idn.phone, idn.email]) {
+    const token = normalizedContactText(String(value || ""));
+    if (!token || !remainder.includes(token)) continue;
+    matched = true;
+    remainder = remainder.replace(token, "");
+  }
+  return matched && remainder.length === 0;
+}
+
+function footerBlock(
+  idn: DocumentIdentity | null,
+  lang: RenderLanguage,
+  show: DocumentShowFields | null,
+  defaultThankYou?: string,
+): string {
   const ownerThankYou = idn?.thankYou || "";
   const thankYou = ownerThankYou ? escFree(ownerThankYou) : defaultThankYou || labelsFor(lang).defaultThankYou;
+  const configuredFooter = idn?.footer && !isContactOnlyFooter(idn.footer, idn) ? `<div class="policy">${escFree(idn.footer)}</div>` : "";
   return `<footer class="closing"><div class="foot">${thankYou}</div>
+  ${contactBlock(idn, show)}
   ${idn?.returnPolicy ? `<div class="policy">${escFree(idn.returnPolicy)}</div>` : ""}
-  ${idn?.footer ? `<div class="policy">${escFree(idn.footer)}</div>` : ""}</footer>`;
+  ${configuredFooter}</footer>`;
+}
+
+/** Tax names are owner-entered text. Older values sometimes already contain a
+ * percentage (including the Arabic `%15` order). The rate is structured data
+ * and is rendered separately, so strip only a trailing percentage from the
+ * free-text label to prevent `15% (15%)` on the fiscal document. */
+function taxDisplayName(rawName: string | null | undefined, fallback: string): string {
+  const cleaned = String(rawName || "")
+    .trim()
+    .replace(/\s*\(?\s*(?:%\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*%)\s*\)?\s*$/u, "")
+    .trim();
+  return esc(cleaned || fallback);
 }
 
 /** One row of the transaction-meta grid. */
@@ -838,6 +900,9 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
   const itemHead = compact
     ? `<tr><th>${t.colItem}</th><th class="mh">${t.colTotal}</th></tr>`
     : `<tr><th>${t.colItem}</th><th class="mh">${t.colQty}</th><th class="mh">${t.colPrice}</th><th class="mh">${t.colTotal}</th></tr>`;
+  const itemColumns = compact
+    ? `<colgroup><col class="item"><col class="line-total"></colgroup>`
+    : `<colgroup><col class="item"><col class="qty"><col class="price"><col class="line-total"></colgroup>`;
 
   const payHtml = opts.payments
     .map((p) => `<tr><td>${t.pay[p.method] ?? esc(p.method)}</td>${money(fmt2(p.amount))}</tr>`)
@@ -857,6 +922,9 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
           [label, opts.tableNo ? `${t.table} <span class="num">${esc(opts.tableNo)}</span>` : ""].filter(Boolean).join(" · "),
         )
       : "",
+    on("cashier") && opts.cashierName
+      ? metaRow(t.servedBy, `<span class="bidi">${esc(opts.cashierName)}</span>`)
+      : "",
     on("customer") && (opts.customerName || opts.customerPhone)
       ? metaRow(
           t.customer,
@@ -869,17 +937,8 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
     .filter(Boolean)
     .join("\n    ");
 
-  // «تم خدمتكم عن طريق …» — the owner's request: the person who served the
-  // customer gets a named credit line of their own, not a slash-separated crumb
-  // in a metadata row. Still gated by the `cashier` toggle for shops that do not
-  // want staff names on paper.
-  const servedBy =
-    on("cashier") && opts.cashierName
-      ? `<div class="served"><span class="k">${t.servedBy}</span><span class="v">${esc(opts.cashierName)}</span></div>`
-      : "";
-
   const saved = (totals.lineDiscountTotal || 0) + (totals.discountAmount || 0);
-  const taxName = idn?.salesTaxName ? esc(idn.salesTaxName) : t.vat;
+  const taxName = taxDisplayName(idn?.salesTaxName, t.vat);
   const docType = docTypeLabel(opts, lang, thermal);
 
   return `<header class="identity">${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
@@ -893,23 +952,23 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
     ${metaRows}
   </table>
   ${opts.offlineRef ? `<div class="sub">${t.offlineRefNote}</div>` : ""}
-  ${servedBy}
   <hr class="rule">
-  <table class="items">
+  <table class="items${compact ? " compact" : ""}" data-section="items">
+    ${itemColumns}
     <thead>${itemHead}</thead>
     <tbody>${linesHtml}</tbody>
   </table>
   <hr class="rule">
-  <section class="settlement">
+  <section class="settlement" data-section="settlement">
   <table class="tot">
     <tr><td>${t.itemsCount}</td>${money(String(opts.lines.length))}</tr>
     <tr><td>${t.subtotal}</td>${money(fmt2(totals.subtotal))}</tr>
     ${totals.lineDiscountTotal > 0 ? `<tr><td>${t.lineDiscounts}</td>${money(`-${fmt2(totals.lineDiscountTotal)}`)}</tr>` : ""}
     ${totals.discountAmount > 0 ? `<tr><td>${t.discount}${opts.discountName ? ` (${esc(opts.discountName)})` : ""}</td>${money(`-${fmt2(totals.discountAmount)}`)}</tr>` : ""}
-    <tr><td>${taxName} (${fmtQty(opts.vatRate)}% ${t.vatIncluded})</td>${money(fmt2(totals.vatTotal))}</tr>
+    <tr data-row="vat"><td><span class="tax-name">${taxName}</span><span class="tax-meta"><span class="num">${fmtQty(opts.vatRate)}%</span> ${t.vatIncluded}</span></td>${money(fmt2(totals.vatTotal))}</tr>
   </table>
   <table class="tot total-tbl">
-    <tr class="total"><td>${t.grandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
+    <tr class="total" data-row="grand-total"><td>${t.grandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
   </table>
   ${saved > 0 ? `<div class="savings">${t.youSaved} <span class="num">${fmt2(saved)} ${cur}</span></div>` : ""}
   ${payHtml || opts.cashTendered || opts.changeDue ? `<div class="sec">${t.paymentSection}</div>` : ""}
@@ -919,7 +978,7 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
   </table>
   </section>
   ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"), lang)}
-  ${footerBlock(idn, lang)}`;
+  ${footerBlock(idn, lang, show)}`;
 }
 
 export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {
@@ -1017,9 +1076,12 @@ function creditNoteBody(opts: CreditNoteOptions, lang: RenderLanguage, paper: Pa
   const itemHead = compact
     ? `<tr><th>${t.colItem}</th><th class="mh">${t.colTotal}</th></tr>`
     : `<tr><th>${t.colItem}</th><th class="mh">${t.colReturned}</th><th class="mh">${t.colPrice}</th><th class="mh">${t.colTotal}</th></tr>`;
+  const itemColumns = compact
+    ? `<colgroup><col class="item"><col class="line-total"></colgroup>`
+    : `<colgroup><col class="item"><col class="qty"><col class="price"><col class="line-total"></colgroup>`;
 
   const { sellerName, lines: sellerLines } = sellerBlock(idn, show, opts.fallbackSellerName, lang);
-  const taxName = idn?.salesTaxName ? esc(idn.salesTaxName) : t.vat;
+  const taxName = taxDisplayName(idn?.salesTaxName, t.vat);
 
   const metaRows = [
     metaRow(t.docNumber, `<span class="num">${esc(opts.invoiceNumber || "—")}</span>`),
@@ -1051,24 +1113,25 @@ function creditNoteBody(opts: CreditNoteOptions, lang: RenderLanguage, paper: Pa
     ${metaRows}
   </table>
   <hr class="rule">
-  <table class="items">
+  <table class="items${compact ? " compact" : ""}" data-section="items">
+    ${itemColumns}
     <thead>${itemHead}</thead>
     <tbody>${linesHtml}</tbody>
   </table>
   <hr class="rule">
-  <section class="settlement">
+  <section class="settlement" data-section="settlement">
   <table class="tot">
     <tr><td>${t.itemsCount}</td>${money(String(opts.lines.length))}</tr>
     <tr><td>${t.subtotal}</td>${money(fmt2(totals.subtotal))}</tr>
     ${totals.discountAmount > 0 ? `<tr><td>${t.discount}</td>${money(`-${fmt2(totals.discountAmount)}`)}</tr>` : ""}
-    <tr><td>${taxName} (${fmtQty(opts.vatRate)}% ${t.vatIncluded})</td>${money(fmt2(totals.vatTotal))}</tr>
+    <tr data-row="vat"><td><span class="tax-name">${taxName}</span><span class="tax-meta"><span class="num">${fmtQty(opts.vatRate)}%</span> ${t.vatIncluded}</span></td>${money(fmt2(totals.vatTotal))}</tr>
   </table>
   <table class="tot total-tbl">
-    <tr class="total"><td>${t.creditGrandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
+    <tr class="total" data-row="grand-total"><td>${t.creditGrandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
   </table>
   </section>
   ${qrBlock(opts.zatcaQrDataUrl, false, on("qr"), lang)}
-  ${footerBlock(idn, lang, t.creditNoteSubtitle)}`;
+  ${footerBlock(idn, lang, show, t.creditNoteSubtitle)}`;
 }
 
 export function buildCreditNoteHtml(opts: CreditNoteOptions): string {

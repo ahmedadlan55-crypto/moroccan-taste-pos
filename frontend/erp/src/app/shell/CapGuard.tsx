@@ -9,8 +9,9 @@ import { PermissionDenied } from "@/shared/ui";
 // never blocks (parity with RequireAuth) so the foundation stays demoable without
 // a real session — the closure gate therefore runs against a PRODUCTION build.
 // The backend remains the authoritative boundary.
-export function CapGuard({ cap, children }: { cap?: Capability; children: ReactNode }) {
+export function CapGuard({ cap, capsAny, children }: { cap?: Capability; capsAny?: readonly Capability[]; children: ReactNode }) {
   const { can } = usePermissions();
-  if (!cap || can(cap) || import.meta.env.DEV) return <>{children}</>;
+  const allowed = capsAny?.length ? capsAny.some((candidate) => can(candidate)) : !cap || can(cap);
+  if (allowed || import.meta.env.DEV) return <>{children}</>;
   return <PermissionDenied />;
 }

@@ -2,8 +2,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
-import { NAV, NAV_ITEMS } from "@/app/navigation/manifest";
-import { ALL_CAPS, ROLE_GRANTS } from "@/app/permissions";
+import { NAV, NAV_ITEMS, canAccessNavItem } from "@/app/navigation/manifest";
+import { ALL_CAPS, ROLE_GRANTS, can } from "@/app/permissions";
 import { ROUTE_PATHS, REDIRECT_PATHS, SUBROUTE_BASE_PATHS } from "@/app/router";
 
 // ── Anti-duplication / integrity harness ────────────────────────────────────
@@ -46,6 +46,19 @@ describe("navigation manifest integrity", () => {
     const caps = new Set<string>(ALL_CAPS);
     const offenders = NAV_ITEMS.filter((i) => !i.cap || !caps.has(i.cap));
     expect(offenders.map((i) => `${i.id} (${i.cap ?? "no cap"})`)).toEqual([]);
+  });
+
+  it("warehouse intelligence uses the server's finance-or-procurement union and excludes cashier", () => {
+    const items = NAV_ITEMS.filter((item) => item.id === "rp-inventory" || item.id === "rp-purchasing");
+    expect(items).toHaveLength(2);
+    for (const item of items) {
+      expect(item.capsAny).toEqual(["finance.reports.view", "procurement.reports"]);
+      expect(canAccessNavItem(item, (cap) => cap === "procurement.reports")).toBe(true);
+      expect(canAccessNavItem(item, (cap) => cap === "finance.reports.view")).toBe(true);
+      expect(canAccessNavItem(item, () => false)).toBe(false);
+      expect(can({ username: "cash", role: "cashier" }, "finance.reports.view")).toBe(false);
+      expect(can({ username: "cash", role: "cashier" }, "procurement.reports")).toBe(false);
+    }
   });
 });
 

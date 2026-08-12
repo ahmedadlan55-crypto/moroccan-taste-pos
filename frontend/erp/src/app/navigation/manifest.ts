@@ -27,6 +27,8 @@ export interface NavItem {
   icon: string;
   /** Capability required to see/enter the item (from the ONE catalog). */
   cap?: Capability;
+  /** Any-of gate for a cross-domain screen; mirrors its server-side union. */
+  capsAny?: readonly Capability[];
   /** Optional server feature-flag key; hidden until the flag is on. */
   flag?: string;
   /** The src/modules/<module> folder this item routes into. */
@@ -243,8 +245,8 @@ export const NAV: NavGroup[] = [
     id: "reports",
     label: "nav.groups.reports",
     items: [
-      { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports", subRoutes: true },
+      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports" },
       { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports" },
       { id: "rp-people", path: "/reports/people", label: "nav.items.rp-people", icon: "FileBarChart", cap: "reports.view", module: "reports" },
       { id: "rp-operations", path: "/reports/operations", label: "nav.items.rp-operations", icon: "FileBarChart", cap: "reports.view", module: "reports" },
@@ -272,6 +274,12 @@ export const NAV: NavGroup[] = [
 
 /** Flat list of every nav item (route registration + uniqueness tests). */
 export const NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
+
+/** One permission decision shared by sidebar, mobile, command palette + router. */
+export function canAccessNavItem(item: NavItem, can: (cap: Capability) => boolean): boolean {
+  if (item.capsAny?.length) return item.capsAny.some((cap) => can(cap));
+  return !item.cap || can(item.cap);
+}
 
 /** All items that route into a given module folder. */
 export function navByModule(module: string): NavItem[] {

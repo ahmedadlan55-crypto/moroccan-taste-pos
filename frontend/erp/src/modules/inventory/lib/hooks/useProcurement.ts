@@ -21,6 +21,8 @@ export interface ListParams {
   dir?: string;
   dateFrom?: string;
   dateTo?: string;
+  warehouseId?: string;
+  asOfDate?: string;
 }
 // query-key factories accept a plain record; ListParams is structurally one.
 type KeyParams = Record<string, unknown>;

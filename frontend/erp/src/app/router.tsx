@@ -164,7 +164,7 @@ export function AppRouter() {
             if (!Page) return [];
             const base = item.path.replace(/^\//, "");
             const element = (
-              <CapGuard cap={item.cap}>
+              <CapGuard cap={item.cap} capsAny={item.capsAny}>
                 <Page />
               </CapGuard>
             );

@@ -83,6 +83,9 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   "production.reverse": MGR,
   "production.delete": MGR,
   "procurement.view": READ_OPS,
+  // Mirrors the server seed for roles represented by this UI. Per-user
+  // overrides remain authoritative through the access-scope response.
+  "procurement.reports": [...ADM, "manager", "finance"],
   "procurement.manage": BACKOFFICE,
   "procurement.approve": MGR,
   // ── Sales / order-to-cash (inverted from the sales ROLE_GRANTS) ──

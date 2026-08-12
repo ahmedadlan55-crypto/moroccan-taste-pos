@@ -472,7 +472,7 @@ export function baseCss(paper: PaperWidth): string {
   .qr { text-align: center; margin-top: 7px; }
   .qr img { display: block; width: ${paper === "58" ? "25mm" : paper === "80" ? "28mm" : "30mm"};
             height: auto; margin: 0 auto; padding: 1.2mm; box-sizing: content-box;
-            background: #fff; image-rendering: pixelated; }
+            color-scheme: light; background: Canvas; image-rendering: pixelated; }
   .qr-cap { text-align: center; font-size: 0.82em; margin-top: 2px;
             color: var(--mt-text-muted, GrayText); }
   .stamp { border: 2px solid currentColor; text-align: center; font-weight: 700;

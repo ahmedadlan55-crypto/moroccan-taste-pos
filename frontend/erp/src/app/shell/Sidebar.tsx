@@ -7,7 +7,7 @@ import {
   LayoutGrid,
   MoreHorizontal,
 } from "lucide-react";
-import { NAV } from "@/app/navigation/manifest";
+import { NAV, canAccessNavItem } from "@/app/navigation/manifest";
 import { useAuth, usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
 import { useLang, useT } from "@/i18n";
@@ -56,7 +56,7 @@ export function Sidebar() {
   const groups = NAV.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) => (!item.cap || can(item.cap)) && (!item.flag || flags[item.flag] === true),
+      (item) => canAccessNavItem(item, can) && (!item.flag || flags[item.flag] === true),
     ),
   })).filter((group) => group.items.length > 0);
 

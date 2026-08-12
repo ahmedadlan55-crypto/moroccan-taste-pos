@@ -27,6 +27,7 @@ import { status } from "./status";
 import { table } from "./table";
 import { validation } from "./validation";
 import { workflow } from "./workflow";
+import { warehouseIntelligence } from "./warehouseIntelligence";
 
 /**
  * Merged Arabic dictionary barrel — one namespace per shared concern / module.
@@ -67,4 +68,5 @@ export const ar = {
   table,
   validation,
   workflow,
+  warehouseIntelligence,
 } as const;

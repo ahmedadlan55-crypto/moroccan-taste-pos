@@ -27,6 +27,7 @@ import { status } from "./status";
 import { table } from "./table";
 import { validation } from "./validation";
 import { workflow } from "./workflow";
+import { warehouseIntelligence } from "./warehouseIntelligence";
 
 /**
  * Merged English dictionary barrel — one namespace per shared concern / module.
@@ -67,4 +68,5 @@ export const en = {
   table,
   validation,
   workflow,
+  warehouseIntelligence,
 } as const;

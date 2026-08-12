@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { NAV_ITEMS } from "@/app/navigation/manifest";
+import { NAV_ITEMS, canAccessNavItem } from "@/app/navigation/manifest";
 import { usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
 import { useT } from "@/i18n";
@@ -12,7 +12,7 @@ export function MobileNav() {
   const { can } = usePermissions();
   const flags = useServerFlags();
   const items = NAV_ITEMS.filter(
-    (i) => (!i.cap || can(i.cap)) && (!i.flag || flags[i.flag] === true),
+    (i) => canAccessNavItem(i, can) && (!i.flag || flags[i.flag] === true),
   ).slice(0, 5);
 
   return (

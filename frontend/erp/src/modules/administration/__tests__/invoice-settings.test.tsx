@@ -129,7 +129,8 @@ describe("InvoiceSettingsPage", () => {
     fireEvent.change(inputs[4], { target: { value: "0555555555" } });
     let frame = screen.getByTestId("invoice-live-preview").querySelector("iframe");
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("0555555555"));
-    expect(frame).toHaveAttribute("srcdoc", expect.stringContaining("(0%"));
+    const previewDocument = new DOMParser().parseFromString(frame?.getAttribute("srcdoc") || "", "text/html");
+    expect(previewDocument.querySelector('[data-row="vat"] .num')?.textContent).toBe("0%");
     expect(frame).toHaveAttribute("srcdoc", expect.stringContaining('alt="ZATCA QR"'));
 
     fireEvent.click(screen.getAllByRole("switch")[8]);

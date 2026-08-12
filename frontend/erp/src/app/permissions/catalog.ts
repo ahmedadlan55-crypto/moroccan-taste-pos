@@ -83,6 +83,9 @@ export const ALL_CAPS = [
   "production.reverse",
   "production.delete",
   "procurement.view",
+  // Read grant enforced by procurement reports and the unified warehouse
+  // intelligence center. Distinct from operational procurement.view.
+  "procurement.reports",
   "procurement.manage",
   "procurement.approve",
   // ── Sales / order-to-cash (existing O2CCapability keys) ──

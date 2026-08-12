@@ -17,6 +17,16 @@ import SavedReportsPage from "./pages/SavedReports";
 import { REPORT_SECTIONS } from "./reportLinks";
 
 const SalesAnalyticsHub = lazy(() => import("./sales/SalesAnalyticsHub"));
+const InventoryIntelligencePage = lazy(() => import("./warehouse").then((module) => ({ default: module.InventoryIntelligencePage })));
+const PurchasingIntelligencePage = lazy(() => import("./warehouse").then((module) => ({ default: module.PurchasingIntelligencePage })));
+const InventoryReportDetail = lazy(() => Promise.all([
+  import("@/modules/inventory/features/reports/ReportDetailPage"),
+  import("@/modules/inventory/lib/providers"),
+]).then(([report, providers]) => ({
+  default: ({ reportType }: { reportType: string }) => (
+    <providers.WarehouseModuleProviders><report.ReportDetailPage reportType={reportType} /></providers.WarehouseModuleProviders>
+  ),
+})));
 
 export default function ReportsModule() {
   const { pathname } = useLocation();
@@ -27,6 +37,16 @@ export default function ReportsModule() {
         <SalesAnalyticsHub />
       </Suspense>
     );
+  }
+  if (key === "/reports/inventory") {
+    return <Suspense fallback={<LoadingState />}><InventoryIntelligencePage /></Suspense>;
+  }
+  if (key.startsWith("/reports/inventory/")) {
+    const reportType = key.slice("/reports/inventory/".length).split("/")[0] ?? "";
+    return <Suspense fallback={<LoadingState />}><InventoryReportDetail reportType={reportType} /></Suspense>;
+  }
+  if (key === "/reports/purchasing") {
+    return <Suspense fallback={<LoadingState />}><PurchasingIntelligencePage /></Suspense>;
   }
   if (key === "/reports/saved") return <SavedReportsPage />;
   const section = REPORT_SECTIONS[key];

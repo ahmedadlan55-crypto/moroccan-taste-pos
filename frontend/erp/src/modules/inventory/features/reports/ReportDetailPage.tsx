@@ -49,9 +49,10 @@ function StatusPill({ label }: { label: string }) {
   return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${cls}`}>{label || "—"}</span>;
 }
 
-export function ReportDetailPage() {
+export function ReportDetailPage({ reportType: reportTypeOverride }: { reportType?: string } = {}) {
   const t = useT();
-  const { reportType = "" } = useParams();
+  const { reportType: reportTypeParam = "" } = useParams();
+  const reportType = reportTypeOverride ?? reportTypeParam;
   const config = REPORTS[reportType];
   const { scope } = useWarehouseScope();
   const [params, setParams] = useSearchParams();
@@ -79,7 +80,7 @@ export function ReportDetailPage() {
     return (
       <div>
         <PageHeader eyebrow={t("inventoryRest.reports.eyebrow")} title={t("inventoryRest.reports.unknownTitle")} />
-        <EmptyState title={t("inventoryRest.reports.unknownTitle")} body={t("inventoryRest.reports.unknownBody")} action={<Link className="text-sm font-bold text-teal-700" to="/reports">{t("inventoryRest.reports.backToCenter")}</Link>} />
+        <EmptyState title={t("inventoryRest.reports.unknownTitle")} body={t("inventoryRest.reports.unknownBody")} action={<Link className="text-sm font-bold text-teal-700" to="/reports/inventory">{t("inventoryRest.reports.backToCenter")}</Link>} />
       </div>
     );
   }
@@ -135,7 +136,7 @@ export function ReportDetailPage() {
       <Button variant="secondary" onClick={() => window.print()}>
         <Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}
       </Button>
-      <Link to="/reports" className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
+      <Link to="/reports/inventory" className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
         <ArrowRight className="h-4 w-4" /> {t("inventoryRest.reports.reportsLink")}
       </Link>
     </div>

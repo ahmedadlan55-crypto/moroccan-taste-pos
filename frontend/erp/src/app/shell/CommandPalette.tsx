@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, CornerDownLeft } from "lucide-react";
-import { NAV_ITEMS, navGroupOf } from "@/app/navigation/manifest";
+import { NAV_ITEMS, canAccessNavItem, navGroupOf } from "@/app/navigation/manifest";
 import { usePermissions } from "@/app/providers";
 import { useT } from "@/i18n";
 import { getIcon } from "./icons";
@@ -19,7 +19,7 @@ export function CommandPalette() {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const permitted = useMemo(() => NAV_ITEMS.filter((i) => !i.cap || can(i.cap)), [can]);
+  const permitted = useMemo(() => NAV_ITEMS.filter((i) => canAccessNavItem(i, can)), [can]);
   // Resolve each label through t() up front, so the search matches the VISIBLE
   // (translated) text — not the raw `nav.items.*` key the manifest now carries.
   const results = useMemo(() => {

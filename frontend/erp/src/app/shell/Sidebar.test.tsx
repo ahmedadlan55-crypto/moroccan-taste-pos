@@ -8,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 // uses; the real I18nProvider (default "ar") resolves them, so the assertions
 // below expect the translated Arabic output.
 vi.mock("@/app/navigation/manifest", () => ({
+  canAccessNavItem: () => true,
   NAV: [
     {
       id: "overview",

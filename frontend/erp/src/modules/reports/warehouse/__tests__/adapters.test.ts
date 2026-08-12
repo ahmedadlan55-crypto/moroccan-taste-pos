@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { toPurchaseIntelligenceResult, toWarehouseIntelligenceOverview } from "../adapters";
+import {
+  toGrniReconciliation,
+  toInventoryAccountingReconciliation,
+  toPurchaseIntelligenceResult,
+  toWarehouseIntelligenceOverview,
+} from "../adapters";
 
 describe("warehouse intelligence adapters", () => {
   it("maps the live overview contract without turning unavailable values into facts", () => {
@@ -50,5 +55,34 @@ describe("warehouse intelligence adapters", () => {
     expect(result.totals.qty).toBe(25);
     expect(result.totals).toMatchObject({ vatAmount: null, grossAmount: null, knownVatAmount: 0, missingVatLines: 1 });
     expect(result.pagination.total).toBe(1);
+  });
+
+  it("preserves accounting reconciliation blockers and IAS 2 readiness", () => {
+    const result = toInventoryAccountingReconciliation({
+      data: {
+        rows: [{ warehouseId: "W-1", warehouseName: "Main", subledgerValue: "125", glBalance: "120", difference: "5", fallbackPositions: "2" }],
+        summary: { subledgerValue: "125", glBalance: "120", difference: "5", fallbackPositions: "2", state: "not_reconciled", blockers: ["MASTER_COST_FALLBACK", "SUBLEDGER_GL_DIFFERENCE"], tolerance: "0.01" },
+        measurement: { inventorySystem: "perpetual", accountingBasisState: "perpetual_current_control", perpetualReconciliationReady: true, costFormula: "weighted_average_by_item_and_warehouse", currentOnly: true, inventoryControlAccount: { role: "INVENTORY", accountId: "A-1", code: "1310" } },
+        ias2Readiness: { carryingAmount: "125", carryingAmountReady: false, byInventoryClass: { state: "unavailable", reason: "MISSING" } },
+      },
+    });
+    expect(result.summary).toMatchObject({ subledgerValue: 125, glBalance: 120, difference: 5, state: "not_reconciled", tolerance: 0.01 });
+    expect(result.summary.blockers).toEqual(["MASTER_COST_FALLBACK", "SUBLEDGER_GL_DIFFERENCE"]);
+    expect(result.measurement.inventoryControlAccount.code).toBe("1310");
+    expect(result.ias2Readiness.carryingAmountReady).toBe(false);
+  });
+
+  it("maps GRNI aging and keeps unavailable GL comparison null", () => {
+    const result = toGrniReconciliation({ data: {
+      rows: [{ receiptId: "GR-1", receiptNumber: "GRN-1", receiptDate: "2026-08-01", supplierName: "Supplier", ageDays: "11", receivedValue: "100", invoicedValue: "60", returnedBeforeInvoiceValue: "10", outstandingValue: "30" }],
+      detail: { shown: "1", totalOpenReceipts: "2501", truncated: true, limit: "2000" },
+      aging: { current: 0, d30: "30", d60: 0, d90: 0, d90plus: 0, negative: 0, total: "30" },
+      reconciliation: { operationalOutstanding: "30", glBalance: null, difference: null, state: "not_reconciled", blockers: ["GRNI_GL_NOT_WAREHOUSE_DIMENSIONED"], grniAccount: { role: "GRNI", code: "2115" }, currentOnly: true },
+    } });
+    expect(result.rows[0]).toMatchObject({ ageDays: 11, outstandingValue: 30 });
+    expect(result.aging.d30).toBe(30);
+    expect(result.detail).toEqual({ shown: 1, totalOpenReceipts: 2501, truncated: true, limit: 2000 });
+    expect(result.reconciliation.glBalance).toBeNull();
+    expect(result.reconciliation.blockers).toEqual(["GRNI_GL_NOT_WAREHOUSE_DIMENSIONED"]);
   });
 });

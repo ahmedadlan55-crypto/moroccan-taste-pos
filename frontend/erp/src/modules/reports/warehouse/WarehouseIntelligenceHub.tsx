@@ -37,17 +37,26 @@ import { cn, formatCurrency, formatDate, formatNumber, formatQty } from "@/share
 import { downloadCsv } from "@/shared/lib/downloadCsv";
 import { useLang, useT } from "@/i18n";
 import { useServerFlags } from "@/app/server-flags";
+import { useCan } from "@/app/providers";
 import { WarehouseModuleProviders } from "@/modules/inventory/lib/providers";
 import { WarehouseScopeSelect } from "@/modules/inventory/lib/WarehouseScopeSelect";
 import { ALL_WAREHOUSES, useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useAnalytics } from "@/modules/inventory/lib/hooks/useAnalytics";
 import { makeItemFetcher, supplierFetcher, type ItemHit, type SupplierHit } from "@/modules/inventory/lib/hooks/useEntitySearch";
 import { useProcurementReport } from "@/modules/inventory/lib/hooks/useProcurement";
-import { usePurchaseIntelligence, useWarehouseIntelligenceOverview } from "./api";
+import {
+  useGrniReconciliation,
+  useInventoryAccountingReconciliation,
+  usePurchaseIntelligence,
+  useWarehouseIntelligenceOverview,
+} from "./api";
 import {
   INVENTORY_INTELLIGENCE_REPORTS,
   PURCHASING_INTELLIGENCE_REPORTS,
+  REPORT_FAMILIES,
+  REPORT_READINESS_REQUIREMENTS,
   type IntelligenceReportLink,
+  type ReportFamily,
 } from "./reportCatalog";
 import type { IntelligenceWarning, PurchaseIntelligenceRow } from "./contracts";
 
@@ -109,41 +118,258 @@ function IntelligenceNavigation({ mode }: { mode: WarehouseIntelligenceMode }) {
 function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode; range: DateRange; scope: string }) {
   const t = useT();
   const lang = useLang();
+  const [activeFamily, setActiveFamily] = useState<ReportFamily | "all">("all");
   const GoArrow = lang === "ar" ? ArrowLeft : ArrowRight;
   const reports = mode === "inventory" ? INVENTORY_INTELLIGENCE_REPORTS : PURCHASING_INTELLIGENCE_REPORTS;
+  const families = REPORT_FAMILIES
+    .map((family) => ({ ...family, reports: reports.filter((report) => report.family === family.id) }))
+    .filter((family) => family.reports.length > 0);
+  const visibleFamilies = activeFamily === "all" ? families : families.filter((family) => family.id === activeFamily);
+
+  const metadata = (report: IntelligenceReportLink) => (
+    <span className="mt-3 flex flex-wrap gap-1.5">
+      <Badge tone={report.maturity === "authoritative" ? "success" : report.maturity === "conditional" ? "warning" : "neutral"}>
+        {t(`warehouseIntelligence.assurance.maturity.${report.maturity}`)}
+      </Badge>
+      <Badge tone="neutral">{t(`warehouseIntelligence.assurance.basis.${report.basis}`)}</Badge>
+      {report.standard && <Badge tone="info">{t(`warehouseIntelligence.assurance.standard.${report.standard}`)}</Badge>}
+      {report.requiresSupplier && <Badge tone="purple">{t("warehouseIntelligence.assurance.requiresSupplier")}</Badge>}
+      <span className="basis-full mt-1 block w-full text-[11px] font-semibold leading-5 text-slate-500">
+        <span className="font-extrabold text-slate-600">{t("warehouseIntelligence.assurance.sourceLabel")}:</span>{" "}
+        {t(`warehouseIntelligence.assurance.source.${report.basis}`)}
+      </span>
+    </span>
+  );
+
   return (
-    <section aria-labelledby="warehouse-report-catalog">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+    <section id="report-catalog" className="scroll-mt-24" aria-labelledby="warehouse-report-catalog">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id="warehouse-report-catalog" className="text-lg font-extrabold text-slate-900">{t("warehouseIntelligence.catalog.title")}</h2>
-          <p className="mt-1 text-xs font-semibold text-slate-500">{t("warehouseIntelligence.catalog.subtitle")}</p>
+          <p className="mt-1 max-w-3xl text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.catalog.subtitle")}</p>
         </div>
         <Badge tone="neutral">{t("warehouseIntelligence.catalog.count", { count: reports.length })}</Badge>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {reports.map((report) => {
-          const Icon = report.icon;
-          return (
-            <Link
-              key={report.id}
-              to={withScope(report, range, scope)}
-              data-report-id={report.id}
-              className="surface group flex min-h-32 items-start gap-3 p-4 transition hover:-translate-y-0.5 hover:border-teal-300 hover:shadow-lift focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
-            >
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700"><Icon className="h-5 w-5" /></span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2 text-sm font-extrabold text-slate-900">
-                  {t(report.labelKey)}
-                  <GoArrow className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-teal-600" />
-                </span>
-                <span className="mt-1.5 block text-xs font-medium leading-5 text-slate-500">{t(report.descriptionKey)}</span>
-              </span>
-            </Link>
-          );
+
+      <div className="no-print mb-4 flex gap-2 overflow-x-auto pb-1" role="group" aria-label={t("warehouseIntelligence.catalog.familyFilter")}>
+        <button
+          type="button"
+          onClick={() => setActiveFamily("all")}
+          aria-pressed={activeFamily === "all"}
+          className={cn("min-h-10 shrink-0 rounded-xl border px-3 text-xs font-extrabold transition", activeFamily === "all" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-teal-300")}
+        >
+          {t("warehouseIntelligence.catalog.allFamilies")}
+        </button>
+        {families.map((family) => {
+          const Icon = family.icon;
+          return <button
+            key={family.id}
+            type="button"
+            onClick={() => setActiveFamily(family.id)}
+            aria-pressed={activeFamily === family.id}
+            className={cn("inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-xs font-extrabold transition", activeFamily === family.id ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-teal-300")}
+          >
+            <Icon className="h-4 w-4" />
+            {t(family.labelKey)}
+            <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", activeFamily === family.id ? "bg-white/20" : "bg-slate-100")}>{family.reports.length}</span>
+          </button>;
+        })}
+      </div>
+
+      <div className="space-y-5">
+        {visibleFamilies.map((family) => {
+          const FamilyIcon = family.icon;
+          return <section key={family.id} className="surface overflow-hidden" data-report-family={family.id} aria-labelledby={`report-family-${family.id}`}>
+            <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-teal-700 shadow-sm"><FamilyIcon className="h-4.5 w-4.5" /></span>
+              <div>
+                <h3 id={`report-family-${family.id}`} className="text-sm font-extrabold text-slate-900">{t(family.labelKey)}</h3>
+                <p className="mt-0.5 text-xs font-semibold leading-5 text-slate-500">{t(family.descriptionKey)}</p>
+              </div>
+            </div>
+            <div className="grid gap-px bg-slate-100 lg:grid-cols-2">
+              {family.reports.map((report) => {
+                const Icon = report.icon;
+                return <Link
+                  key={report.id}
+                  to={withScope(report, range, scope)}
+                  data-report-id={report.id}
+                  className="group flex min-h-36 items-start gap-3 bg-white p-4 transition hover:bg-teal-50/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700"><Icon className="h-5 w-5" /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2 text-sm font-extrabold text-slate-900">
+                      {t(report.labelKey)}
+                      <GoArrow className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-teal-600" />
+                    </span>
+                    <span className="mt-1.5 block text-xs font-medium leading-5 text-slate-500">{t(report.descriptionKey)}</span>
+                    {metadata(report)}
+                  </span>
+                </Link>;
+              })}
+            </div>
+          </section>;
+        })}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-[11px] font-semibold leading-5 text-slate-500">
+        <ShieldCheck className="me-1 inline h-4 w-4 text-teal-700" />
+        {t("warehouseIntelligence.assurance.legend")}
+      </div>
+    </section>
+  );
+}
+
+function ReportReadiness({ mode }: { mode: WarehouseIntelligenceMode }) {
+  const t = useT();
+  const requirements = REPORT_READINESS_REQUIREMENTS.filter((item) => item.modes.includes(mode));
+  const groups = REPORT_FAMILIES
+    .map((family) => ({ family, requirements: requirements.filter((item) => item.family === family.id) }))
+    .filter((group) => group.requirements.length > 0);
+  return (
+    <section className="surface overflow-hidden" aria-labelledby="report-readiness-title" data-testid="report-readiness">
+      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 id="report-readiness-title" className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.readiness.title")}</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.readiness.subtitle")}</p>
+          </div>
+          <Badge tone="warning">{t("warehouseIntelligence.readiness.notPublished")}</Badge>
+        </div>
+      </div>
+      <div className="space-y-px bg-slate-100">
+        {groups.map(({ family, requirements: familyRequirements }) => {
+          const Icon = family.icon;
+          return <section key={family.id} className="bg-white" aria-labelledby={`readiness-${mode}-${family.id}`}>
+            <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3"><Icon className="h-4 w-4 text-teal-700" /><h3 id={`readiness-${mode}-${family.id}`} className="text-xs font-extrabold text-slate-700">{t(family.labelKey)}</h3><Badge tone="neutral">{familyRequirements.length}</Badge></div>
+            <div className="grid gap-px bg-slate-100 lg:grid-cols-2">
+              {familyRequirements.map((requirement) => (
+                <div key={requirement.id} className="bg-white p-4" data-readiness-requirement={requirement.id}>
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="text-sm font-extrabold text-slate-900">{t(`warehouseIntelligence.readiness.items.${requirement.id}.label`)}</h4>
+                    <Badge tone="neutral">{t("warehouseIntelligence.readiness.requiresLedger")}</Badge>
+                  </div>
+                  <p className="mt-1.5 text-xs font-medium leading-5 text-slate-500">{t(`warehouseIntelligence.readiness.items.${requirement.id}.reason`)}</p>
+                  <p className="mt-2 text-[11px] font-bold leading-5 text-amber-700">{t(`warehouseIntelligence.readiness.items.${requirement.id}.requirement`)}</p>
+                </div>
+              ))}
+            </div>
+          </section>;
         })}
       </div>
     </section>
   );
+}
+
+function blockerLabel(t: ReturnType<typeof useT>, code: string): string {
+  const key = `warehouseIntelligence.accounting.blockers.${code}`;
+  const translated = t(key);
+  return translated === key ? code.replaceAll("_", " ") : translated;
+}
+
+const CRITICAL_ACCOUNTING_BLOCKERS = new Set([
+  "SUBLEDGER_GL_DIFFERENCE", "WAREHOUSE_DIMENSION_DIFFERENCE", "UNALLOCATED_GL_BALANCE",
+  "ORPHAN_STOCK_ITEM", "NEGATIVE_COST", "PERIODIC_INVENTORY_SYSTEM", "INVENTORY_SYSTEM_UNSUPPORTED",
+  "GRNI_GL_DIFFERENCE", "GRNI_OVER_CLEARED",
+]);
+
+function InventoryAccountingClose({ scope, range, canViewFinance }: { scope: string; range: DateRange; canViewFinance: boolean }) {
+  const t = useT();
+  const query = useInventoryAccountingReconciliation(scope === ALL_WAREHOUSES ? undefined : scope, canViewFinance);
+  const stockBalance = INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "stock-balance")!;
+  if (!canViewFinance) return <FinanceOnlySection title={t("warehouseIntelligence.accounting.inventoryTitle")} />;
+  if (query.isLoading) return <section className="surface p-4"><LoadingState rows={4} /></section>;
+  if (query.isError || !query.data) return (
+    <section className="surface p-4" data-testid="inventory-accounting-unavailable">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.accounting.inventoryTitle")}</h2><p className="mt-1 max-w-3xl text-xs font-semibold leading-5 text-amber-700">{t("warehouseIntelligence.accounting.supplementUnavailable")}</p></div><Button size="sm" variant="secondary" onClick={() => query.refetch()}>{t("warehouseIntelligence.actions.retry")}</Button></div>
+    </section>
+  );
+  const data = query.data;
+  const summary = data.summary;
+  const inventorySystem = data.measurement.inventorySystem === "periodic" ? "periodic" : data.measurement.inventorySystem === "perpetual" ? "perpetual" : "unknown";
+  const readiness = [
+    ["carryingAmount", data.ias2Readiness.carryingAmountReady ? "ready" : "blocked"],
+    ["byInventoryClass", data.ias2Readiness.byInventoryClass.state],
+    ["nrvAndWriteDowns", data.ias2Readiness.nrvAndWriteDowns.state],
+    ["writeDownReversals", data.ias2Readiness.writeDownReversals.state],
+    ["pledgedInventory", data.ias2Readiness.pledgedInventory.state],
+  ] as const;
+  return (
+    <section className="surface overflow-hidden" data-testid="inventory-accounting-reconciliation" aria-labelledby="inventory-accounting-title">
+      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div><h2 id="inventory-accounting-title" className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.accounting.inventoryTitle")}</h2><p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.accounting.inventorySubtitle")}</p></div>
+          <div className="flex flex-wrap gap-2"><Badge tone={summary.state === "reconciled" ? "success" : "danger"}>{t(`warehouseIntelligence.accounting.state.${summary.state === "reconciled" ? "reconciled" : "notReconciled"}`)}</Badge><Badge tone="neutral">{t("warehouseIntelligence.accounting.currentOnly")}</Badge></div>
+        </div>
+      </div>
+      <div className="space-y-4 p-4">
+        <WarningStrip warnings={data.warnings} />
+        {summary.blockers.length > 0 && <div className="flex flex-wrap gap-2" aria-label={t("warehouseIntelligence.accounting.blockersTitle")}>{summary.blockers.map((code) => <Badge key={code} tone={CRITICAL_ACCOUNTING_BLOCKERS.has(code) ? "danger" : "warning"}>{blockerLabel(t, code)}</Badge>)}</div>}
+        <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <MiniTotal label={t("warehouseIntelligence.accounting.subledgerValue")} value={formatCurrency(summary.subledgerValue)} />
+          <MiniTotal label={t("warehouseIntelligence.accounting.glBalance")} value={formatCurrency(summary.glBalance)} />
+          <MiniTotal label={t("warehouseIntelligence.accounting.difference")} value={formatCurrency(summary.difference)} />
+          <MiniTotal label={t("warehouseIntelligence.accounting.controlAccount")} value={data.measurement.inventoryControlAccount.code || "—"} />
+        </dl>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs font-semibold leading-5 text-sky-900">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <strong>{t("warehouseIntelligence.accounting.measurementTitle")}</strong>
+            <Badge tone={inventorySystem === "periodic" ? "warning" : "info"}>{t(`warehouseIntelligence.accounting.inventorySystem.${inventorySystem}`)}</Badge>
+          </div>
+          {t("warehouseIntelligence.accounting.measurementBody", { system: t(`warehouseIntelligence.accounting.inventorySystem.${inventorySystem}`), account: data.measurement.inventoryControlAccount.code || "—" })}
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full min-w-[820px] text-sm">
+          <thead className="bg-slate-50"><tr>{["warehouse", "subledgerValue", "glBalance", "difference", "costCoverage", "drilldown"].map((key) => <th key={key} className="px-3 py-3 text-start text-xs font-extrabold text-slate-500">{t(`warehouseIntelligence.accounting.columns.${key}`)}</th>)}</tr></thead>
+          <tbody className="divide-y divide-slate-100">{data.rows.map((row) => <tr key={row.warehouseId ?? "unallocated"} className="hover:bg-slate-50/70">
+            <td className="px-3 py-3 font-extrabold text-slate-800">{row.warehouseName || t("warehouseIntelligence.accounting.unallocated")}</td>
+            <td className="px-3 py-3 font-bold tabular-nums">{formatCurrency(row.subledgerValue)}</td><td className="px-3 py-3 font-bold tabular-nums">{formatCurrency(row.glBalance)}</td>
+            <td className={cn("px-3 py-3 font-extrabold tabular-nums", Math.abs(row.difference) > summary.tolerance ? "text-rose-700" : "text-emerald-700")}>{formatCurrency(row.difference)}</td>
+            <td className="px-3 py-3 text-xs font-bold text-slate-600">{t("warehouseIntelligence.accounting.costCoverageLine", { wac: row.wacPositions, fallback: row.fallbackPositions, missing: row.missingCostPositions, orphan: row.orphanStockPositions, negative: row.negativeCostPositions })}</td>
+            <td className="px-3 py-3"><Link className="font-extrabold text-teal-700 hover:underline" to={withScope(stockBalance, range, row.warehouseId ?? scope)}>{t("warehouseIntelligence.accounting.openStock")}</Link></td>
+          </tr>)}</tbody>
+        </table></div>
+        <div>
+          <h3 className="text-xs font-extrabold text-slate-700">{t("warehouseIntelligence.accounting.ias2Title")}</h3>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{readiness.map(([id, state]) => {
+            const ready = state === "ready" || state === "available";
+            return <div key={id} className="rounded-xl border border-slate-200 p-3"><div className="flex items-start justify-between gap-2"><span className="text-xs font-bold text-slate-700">{t(`warehouseIntelligence.accounting.ias2.${id}`)}</span><Badge tone={ready ? "success" : "warning"}>{t(ready ? "warehouseIntelligence.accounting.ready" : "warehouseIntelligence.accounting.dataRequired")}</Badge></div></div>;
+          })}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function GrniAccountingClose({ scope, canViewFinance }: { scope: string; canViewFinance: boolean }) {
+  const t = useT();
+  const query = useGrniReconciliation(scope === ALL_WAREHOUSES ? undefined : scope, canViewFinance);
+  if (!canViewFinance) return <FinanceOnlySection title={t("warehouseIntelligence.accounting.grniTitle")} />;
+  if (query.isLoading) return <section className="surface p-4"><LoadingState rows={4} /></section>;
+  if (query.isError || !query.data) return (
+    <section className="surface p-4" data-testid="grni-accounting-unavailable">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.accounting.grniTitle")}</h2><p className="mt-1 max-w-3xl text-xs font-semibold leading-5 text-amber-700">{t("warehouseIntelligence.accounting.supplementUnavailable")}</p></div><Button size="sm" variant="secondary" onClick={() => query.refetch()}>{t("warehouseIntelligence.actions.retry")}</Button></div>
+    </section>
+  );
+  const data = query.data;
+  const rec = data.reconciliation;
+  const visibleRows = data.rows.slice(0, 100);
+  return (
+    <section className="surface overflow-hidden" data-testid="grni-reconciliation" aria-labelledby="grni-accounting-title">
+      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3"><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 id="grni-accounting-title" className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.accounting.grniTitle")}</h2><p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.accounting.grniSubtitle")}</p></div><div className="flex gap-2"><Badge tone={rec.state === "reconciled" ? "success" : "danger"}>{t(`warehouseIntelligence.accounting.state.${rec.state === "reconciled" ? "reconciled" : "notReconciled"}`)}</Badge><Badge tone="neutral">{t("warehouseIntelligence.accounting.currentOnly")}</Badge></div></div></div>
+      <div className="space-y-4 p-4">
+        <WarningStrip warnings={data.warnings} />
+        {rec.blockers.length > 0 && <div className="flex flex-wrap gap-2">{rec.blockers.map((code) => <Badge key={code} tone={CRITICAL_ACCOUNTING_BLOCKERS.has(code) ? "danger" : "warning"}>{blockerLabel(t, code)}</Badge>)}</div>}
+        <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><MiniTotal label={t("warehouseIntelligence.accounting.grniOperational")} value={formatCurrency(rec.operationalOutstanding)} /><MiniTotal label={t("warehouseIntelligence.accounting.glBalance")} value={nullableCurrency(rec.glBalance)} /><MiniTotal label={t("warehouseIntelligence.accounting.difference")} value={nullableCurrency(rec.difference)} /><MiniTotal label={t("warehouseIntelligence.accounting.controlAccount")} value={rec.grniAccount.code || "—"} /></dl>
+        <div><h3 className="text-xs font-extrabold text-slate-700">{t("warehouseIntelligence.accounting.agingTitle")}</h3><dl className="mt-2 grid gap-2 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">{(["current", "d30", "d60", "d90", "d90plus", "negative"] as const).map((key) => <MiniTotal key={key} label={t(`warehouseIntelligence.accounting.aging.${key}`)} value={formatCurrency(data.aging[key])} />)}</dl></div>
+        {data.rows.length === 0 ? <EmptyState title={t("warehouseIntelligence.accounting.grniEmptyTitle")} body={t("warehouseIntelligence.accounting.grniEmptyBody")} /> : <><div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full min-w-[980px] text-sm"><thead className="bg-slate-50"><tr>{["receipt", "date", "supplier", "warehouse", "ageDays", "received", "invoiced", "returns", "outstanding"].map((key) => <th key={key} className="px-3 py-3 text-start text-xs font-extrabold text-slate-500">{t(`warehouseIntelligence.accounting.columns.${key}`)}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{visibleRows.map((row) => <tr key={row.receiptId} className="hover:bg-slate-50/70"><td className="px-3 py-3 font-extrabold text-slate-800">{row.receiptNumber}</td><td className="px-3 py-3 font-semibold">{formatDate(row.receiptDate)}</td><td className="px-3 py-3 font-semibold">{row.supplierName || "—"}</td><td className="px-3 py-3 font-semibold">{row.warehouseName || "—"}</td><td className="px-3 py-3 font-bold tabular-nums">{formatNumber(row.ageDays)}</td><td className="px-3 py-3 font-bold tabular-nums">{formatCurrency(row.receivedValue)}</td><td className="px-3 py-3 font-bold tabular-nums">{formatCurrency(row.invoicedValue)}</td><td className="px-3 py-3 font-bold tabular-nums">{formatCurrency(row.returnedBeforeInvoiceValue)}</td><td className="px-3 py-3 font-extrabold tabular-nums text-amber-700">{formatCurrency(row.outstandingValue)}</td></tr>)}</tbody></table></div><p className="text-xs font-bold text-slate-500">{t("warehouseIntelligence.accounting.grniDetailDisclosure", { visible: visibleRows.length, loaded: data.detail.shown || data.rows.length, total: data.detail.totalOpenReceipts || data.rows.length })}</p></>}
+      </div>
+    </section>
+  );
+}
+
+function FinanceOnlySection({ title }: { title: string }) {
+  const t = useT();
+  return <section className="surface p-4" data-testid="finance-only-reconciliation"><div className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><ShieldCheck className="h-5 w-5" /></span><div><h2 className="text-sm font-extrabold text-slate-900">{title}</h2><p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.accounting.financeOnly")}</p></div></div></section>;
 }
 
 function WarningStrip({ warnings }: { warnings: IntelligenceWarning[] }) {
@@ -302,8 +528,47 @@ function FlowAndWastePanel({ data }: { data: ReturnType<typeof useWarehouseIntel
   );
 }
 
+interface InventoryException {
+  id: string;
+  value: number;
+  tone: "rose" | "amber" | "blue" | "neutral";
+  to: string;
+}
+
+function InventoryExceptionQueue({ exceptions }: { exceptions: InventoryException[] }) {
+  const t = useT();
+  const lang = useLang();
+  const GoArrow = lang === "ar" ? ArrowLeft : ArrowRight;
+  const open = exceptions.filter((item) => item.value > 0);
+  return (
+    <section id="inventory-exceptions" className="surface overflow-hidden scroll-mt-24" aria-labelledby="inventory-exceptions-title">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+        <div>
+          <h2 id="inventory-exceptions-title" className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.exceptions.title")}</h2>
+          <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.exceptions.subtitle")}</p>
+        </div>
+        <Badge tone={open.length ? "warning" : "success"}>{t(open.length ? "warehouseIntelligence.exceptions.open" : "warehouseIntelligence.exceptions.clear", { count: open.length })}</Badge>
+      </div>
+      {open.length === 0 ? (
+        <div className="flex items-center gap-2 p-4 text-sm font-bold text-emerald-700"><ShieldCheck className="h-5 w-5" />{t("warehouseIntelligence.exceptions.clearBody")}</div>
+      ) : (
+        <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-3">
+          {open.map((item) => <Link key={item.id} to={item.to} className="group flex min-h-24 items-center justify-between gap-3 bg-white p-4 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100">
+            <span>
+              <span className="block text-xs font-bold text-slate-500">{t(`warehouseIntelligence.exceptions.items.${item.id}`)}</span>
+              <span className={cn("mt-1 block text-xl font-extrabold tabular-nums", item.tone === "rose" ? "text-rose-700" : item.tone === "amber" ? "text-amber-700" : item.tone === "blue" ? "text-blue-700" : "text-slate-800")}>{formatNumber(item.value)}</span>
+            </span>
+            <GoArrow className="h-5 w-5 shrink-0 text-slate-300 transition group-hover:text-teal-600" />
+          </Link>)}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function InventoryDecisionView({ range, scope }: { range: DateRange; scope: string }) {
   const t = useT();
+  const canViewFinance = useCan("finance.reports.view");
   const analytics = useAnalytics(scope, { from: range.from, to: range.to, window: 90 });
   const overview = useWarehouseIntelligenceOverview({ from: range.from, to: range.to, warehouseId: scope === ALL_WAREHOUSES ? undefined : scope });
 
@@ -315,6 +580,15 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
     ...data.warnings.map((w) => ({ code: w.code, message: w.message, level: (w.level === "error" ? "error" : "warning") as IntelligenceWarning["level"] })),
     ...(overview.data?.warnings ?? []),
   ];
+  const costMissing = overview.data?.costCoverage.uncostedStockCount ?? 0;
+  const exceptions: InventoryException[] = [
+    { id: "negative", value: k.negativeCount, tone: "rose", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "low-stock")!, range, scope) },
+    { id: "lowOut", value: k.lowCount + k.outCount, tone: "amber", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "low-stock")!, range, scope) },
+    { id: "missingCost", value: costMissing, tone: "rose", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "data-quality")!, range, scope) },
+    { id: "missingReorder", value: data.dataQualityIndicators.missingMinStock, tone: "amber", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "data-quality")!, range, scope) },
+    { id: "stagnant", value: data.slowNoMovement.count, tone: "blue", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "no-movement")!, range, scope) },
+    { id: "inTransit", value: data.transfers.inTransit, tone: "neutral", to: withScope(INVENTORY_INTELLIGENCE_REPORTS.find((item) => item.id === "transfers")!, range, scope) },
+  ];
 
   return (
     <div className="space-y-5" data-testid="inventory-decision-view">
@@ -325,6 +599,9 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
         <MetricCard label={t("warehouseIntelligence.kpis.lowOut")} value={formatNumber(k.lowCount + k.outCount)} note={t("warehouseIntelligence.kpis.lowOutNote", { low: k.lowCount, out: k.outCount })} icon={PackageMinus} tone="amber" />
         <MetricCard label={t("warehouseIntelligence.kpis.negative")} value={formatNumber(k.negativeCount)} note={t("warehouseIntelligence.kpis.negativeNote")} icon={PackageX} tone="rose" />
       </section>
+
+      <InventoryExceptionQueue exceptions={exceptions} />
+      <ReportCatalog mode="inventory" range={range} scope={scope} />
 
       <section className="grid gap-4 xl:grid-cols-2">
         <DecisionTable
@@ -368,7 +645,8 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
           <Button size="sm" variant="ghost" className="ms-2" onClick={() => overview.refetch()}>{t("warehouseIntelligence.actions.retry")}</Button>
         </div>
       ) : <><CostCoveragePanel data={overview.data} /><FlowAndWastePanel data={overview.data} /><CostControlPanel data={overview.data} /></>}
-      <ReportCatalog mode="inventory" range={range} scope={scope} />
+      <InventoryAccountingClose scope={scope} range={range} canViewFinance={canViewFinance} />
+      <ReportReadiness mode="inventory" />
     </div>
   );
 }
@@ -440,12 +718,29 @@ function specializedRows(raw: unknown): Record<string, unknown>[] {
   return [];
 }
 
-function formatSpecializedValue(key: string, value: unknown): string {
+export function formatSpecializedValue(key: string, value: unknown): string {
   if (value == null || value === "") return "—";
-  if (/(amount|value|spend|total|net|vat|variance)/i.test(key) && Number.isFinite(Number(value))) return formatCurrency(Number(value));
   if (/(qty|ordered|received|count|invoices|d30|d60|d90|current)/i.test(key) && Number.isFinite(Number(value))) return formatNumber(Number(value));
+  if (/(amount|value|spend|total|net|vat|variance)/i.test(key) && Number.isFinite(Number(value))) return formatCurrency(Number(value));
   if (/(date|period)/i.test(key)) return formatDate(String(value));
   return String(value);
+}
+
+function ReportAssuranceSummary({ report }: { report: IntelligenceReportLink }) {
+  const t = useT();
+  return (
+    <div className="mb-3 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,auto)]" data-testid="selected-report-assurance">
+      <div>
+        <h3 className="text-sm font-extrabold text-slate-900">{t(report.labelKey)}</h3>
+        <p className="mt-1 text-xs font-medium leading-5 text-slate-500">{t(report.descriptionKey)}</p>
+      </div>
+      <dl className="grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-xl bg-white p-2.5"><dt className="font-bold text-slate-400">{t("warehouseIntelligence.assurance.statusLabel")}</dt><dd className="mt-1 font-extrabold text-slate-700">{t(`warehouseIntelligence.assurance.maturity.${report.maturity}`)}</dd></div>
+        <div className="rounded-xl bg-white p-2.5"><dt className="font-bold text-slate-400">{t("warehouseIntelligence.assurance.basisLabel")}</dt><dd className="mt-1 font-extrabold text-slate-700">{t(`warehouseIntelligence.assurance.basis.${report.basis}`)}</dd></div>
+        <div className="col-span-2 rounded-xl bg-white p-2.5"><dt className="font-bold text-slate-400">{t("warehouseIntelligence.assurance.sourceLabel")}</dt><dd className="mt-1 font-extrabold leading-5 text-slate-700">{t(`warehouseIntelligence.assurance.source.${report.basis}`)}</dd></div>
+      </dl>
+    </div>
+  );
 }
 
 function SpecializedProcurementReport({ report, range, scope, supplierId }: { report: string; range: DateRange; scope: string; supplierId?: string }) {
@@ -507,6 +802,7 @@ function SpecializedProcurementReport({ report, range, scope, supplierId }: { re
 
 function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: string }) {
   const t = useT();
+  const canViewFinance = useCan("finance.reports.view");
   const lang = useLang();
   const [searchParams, setSearchParams] = useSearchParams();
   const [draftQ, setDraftQ] = useState("");
@@ -515,6 +811,7 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
   const [item, setItem] = useState<ItemHit | null>(null);
   const requestedReport = SPECIALIZED_REPORT_IDS.has(searchParams.get("report") ?? "") ? String(searchParams.get("report")) : "open-orders";
   const selectedReport = requestedReport;
+  const selectedReportDefinition = PURCHASING_INTELLIGENCE_REPORTS.find((item) => item.id === selectedReport);
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -544,13 +841,13 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
         <MetricCard label={t("warehouseIntelligence.kpis.openPoValue")} value={formatCurrency(k.openPoValue)} note={t("warehouseIntelligence.kpis.openPoQty", { qty: formatQty(k.openPoQty) })} icon={ClipboardList} tone="amber" />
         <MetricCard label={t("warehouseIntelligence.kpis.suppliers")} value={formatNumber(k.supplierCount)} note={t("warehouseIntelligence.kpis.suppliersNote")} icon={Users} tone="violet" />
       </section>
+      <ReportCatalog mode="purchasing" range={range} scope={scope} />
       <section className="grid gap-4 xl:grid-cols-2">
         <DecisionTable id="supplier-analysis" title={t("warehouseIntelligence.purchases.bySupplier")} empty={t("warehouseIntelligence.purchases.noSuppliers")} headers={[t("warehouseIntelligence.table.supplier"), t("warehouseIntelligence.table.documents"), t("warehouseIntelligence.table.qty"), t("warehouseIntelligence.table.spend")]} rows={overview.data.purchaseBySupplier.slice(0, 10).map((row) => [row.supplierName, formatNumber(row.documentCount), formatQty(row.receivedQty), formatCurrency(row.spend)])} />
         <DecisionTable id="purchase-trend" title={t("warehouseIntelligence.purchases.trend")} empty={t("warehouseIntelligence.purchases.noTrend")} headers={[t("warehouseIntelligence.table.period"), t("warehouseIntelligence.table.qty"), t("warehouseIntelligence.table.spend")]} rows={overview.data.purchaseTrend.slice(-10).map((row) => [formatDate(row.period), formatQty(row.receivedQty), formatCurrency(row.spend)])} />
       </section>
       <CostCoveragePanel data={overview.data} />
       <CostControlPanel data={overview.data} />
-      <ReportCatalog mode="purchasing" range={range} scope={scope} />
       <section id="specialized-report" className="scroll-mt-24" aria-labelledby="specialized-report-title">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -573,6 +870,7 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
             </select>
           </label>
         </div>
+        {selectedReportDefinition && <ReportAssuranceSummary report={selectedReportDefinition} />}
         <SpecializedProcurementReport report={selectedReport} range={range} scope={scope} supplierId={supplier?.id} />
       </section>
       <section id="purchase-ledger" aria-labelledby="purchase-ledger-title" className="scroll-mt-24">
@@ -661,6 +959,8 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
           </div>}
         </>}
       </section>
+      <GrniAccountingClose scope={scope} canViewFinance={canViewFinance} />
+      <ReportReadiness mode="purchasing" />
     </div>
   );
 }

@@ -4,10 +4,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/i18n";
 import ReportsModule from "@/modules/reports";
+import { formatSpecializedValue } from "../WarehouseIntelligenceHub";
 
-const { useProcurementReportMock, serverFlags } = vi.hoisted(() => ({
+const { useProcurementReportMock, serverFlags, accountingFailures, permissions, accountingEnabledCalls } = vi.hoisted(() => ({
   useProcurementReportMock: vi.fn(() => ({ isLoading: false, isError: false, data: { data: [] } })),
   serverFlags: { procurementP2P: true },
+  accountingFailures: { inventory: false, grni: false },
+  permissions: { finance: true },
+  accountingEnabledCalls: { inventory: [] as boolean[], grni: [] as boolean[] },
 }));
 
 vi.mock("@/modules/inventory/lib/providers", () => ({ WarehouseModuleProviders: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
@@ -20,6 +24,7 @@ vi.mock("@/modules/inventory/lib/hooks/useAnalytics", () => ({
     dataQualityIndicators: { estimatedCostItems: 0, missingMinStock: 0 }, slowNoMovement: { count: 0 }, transfers: { inTransit: 0 },
   } }),
 }));
+vi.mock("@/app/providers", () => ({ useCan: (cap: string) => cap === "finance.reports.view" ? permissions.finance : false }));
 vi.mock("@/modules/reports/warehouse/api", () => ({
   useWarehouseIntelligenceOverview: () => ({ isLoading: false, isError: false, data: {
     kpis: { purchaseSpend: 500, receivedQty: 10, openPoValue: 200, openPoQty: 3, supplierCount: 2, wasteValue: null, wasteQty: 3 },
@@ -28,6 +33,18 @@ vi.mock("@/modules/reports/warehouse/api", () => ({
     salesCostBridge: { state: "unavailable", netSalesExVat: null, cogsSnapshot: null, grossProfit: null, marginPct: null, coveragePct: null, includesReturns: false },
   } }),
   usePurchaseIntelligence: () => ({ isLoading: false, isError: false, data: { rows: [], totals: { qty: 0, netAmount: 0, vatAmount: 0, grossAmount: 0 }, pagination: { page: 1, pageSize: 50, total: 0, totalPages: 1 }, warnings: [] } }),
+  useInventoryAccountingReconciliation: (_warehouseId?: string, enabled = true) => { accountingEnabledCalls.inventory.push(enabled); return accountingFailures.inventory ? ({ isLoading: false, isError: true, error: new Error("forbidden"), data: undefined, refetch: vi.fn() }) : ({ isLoading: false, isError: false, refetch: vi.fn(), data: {
+    rows: [{ warehouseId: "W-1", warehouseName: "Main", positiveValue: 100, negativeValue: 0, subledgerValue: 100, glBalance: 100, difference: 0, stockPositions: 2, wacPositions: 2, fallbackPositions: 0, missingCostPositions: 0, negativePositions: 0, orphanStockPositions: 0, negativeCostPositions: 0 }],
+    summary: { positiveValue: 100, negativeValue: 0, subledgerValue: 100, glBalance: 100, difference: 0, stockPositions: 2, wacPositions: 2, fallbackPositions: 0, missingCostPositions: 0, negativePositions: 0, orphanStockPositions: 0, negativeCostPositions: 0, unallocatedGlValue: 0, warehouseDimensionDifferenceCount: 0, maxWarehouseDimensionDifference: 0, state: "reconciled", blockers: [], tolerance: 0.01 },
+    measurement: { inventorySystem: "perpetual", accountingBasisState: "perpetual_current_control", perpetualReconciliationReady: true, costFormula: "weighted_average_by_item_and_warehouse", currentOnly: true, inventoryControlAccount: { role: "INVENTORY", accountId: "A-1", code: "1310" }, includesRecoverableVat: false, includesLandedCost: false },
+    ias2Readiness: { carryingAmount: 100, carryingAmountReady: true, byInventoryClass: { state: "unavailable", reason: "missing" }, nrvAndWriteDowns: { state: "unavailable", reason: "missing" }, writeDownReversals: { state: "unavailable", reason: "missing" }, pledgedInventory: { state: "unavailable", reason: "missing" }, fairValueLessCostsToSell: { state: "not_applicable", reason: "none" } }, warnings: [],
+  } }); },
+  useGrniReconciliation: (_warehouseId?: string, enabled = true) => { accountingEnabledCalls.grni.push(enabled); return accountingFailures.grni ? ({ isLoading: false, isError: true, error: new Error("forbidden"), data: undefined, refetch: vi.fn() }) : ({ isLoading: false, isError: false, refetch: vi.fn(), data: {
+    rows: [{ receiptId: "GR-1", receiptNumber: "GRN-1", receiptDate: "2026-08-10", warehouseId: "W-1", warehouseName: "Main", supplierId: "S-1", supplierName: "Supplier One", ageDays: 2, receivedValue: 100, invoicedValue: 60, returnedBeforeInvoiceValue: 0, outstandingValue: 40 }],
+    detail: { shown: 1, totalOpenReceipts: 1, truncated: false, limit: 2000 },
+    aging: { current: 0, d30: 40, d60: 0, d90: 0, d90plus: 0, negative: 0, total: 40 },
+    reconciliation: { operationalOutstanding: 40, glBalance: 40, difference: 0, state: "reconciled", blockers: [], grniAccount: { role: "GRNI", accountId: "A-2", code: "2115" }, currentOnly: true }, warnings: [],
+  } }); },
 }));
 vi.mock("@/modules/inventory/lib/hooks/useProcurement", () => ({ useProcurementReport: useProcurementReportMock }));
 vi.mock("@/app/server-flags", () => ({ useServerFlags: () => serverFlags }));
@@ -45,11 +62,20 @@ function renderAt(path: string) {
 beforeEach(() => {
   localStorage.setItem("erp_lang", "en");
   serverFlags.procurementP2P = true;
+  accountingFailures.inventory = false;
+  accountingFailures.grni = false;
+  permissions.finance = true;
+  accountingEnabledCalls.inventory.length = 0;
+  accountingEnabledCalls.grni.length = 0;
   useProcurementReportMock.mockClear();
 });
 afterEach(cleanup);
 
 describe("warehouse intelligence report routing", () => {
+  it("formats quantity variance as quantity and price variance as currency", () => {
+    expect(formatSpecializedValue("qty_variance", 2)).toBe(formatSpecializedValue("qty", 2));
+    expect(formatSpecializedValue("price_variance", 2)).not.toBe(formatSpecializedValue("qty", 2));
+  });
   it("mounts inventory as a decision center with real report deep links", async () => {
     renderAt("/reports/inventory");
     await waitFor(() => expect(screen.getByTestId("inventory-decision-view")).toBeInTheDocument(), { timeout: 5_000 });
@@ -58,12 +84,19 @@ describe("warehouse intelligence report routing", () => {
     expect(screen.getByText("Sales consumption")).toBeInTheDocument();
     expect(screen.getByText("Waste control")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Stock balance/ })).toHaveAttribute("href", expect.stringContaining("/reports/inventory/stock-balance"));
-  });
+    expect(screen.getAllByRole("heading", { name: "IAS 2 valuation" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("inventory-accounting-reconciliation")).toBeInTheDocument();
+    expect(screen.getByText("Advanced-report readiness register")).toBeInTheDocument();
+    expect(screen.getByText("Historical as-of inventory valuation")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Historical as-of inventory valuation/ })).not.toBeInTheDocument();
+  }, 12_000);
 
   it("mounts purchasing in English without leaking Arabic UI copy", async () => {
     const view = renderAt("/reports/purchasing?report=open-orders");
     await waitFor(() => expect(screen.getByTestId("purchasing-decision-view")).toBeInTheDocument(), { timeout: 5_000 });
     expect(screen.getByRole("heading", { name: "Purchasing and cost control center" })).toBeInTheDocument();
+    expect(screen.getByTestId("grni-reconciliation")).toBeInTheDocument();
+    expect(screen.getAllByText(/Source of truth/).length).toBeGreaterThan(0);
     expect(view.container.textContent).not.toMatch(/[\u0600-\u06ff]/);
   });
 
@@ -79,6 +112,25 @@ describe("warehouse intelligence report routing", () => {
       expect.objectContaining({ warehouseId: undefined }),
       false,
     );
+  });
+
+  it("keeps the decision center usable when finance-only reconciliations are forbidden", async () => {
+    accountingFailures.inventory = true;
+    renderAt("/reports/inventory");
+    await waitFor(() => expect(screen.getByTestId("inventory-decision-view")).toBeInTheDocument());
+    expect(screen.getByTestId("inventory-accounting-unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Warehouse control center" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Stock balance/ })).toBeInTheDocument();
+  });
+
+  it("does not enable finance-only reconciliation queries for procurement-only users", async () => {
+    permissions.finance = false;
+    renderAt("/reports/purchasing");
+    await waitFor(() => expect(screen.getByTestId("purchasing-decision-view")).toBeInTheDocument());
+    expect(screen.getByTestId("finance-only-reconciliation")).toBeInTheDocument();
+    expect(accountingEnabledCalls.grni.length).toBeGreaterThan(0);
+    expect(accountingEnabledCalls.grni.every((enabled) => enabled === false)).toBe(true);
+    expect(screen.queryByTestId("grni-accounting-unavailable")).not.toBeInTheDocument();
   });
 
   it("wires supplier statements only after a supplier is selected", async () => {

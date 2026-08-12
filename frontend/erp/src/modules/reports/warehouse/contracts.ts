@@ -134,3 +134,83 @@ export interface PurchaseIntelligenceResult {
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
   warnings: IntelligenceWarning[];
 }
+
+export interface InventoryAccountingReconciliationRow {
+  warehouseId: string | null;
+  warehouseName: string;
+  positiveValue: number;
+  negativeValue: number;
+  subledgerValue: number;
+  glBalance: number;
+  difference: number;
+  stockPositions: number;
+  wacPositions: number;
+  fallbackPositions: number;
+  missingCostPositions: number;
+  negativePositions: number;
+  orphanStockPositions: number;
+  negativeCostPositions: number;
+}
+
+export interface InventoryAccountingReconciliation {
+  rows: InventoryAccountingReconciliationRow[];
+  summary: Omit<InventoryAccountingReconciliationRow, "warehouseId" | "warehouseName"> & {
+    unallocatedGlValue: number;
+    warehouseDimensionDifferenceCount: number;
+    maxWarehouseDimensionDifference: number;
+    state: "reconciled" | "not_reconciled" | string;
+    blockers: string[];
+    tolerance: number;
+  };
+  measurement: {
+    inventorySystem: string;
+    accountingBasisState: string;
+    perpetualReconciliationReady: boolean;
+    costFormula: string;
+    currentOnly: boolean;
+    inventoryControlAccount: { role: string; accountId: string | null; code: string };
+    includesRecoverableVat: boolean;
+    includesLandedCost: boolean;
+  };
+  ias2Readiness: {
+    carryingAmount: number;
+    carryingAmountReady: boolean;
+    byInventoryClass: { state: string; reason: string };
+    nrvAndWriteDowns: { state: string; reason: string };
+    writeDownReversals: { state: string; reason: string };
+    pledgedInventory: { state: string; reason: string };
+    fairValueLessCostsToSell: { state: string; reason: string };
+  };
+  warnings: IntelligenceWarning[];
+}
+
+export interface GrniReconciliationRow {
+  receiptId: string;
+  receiptNumber: string;
+  receiptDate: string;
+  warehouseId: string | null;
+  warehouseName: string;
+  supplierId: string | null;
+  supplierName: string;
+  ageDays: number;
+  receivedValue: number;
+  invoicedValue: number;
+  returnedBeforeInvoiceValue: number;
+  outstandingValue: number;
+}
+
+export interface GrniReconciliation {
+  rows: GrniReconciliationRow[];
+  detail: { shown: number; totalOpenReceipts: number; truncated: boolean; limit: number };
+  aging: { current: number; d30: number; d60: number; d90: number; d90plus: number; negative: number; total: number };
+  reconciliation: {
+    operationalOutstanding: number;
+    glBalance: number | null;
+    difference: number | null;
+    state: "reconciled" | "not_reconciled" | string;
+    blockers: string[];
+    grniAccount: { role: string; accountId: string | null; code: string };
+    currentOnly: boolean;
+  };
+  warnings: IntelligenceWarning[];
+}

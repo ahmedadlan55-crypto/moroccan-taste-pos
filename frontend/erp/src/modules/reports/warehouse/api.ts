@@ -1,6 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
-import { toPurchaseIntelligenceResult, toWarehouseIntelligenceOverview } from "./adapters";
+import {
+  toGrniReconciliation,
+  toInventoryAccountingReconciliation,
+  toPurchaseIntelligenceResult,
+  toWarehouseIntelligenceOverview,
+} from "./adapters";
 import type { WarehouseIntelligenceFilters } from "./contracts";
 
 function params(filters: WarehouseIntelligenceFilters) {
@@ -39,5 +44,31 @@ export function usePurchaseIntelligence(filters: WarehouseIntelligenceFilters, e
     placeholderData: (previous) => previous,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
+  });
+}
+
+export function useInventoryAccountingReconciliation(warehouseId?: string, enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: ["warehouse-intelligence", "accounting-reconciliation", warehouseId ?? "all"] as const,
+    queryFn: ({ signal }) => apiClient
+      .get<unknown>("/inventory/intelligence/accounting-reconciliation", { signal, params: { warehouseId } })
+      .then(toInventoryAccountingReconciliation),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+export function useGrniReconciliation(warehouseId?: string, enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: ["warehouse-intelligence", "grni-reconciliation", warehouseId ?? "all"] as const,
+    queryFn: ({ signal }) => apiClient
+      .get<unknown>("/inventory/intelligence/grni-reconciliation", { signal, params: { warehouseId } })
+      .then(toGrniReconciliation),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    retry: false,
   });
 }

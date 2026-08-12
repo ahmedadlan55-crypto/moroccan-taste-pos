@@ -9,6 +9,8 @@ import type {
   WarehouseIntelligenceKpis,
   WarehouseIntelligenceOverview,
   SalesCostBridge,
+  InventoryAccountingReconciliation,
+  GrniReconciliation,
 } from "./contracts";
 
 type Obj = Record<string, unknown>;
@@ -205,5 +207,94 @@ export function toPurchaseIntelligenceResult(raw: unknown): PurchaseIntelligence
       totalPages: num(pick(paginationRaw, "totalPages", "total_pages")) || Math.max(1, Math.ceil(total / pageSize)),
     },
     warnings: warningsFrom(root.warnings, body.warnings, root.dataQualityWarnings),
+  };
+}
+
+export function toInventoryAccountingReconciliation(raw: unknown): InventoryAccountingReconciliation {
+  const root = obj(raw);
+  const body = obj(root.data);
+  const summary = obj(body.summary);
+  const measurement = obj(body.measurement);
+  const control = obj(measurement.inventoryControlAccount);
+  const readiness = obj(body.ias2Readiness);
+  const readinessItem = (key: string) => {
+    const item = obj(readiness[key]);
+    return { state: str(item.state), reason: str(item.reason) };
+  };
+  const row = (value: Obj) => ({
+    warehouseId: pick(value, "warehouseId", "warehouse_id") == null ? null : str(pick(value, "warehouseId", "warehouse_id")),
+    warehouseName: str(pick(value, "warehouseName", "warehouse_name")),
+    positiveValue: num(value.positiveValue), negativeValue: num(value.negativeValue),
+    subledgerValue: num(value.subledgerValue), glBalance: num(value.glBalance), difference: num(value.difference),
+    stockPositions: num(value.stockPositions), wacPositions: num(value.wacPositions),
+    fallbackPositions: num(value.fallbackPositions), missingCostPositions: num(value.missingCostPositions),
+    negativePositions: num(value.negativePositions), orphanStockPositions: num(value.orphanStockPositions),
+    negativeCostPositions: num(value.negativeCostPositions),
+  });
+  const summaryRow = row(summary);
+  return {
+    rows: arr(body.rows).map(row),
+    summary: {
+      positiveValue: summaryRow.positiveValue, negativeValue: summaryRow.negativeValue,
+      subledgerValue: summaryRow.subledgerValue, glBalance: summaryRow.glBalance,
+      difference: num(summary.difference), stockPositions: summaryRow.stockPositions,
+      wacPositions: summaryRow.wacPositions, fallbackPositions: summaryRow.fallbackPositions,
+      missingCostPositions: summaryRow.missingCostPositions, negativePositions: summaryRow.negativePositions,
+      orphanStockPositions: summaryRow.orphanStockPositions, negativeCostPositions: summaryRow.negativeCostPositions,
+      unallocatedGlValue: num(summary.unallocatedGlValue),
+      warehouseDimensionDifferenceCount: num(summary.warehouseDimensionDifferenceCount),
+      maxWarehouseDimensionDifference: num(summary.maxWarehouseDimensionDifference), state: str(summary.state),
+      blockers: Array.isArray(summary.blockers) ? summary.blockers.map(str) : [], tolerance: num(summary.tolerance),
+    },
+    measurement: {
+      inventorySystem: str(measurement.inventorySystem), accountingBasisState: str(measurement.accountingBasisState),
+      perpetualReconciliationReady: measurement.perpetualReconciliationReady === true,
+      costFormula: str(measurement.costFormula),
+      currentOnly: measurement.currentOnly === true,
+      inventoryControlAccount: { role: str(control.role), accountId: control.accountId == null ? null : str(control.accountId), code: str(control.code) },
+      includesRecoverableVat: measurement.includesRecoverableVat === true,
+      includesLandedCost: measurement.includesLandedCost === true,
+    },
+    ias2Readiness: {
+      carryingAmount: num(readiness.carryingAmount), carryingAmountReady: readiness.carryingAmountReady === true,
+      byInventoryClass: readinessItem("byInventoryClass"), nrvAndWriteDowns: readinessItem("nrvAndWriteDowns"),
+      writeDownReversals: readinessItem("writeDownReversals"), pledgedInventory: readinessItem("pledgedInventory"),
+      fairValueLessCostsToSell: readinessItem("fairValueLessCostsToSell"),
+    },
+    warnings: warningsFrom(root.warnings),
+  };
+}
+
+export function toGrniReconciliation(raw: unknown): GrniReconciliation {
+  const root = obj(raw);
+  const body = obj(root.data);
+  const aging = obj(body.aging);
+  const detail = obj(body.detail);
+  const reconciliation = obj(body.reconciliation);
+  const account = obj(reconciliation.grniAccount);
+  return {
+    rows: arr(body.rows).map((value) => ({
+      receiptId: str(value.receiptId), receiptNumber: str(value.receiptNumber), receiptDate: str(value.receiptDate),
+      warehouseId: value.warehouseId == null ? null : str(value.warehouseId), warehouseName: str(value.warehouseName),
+      supplierId: value.supplierId == null ? null : str(value.supplierId), supplierName: str(value.supplierName),
+      ageDays: num(value.ageDays), receivedValue: num(value.receivedValue), invoicedValue: num(value.invoicedValue),
+      returnedBeforeInvoiceValue: num(value.returnedBeforeInvoiceValue), outstandingValue: num(value.outstandingValue),
+    })),
+    detail: {
+      shown: num(detail.shown), totalOpenReceipts: num(detail.totalOpenReceipts),
+      truncated: detail.truncated === true, limit: num(detail.limit),
+    },
+    aging: {
+      current: num(aging.current), d30: num(aging.d30), d60: num(aging.d60), d90: num(aging.d90),
+      d90plus: num(aging.d90plus), negative: num(aging.negative), total: num(aging.total),
+    },
+    reconciliation: {
+      operationalOutstanding: num(reconciliation.operationalOutstanding),
+      glBalance: nullableNum(reconciliation.glBalance), difference: nullableNum(reconciliation.difference),
+      state: str(reconciliation.state), blockers: Array.isArray(reconciliation.blockers) ? reconciliation.blockers.map(str) : [],
+      grniAccount: { role: str(account.role), accountId: account.accountId == null ? null : str(account.accountId), code: str(account.code) },
+      currentOnly: reconciliation.currentOnly === true,
+    },
+    warnings: warningsFrom(root.warnings),
   };
 }

@@ -11,6 +11,7 @@ const MGR = require('../middleware/auth').requireRole('admin', 'manager');
 // needs; cashier-facing POS flows use the g-inv seeded capabilities
 // (db/migrations/capability-seeds/g-inv.json) so the POS keeps working.
 const requireCapability = require('../middleware/requireCapability');
+const { hasCapability } = require('../middleware/requireCapability');
 const ADJ = require('../lib/inventoryAdjustment');
 const STK = require('../lib/stocktakeWorkflow');
 // Phase 2A — pure helpers backing the read-only warehouse-v2 endpoints
@@ -66,6 +67,15 @@ function _capabilitiesFor(user) {
     caps[action] = isDev || _CAP_MATRIX[action].indexOf(role) !== -1;
   });
   return caps;
+}
+
+async function _reportCapabilitiesFor(user) {
+  const ids = ['finance.reports.view', 'procurement.reports'];
+  const resolved = await Promise.all(ids.map(async (id) => {
+    try { return [id, await hasCapability(user, id)]; }
+    catch (_) { return [id, false]; }
+  }));
+  return Object.fromEntries(resolved);
 }
 
 // Phase 0 §5 / G-INV M2 — actor identity comes STRICTLY from the authenticated
@@ -1033,6 +1043,7 @@ router.get('/access-scope', async (req, res) => {
         scope.warehouseIds);
       warehouses = rows;
     }
+    const reportCapabilities = await _reportCapabilitiesFor(req.user);
     res.json({
       success: true,
       enforced: WH_SCOPE.isEnforced(),
@@ -1042,7 +1053,7 @@ router.get('/access-scope', async (req, res) => {
         id: w.id, name: w.name, code: w.code, type: w.type,
         branchId: w.branch_id || '', isActive: w.is_active === 1 || w.is_active === true,
       })),
-      capabilities: _capabilitiesFor(req.user),
+      capabilities: { ..._capabilitiesFor(req.user), ...reportCapabilities },
     });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });

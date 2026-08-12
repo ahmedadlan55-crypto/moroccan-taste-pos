@@ -96,6 +96,7 @@ async function cleanup() {
   await q('DELETE FROM purchase_orders WHERE supplier_id = ?', [SUP]);
   await q('DELETE FROM inventory_movements WHERE item_id = ? OR warehouse_id IN (?, ?)', [ITEM, WH_A, WH_B]);
   await q('DELETE FROM inventory_cost_history WHERE item_id = ?', [ITEM]);
+  await q('DELETE FROM item_cost_history WHERE item_id = ?', [ITEM]);
   await q('DELETE FROM warehouse_stock WHERE item_id = ?', [ITEM]);
   await q('DELETE FROM purchase_lots WHERE inv_item_id = ?', [ITEM]);
   // Posting bumps inv_items.stock alongside warehouse_stock; leaving it behind

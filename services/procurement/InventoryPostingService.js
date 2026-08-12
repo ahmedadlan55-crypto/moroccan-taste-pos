@@ -3,15 +3,19 @@
  *
  * THE single code path that mutates stock for procurement (goods receipts and
  * purchase returns). All writes to warehouse_stock / inv_items / purchase_lots
- * / inventory_movements / inventory_cost_history for the P2P module flow
+ * / inventory_movements / item_cost_history / inventory_cost_history for the
+ * P2P module flow
  * through here — this is what makes "zero dual-write" provable.
  *
  * Concurrency: every call runs inside the caller's transaction and takes
  * `FOR UPDATE` row locks on the po_line + inv_item so two concurrent receipts
  * against the same PO cannot exceed the ordered quantity.
  *
- * Costing: weighted-average on inv_items.cost + warehouse_stock.avg_cost, with
- * an inventory_cost_history audit row per receipt line.
+ * Costing: warehouse_stock is the valuation source of truth. Each
+ * (item,warehouse) has its own moving weighted-average; inv_items.cost is only
+ * a derived, quantity-weighted roll-up across warehouses. Every stock line is
+ * recorded in item_cost_history inside the caller's transaction. The legacy
+ * inventory_cost_history row records changes to the derived global roll-up.
  *
  * Lots: one purchase_lots row per received line (linked back onto the receipt
  * line via purchase_lot_id) so reversals/returns can target the exact lot —
@@ -19,7 +23,6 @@
  */
 'use strict';
 
-const { recomputeInvItemStock } = require('../../lib/stockRecompute');
 const calc = require('../../lib/procurement/calculations');
 const { err } = require('../../lib/procurement/errors');
 
@@ -41,23 +44,104 @@ async function _lockItem(conn, itemId) {
 
 async function _warehouseQty(conn, warehouseId, itemId) {
   const [rows] = await conn.query(
-    'SELECT id, qty, avg_cost FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
+    'SELECT id, qty, avg_cost, last_cost FROM warehouse_stock WHERE warehouse_id = ? AND item_id = ? FOR UPDATE',
     [warehouseId, itemId]);
   return rows[0] || null;
 }
 
-async function _upsertWarehouseStock(conn, warehouseId, itemId, deltaQty, newAvgCost, lastCost, actor) {
-  const existing = await _warehouseQty(conn, warehouseId, itemId);
+async function _writeWarehouseStock(conn, { existing, warehouseId, itemId, newQty, newAvgCost, lastCost, actor }) {
   if (existing) {
     await conn.query(
-      'UPDATE warehouse_stock SET qty = qty + ?, avg_cost = ?, last_cost = ?, last_updated = NOW() WHERE id = ?',
-      [deltaQty, newAvgCost, lastCost, existing.id]);
+      'UPDATE warehouse_stock SET qty = ?, avg_cost = ?, last_cost = ?, last_updated = NOW() WHERE id = ?',
+      [calc.qty(newQty), _warehouseRate(newAvgCost), _warehouseRate(lastCost), existing.id]);
   } else {
     await conn.query(
       `INSERT INTO warehouse_stock (id, warehouse_id, item_id, qty, avg_cost, last_cost, last_updated, added_by)
        VALUES (?,?,?,?,?,?,NOW(),?)`,
-      [_genId('WS'), warehouseId, itemId, deltaQty, newAvgCost, lastCost, actor || '']);
+      [_genId('WS'), warehouseId, itemId, calc.qty(newQty), _warehouseRate(newAvgCost), _warehouseRate(lastCost), actor || '']);
   }
+}
+
+// warehouse_stock.avg_cost and inv_items.cost are DECIMAL(...,4). Perform the
+// same rounding before subsequent roll-up math so the derived item cost exactly
+// reconciles to the values that MySQL persists.
+function _warehouseRate(value) {
+  return calc.round(value, 4);
+}
+
+/**
+ * Remove stock at its document-frozen cost from a moving-average balance.
+ * This is deliberately not "leave WAC unchanged": purchase returns and exact
+ * receipt reversals credit inventory at the original receipt cost, so the
+ * remaining warehouse value must be oldValue - returnedValue.
+ */
+function costAfterRemoval(oldQty, oldCost, removeQty, removeUnitCost) {
+  const oq = calc.qty(oldQty);
+  const rq = calc.qty(removeQty);
+  const oc = _warehouseRate(oldCost);
+  const rc = _warehouseRate(removeUnitCost);
+  if (rq < 0) throw new RangeError('removeQty must not be negative');
+  if (rq - oq > 1e-6) {
+    const e = new RangeError('removeQty exceeds warehouse quantity');
+    e.code = 'INSUFFICIENT_STOCK';
+    throw e;
+  }
+  const newQty = calc.qty(oq - rq);
+  if (newQty <= 1e-6) return 0;
+  const remainingValue = (oq * oc) - (rq * rc);
+  // A negative residual would create a negative unit cost. It means later
+  // consumption/valuation history makes an exact-cost reversal impossible.
+  if (remainingValue < -0.005) {
+    const e = new RangeError('removal would leave negative inventory value');
+    e.code = 'INVENTORY_VALUATION_CONFLICT';
+    throw e;
+  }
+  return _warehouseRate(Math.max(0, remainingValue) / newQty);
+}
+
+/**
+ * Derived item-master cost for cross-warehouse/search screens. Only positive
+ * on-hand participates (negative/zero positions must not distort the usable
+ * stock cost). A warehouse with missing WAC is excluded from the derivation:
+ * feeding the prior master cost back into the next roll-up would recursively
+ * drift the master on every receipt. If no positive position is valued, the
+ * prior master is retained as an explicit estimate only.
+ */
+function weightedWarehouseRollup(rows, fallbackCost) {
+  const fallback = _warehouseRate(fallbackCost);
+  let totalQty = 0;
+  let totalValue = 0;
+  for (const row of rows || []) {
+    const q = calc.qty(row && row.qty);
+    if (q <= 0) continue;
+    const warehouseCost = _warehouseRate(row && row.avg_cost);
+    if (warehouseCost <= 0) continue;
+    totalQty += q;
+    totalValue += q * warehouseCost;
+  }
+  return totalQty > 0 ? _warehouseRate(totalValue / totalQty) : fallback;
+}
+
+async function _deriveAndWriteItemCost(conn, itemId, priorItemCost) {
+  // The inv_items row is locked before this query. Locking the component rows
+  // too makes the read/derive/write set explicit within this transaction.
+  const [rows] = await conn.query(
+    'SELECT warehouse_id, qty, avg_cost FROM warehouse_stock WHERE item_id = ? ORDER BY warehouse_id FOR UPDATE',
+    [itemId]);
+  const rollup = weightedWarehouseRollup(rows, priorItemCost);
+  await conn.query('UPDATE inv_items SET cost = ? WHERE id = ?', [rollup, itemId]);
+  return rollup;
+}
+
+async function _deriveAndWriteItemStock(conn, itemId) {
+  // Procurement posting is financial and must fail closed: unlike the generic
+  // legacy compatibility helper, this write is never swallowed. A failure
+  // rolls the entire receipt/return transaction back.
+  await conn.query(
+    `UPDATE inv_items i SET i.stock =
+       (SELECT COALESCE(SUM(ws.qty), 0) FROM warehouse_stock ws WHERE ws.item_id = i.id)
+     WHERE i.id = ?`,
+    [itemId]);
 }
 
 async function _recordMovement(conn, { itemId, itemName, type, qty, reason, actor, notes, warehouseId, refType, refId }) {
@@ -70,12 +154,25 @@ async function _recordMovement(conn, { itemId, itemName, type, qty, reason, acto
   return id;
 }
 
-async function _recordCostHistory(conn, { itemId, before, after, reason, refId, actor }) {
+async function _recordGlobalCostHistory(conn, { itemId, before, after, reason, refId, actor }) {
   if (calc.money(before) === calc.money(after)) return;
   await conn.query(
     `INSERT INTO inventory_cost_history (id, item_id, cost_before, cost_after, reason, reference_id, changed_by)
      VALUES (?,?,?,?,?,?,?)`,
     [_genId('ICH'), itemId, calc.rate(before), calc.rate(after), reason, refId, actor || '']);
+}
+
+async function _recordWarehouseCostHistory(conn, {
+  itemId, warehouseId, before, after, qtyBefore, qtyAfter, triggerType, refId, actor,
+}) {
+  // Fail closed. item_cost_history is part of the supported schema; swallowing
+  // this INSERT would commit stock without its valuation audit trail.
+  await conn.query(
+    `INSERT INTO item_cost_history
+       (id, item_id, warehouse_id, method, old_cost, new_cost, old_qty, new_qty, trigger_type, reference_id, changed_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [_genId('CH'), itemId, warehouseId || null, 'WAC', _warehouseRate(before), _warehouseRate(after),
+     calc.qty(qtyBefore), calc.qty(qtyAfter), String(triggerType || 'procurement').slice(0, 40), refId || null, actor || '']);
 }
 
 /**
@@ -84,7 +181,7 @@ async function _recordCostHistory(conn, { itemId, before, after, reason, refId, 
  *     base_unit_cost, warehouse_id, lot_no, expiry_date }
  * Returns { movementIds, lotIds, affectedStock:[{itemId,warehouseId,qtyDelta,newQty}], netValue }.
  */
-async function applyReceiptStock(conn, { grn, lines, actor }) {
+async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods_receipt' }) {
   const movementIds = [], lotIds = [], affectedStock = [];
   let netValue = 0;
   const valueByWarehouse = {};
@@ -121,16 +218,40 @@ async function applyReceiptStock(conn, { grn, lines, actor }) {
       throw err('VALIDATION_ERROR', `المادة ${ln.item_id} تتطلب تاريخ انتهاء`);
     }
 
-    // 3. WAC on the global item cost + warehouse avg.
-    const stockBefore = calc.qty(item.stock);
-    const costBefore = calc.rate(item.cost);
-    const newCost = calc.newWAC(stockBefore, costBefore, baseQty, baseUnitCost);
+    // 3. Warehouse-local WAC. The locked item-master cost is a fallback only
+    // for an unvalued existing warehouse row; quantities always come from the
+    // locked (item,warehouse) row, never inv_items.stock.
+    const warehouse = await _warehouseQty(conn, warehouseId, ln.item_id);
+    const warehouseQtyBefore = warehouse ? calc.qty(warehouse.qty) : 0;
+    const storedWarehouseCostBefore = warehouse ? _warehouseRate(warehouse.avg_cost) : 0;
+    const effectiveWarehouseCostBefore = storedWarehouseCostBefore > 0
+      ? storedWarehouseCostBefore
+      : _warehouseRate(item.cost || baseUnitCost);
+    const warehouseQtyAfter = calc.qty(warehouseQtyBefore + baseQty);
+    const warehouseCostAfter = _warehouseRate(calc.newWAC(
+      warehouseQtyBefore, effectiveWarehouseCostBefore || baseUnitCost, baseQty, baseUnitCost));
+    const globalCostBefore = _warehouseRate(item.cost);
 
-    // 4. warehouse_stock upsert + rollup.
-    await _upsertWarehouseStock(conn, warehouseId, ln.item_id, baseQty, newCost, baseUnitCost, actor);
-    await recomputeInvItemStock(conn, ln.item_id);
-    await conn.query('UPDATE inv_items SET cost = ? WHERE id = ?', [newCost, ln.item_id]);
-    await _recordCostHistory(conn, { itemId: ln.item_id, before: costBefore, after: newCost, reason: 'purchase', refId: grn.id, actor });
+    // 4. Persist the local balance, recompute the quantity roll-up, then derive
+    // the item-master COST roll-up from every warehouse without writing that
+    // roll-up back into any warehouse WAC.
+    await _writeWarehouseStock(conn, {
+      existing: warehouse, warehouseId, itemId: ln.item_id,
+      newQty: warehouseQtyAfter, newAvgCost: warehouseCostAfter,
+      lastCost: baseUnitCost, actor,
+    });
+    await _deriveAndWriteItemStock(conn, ln.item_id);
+    const globalCostAfter = await _deriveAndWriteItemCost(conn, ln.item_id, globalCostBefore);
+    await _recordWarehouseCostHistory(conn, {
+      itemId: ln.item_id, warehouseId,
+      before: storedWarehouseCostBefore, after: warehouseCostAfter,
+      qtyBefore: warehouseQtyBefore, qtyAfter: warehouseQtyAfter,
+      triggerType, refId: grn.id, actor,
+    });
+    await _recordGlobalCostHistory(conn, {
+      itemId: ln.item_id, before: globalCostBefore, after: globalCostAfter,
+      reason: 'purchase', refId: grn.id, actor,
+    });
 
     // 5. lot.
     const [lot] = await conn.query(
@@ -159,8 +280,7 @@ async function applyReceiptStock(conn, { grn, lines, actor }) {
         [baseQty, baseQty, ln.po_line_id]);
     }
 
-    const wq = await _warehouseQty(conn, warehouseId, ln.item_id);
-    affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: baseQty, newQty: wq ? Number(wq.qty) : baseQty });
+    affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: baseQty, newQty: warehouseQtyAfter });
     const lineValue = calc.money(baseQty * baseUnitCost);
     netValue += lineValue;
     valueByWarehouse[warehouseId] = calc.money((valueByWarehouse[warehouseId] || 0) + lineValue);
@@ -197,8 +317,48 @@ async function reverseReceiptStock(conn, { grn, lines, actor, refType = 'GoodsRe
     }
 
     const item = await _lockItem(conn, ln.item_id);
-    await _upsertWarehouseStock(conn, warehouseId, ln.item_id, -baseQty, calc.rate(item.cost), baseUnitCost, actor);
-    await recomputeInvItemStock(conn, ln.item_id);
+    const warehouse = await _warehouseQty(conn, warehouseId, ln.item_id);
+    const warehouseQtyBefore = warehouse ? calc.qty(warehouse.qty) : 0;
+    if (!warehouse || baseQty - warehouseQtyBefore > 1e-6) {
+      throw err('DOCUMENT_HAS_HISTORY',
+        `تعذّر إخراج ${baseQty} من الصنف ${ln.item_id}: رصيد المستودع المتاح ${warehouseQtyBefore}`);
+    }
+    const storedWarehouseCostBefore = _warehouseRate(warehouse.avg_cost);
+    const effectiveWarehouseCostBefore = storedWarehouseCostBefore > 0
+      ? storedWarehouseCostBefore
+      : _warehouseRate(item.cost || baseUnitCost);
+    let warehouseCostAfter;
+    try {
+      warehouseCostAfter = costAfterRemoval(
+        warehouseQtyBefore, effectiveWarehouseCostBefore, baseQty, baseUnitCost || effectiveWarehouseCostBefore);
+    } catch (e) {
+      if (e && (e.code === 'INSUFFICIENT_STOCK' || e.code === 'INVENTORY_VALUATION_CONFLICT')) {
+        throw err('DOCUMENT_HAS_HISTORY',
+          'تعذّر العكس/المرتجع لأن الحركات اللاحقة لا تسمح بإزالة الكمية بتكلفتها الأصلية');
+      }
+      throw e;
+    }
+    const warehouseQtyAfter = calc.qty(warehouseQtyBefore - baseQty);
+    const globalCostBefore = _warehouseRate(item.cost);
+    await _writeWarehouseStock(conn, {
+      existing: warehouse, warehouseId, itemId: ln.item_id,
+      newQty: warehouseQtyAfter, newAvgCost: warehouseCostAfter,
+      // An outbound return is not a new supplier price observation.
+      lastCost: warehouse.last_cost || effectiveWarehouseCostBefore, actor,
+    });
+    await _deriveAndWriteItemStock(conn, ln.item_id);
+    const globalCostAfter = await _deriveAndWriteItemCost(conn, ln.item_id, globalCostBefore);
+    const triggerType = refType === 'PurchaseReturn' ? 'purchase_return' : 'goods_receipt_reverse';
+    await _recordWarehouseCostHistory(conn, {
+      itemId: ln.item_id, warehouseId,
+      before: storedWarehouseCostBefore, after: warehouseCostAfter,
+      qtyBefore: warehouseQtyBefore, qtyAfter: warehouseQtyAfter,
+      triggerType, refId: grn.id, actor,
+    });
+    await _recordGlobalCostHistory(conn, {
+      itemId: ln.item_id, before: globalCostBefore, after: globalCostAfter,
+      reason: 'purchase', refId: grn.id, actor,
+    });
 
     const mvId = await _recordMovement(conn, {
       itemId: ln.item_id, itemName: ln.item_name, type: 'out', qty: baseQty,
@@ -209,8 +369,7 @@ async function reverseReceiptStock(conn, { grn, lines, actor, refType = 'GoodsRe
     if (ln.po_line_id) {
       await conn.query('UPDATE po_lines SET base_received_qty = GREATEST(0, base_received_qty - ?) WHERE id = ?', [baseQty, ln.po_line_id]);
     }
-    const wq = await _warehouseQty(conn, warehouseId, ln.item_id);
-    affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: -baseQty, newQty: wq ? Number(wq.qty) : 0 });
+    affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: -baseQty, newQty: warehouseQtyAfter });
     netValue += calc.money(baseQty * baseUnitCost);
   }
   return { movementIds, affectedStock, netValue: calc.money(netValue) };
@@ -228,4 +387,9 @@ async function applyReturnStock(conn, { ret, lines, actor }) {
   });
 }
 
-module.exports = { applyReceiptStock, reverseReceiptStock, applyReturnStock, OVER_RECEIPT_TOLERANCE };
+module.exports = {
+  applyReceiptStock, reverseReceiptStock, applyReturnStock, OVER_RECEIPT_TOLERANCE,
+  // Exported pure costing primitives keep the accounting contract directly
+  // testable without a database.
+  costAfterRemoval, weightedWarehouseRollup,
+};

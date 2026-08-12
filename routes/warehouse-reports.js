@@ -1,10 +1,9 @@
 /**
  * Warehouse Reports + Analytics — Phase 2B (READ-ONLY).
  *
- * Mounted under /api/inventory (so the Phase 2A.2 scope middleware's
- * req.guardWh / req.whScopeClause / req.warehouseScope are available). Every
- * endpoint is a pure SELECT returning the standard envelope and respecting the
- * warehouse scope on rows, totals AND export. No mutations.
+ * Mounted under /api/inventory after warehouse scope resolution. Financial
+ * reports deliberately enforce req.warehouseScope themselves, independently
+ * from the operational rollout switch, on rows, totals AND export.
  *
  * Honesty rules (data findings): value at warehouse WAC with a fallback flag;
  * NO reserved stock / barcode / real COGS-turnover (columns don't exist);
@@ -19,6 +18,8 @@ const db = require('../db/connection');
 const INV = require('../lib/inventoryReporting');
 const RC = require('../lib/reportContract');
 const CSV = require('../lib/csvExport');
+const STRICT_SCOPE = require('../lib/warehouseIntelligenceScope');
+const { hasCapability } = require('../middleware/requireCapability');
 
 // Warehouse WAC with global-cost fallback (matches lib/inventoryReporting and
 // the dashboard/grid endpoints, so values reconcile across the app).
@@ -28,15 +29,36 @@ const ACTIVE = 'i.active = 1 AND i.deleted_at IS NULL';
 function _generatedAt() { return new Date().toISOString(); }
 
 function _scopeInfo(req) {
-  const s = req.warehouseScope || { all: true, warehouseIds: [] };
+  const s = STRICT_SCOPE.publicScope(req.warehouseScope);
   return { allWarehousesAccess: !!s.all, warehouseId: req.query.warehouseId || null };
+}
+
+async function READ(req, res, next) {
+  try {
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'مطلوب تسجيل الدخول' });
+    }
+    const allowed = await hasCapability(req.user, 'finance.reports.view') ||
+      await hasCapability(req.user, 'procurement.reports');
+    if (!allowed) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض تقارير المستودعات والمشتريات' });
+    }
+    return next();
+  } catch (_) {
+    return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض تقارير المستودعات والمشتريات' });
+  }
+}
+
+function _guardRequestedWarehouse(req, res, warehouseId) {
+  if (!warehouseId || STRICT_SCOPE.canReadWarehouse(req.warehouseScope, warehouseId)) return true;
+  res.status(403).json({ success: false, code: 'WAREHOUSE_ACCESS_DENIED', error: 'لا تملك صلاحية الوصول إلى هذا المستودع.' });
+  return false;
 }
 
 // Push the injection-safe scope IN(...) fragment onto a where[]/params[] pair.
 // Returns true if a restriction was added (used to detect "no access").
 function _scopeWhere(req, column, where, params) {
-  const sc = req.whScopeClause ? req.whScopeClause(column) : { sql: '', params: [] };
-  if (sc.sql) { where.push(sc.sql.replace(/^\s*AND\s+/i, '')); params.push(...sc.params); }
+  STRICT_SCOPE.append(req.warehouseScope, column, where, params, req._reportWarehouseId);
 }
 
 // Per-warehouse aggregate — byte-for-byte the dashboard's _warehousesSummary
@@ -69,10 +91,11 @@ async function _perWarehouse(req) {
 // ── GET /api/inventory/analytics/summary ────────────────────────────────────
 // The whole analytics payload in ONE call (no N+1). Honors warehouse scope +
 // optional ?warehouseId, ?category, ?type, ?window, ?from, ?to.
-router.get('/analytics/summary', async (req, res) => {
+router.get('/analytics/summary', READ, async (req, res) => {
   try {
     const filters = RC.parseReportFilters(req.query, 'movements');
-    if (filters.warehouseId && !req.guardWh(res, filters.warehouseId)) return;
+    if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
+    req._reportWarehouseId = filters.warehouseId || '';
     const warnings = [];
 
     // 1) KPIs + value-by-warehouse + comparison (reconciles with dashboard).
@@ -182,8 +205,8 @@ router.get('/analytics/summary', async (req, res) => {
     // 6) Transfers: pending / in-transit + remaining-to-receive.
     const tWhere = [];
     const tParams = [];
-    const sf = req.whScopeClause ? req.whScopeClause('from_warehouse_id') : { sql: '', params: [] };
-    const st = req.whScopeClause ? req.whScopeClause('to_warehouse_id') : { sql: '', params: [] };
+    const sf = STRICT_SCOPE.predicate(req.warehouseScope, 'from_warehouse_id', req._reportWarehouseId);
+    const st = STRICT_SCOPE.predicate(req.warehouseScope, 'to_warehouse_id', req._reportWarehouseId);
     if (sf.sql) { tWhere.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')'); tParams.push(...sf.params, ...st.params); }
     let transfers = { pending: 0, inTransit: 0, byStatus: {}, remainingQty: 0 };
     try {
@@ -261,7 +284,7 @@ router.get('/analytics/summary', async (req, res) => {
 });
 
 // ── GET /api/inventory/reports/catalog ──────────────────────────────────────
-router.get('/reports/catalog', async (req, res) => {
+router.get('/reports/catalog', READ, async (req, res) => {
   res.json(RC.envelope({
     data: RC.REPORT_TYPES.map((type) => ({ type, label: RC.REPORT_LABELS[type], adminOnly: type === 'data-quality' })),
     scope: _scopeInfo(req),
@@ -550,8 +573,8 @@ const BUILDERS = {
 async function _transferReport(req, filters, forExport, valueMode) {
   const where = [];
   const params = [];
-  const sf = req.whScopeClause ? req.whScopeClause('si.from_warehouse_id') : { sql: '', params: [] };
-  const st = req.whScopeClause ? req.whScopeClause('si.to_warehouse_id') : { sql: '', params: [] };
+  const sf = STRICT_SCOPE.predicate(req.warehouseScope, 'si.from_warehouse_id', req._reportWarehouseId);
+  const st = STRICT_SCOPE.predicate(req.warehouseScope, 'si.to_warehouse_id', req._reportWarehouseId);
   if (sf.sql) { where.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')'); params.push(...sf.params, ...st.params); }
   const dr = RC.riyadhDateRange('si.issue_date', filters.from, filters.to);
   if (dr.sql) { where.push(dr.sql.replace(/^\s*AND\s+/i, '')); params.push(...dr.params); }
@@ -578,14 +601,15 @@ async function _transferReport(req, filters, forExport, valueMode) {
 function _isAdminScope(req) { return !!(req.warehouseScope && req.warehouseScope.all); }
 
 // ── GET /api/inventory/reports/:reportType ───────────────────────────────────
-router.get('/reports/:reportType', async (req, res) => {
+router.get('/reports/:reportType', READ, async (req, res) => {
   try {
     const type = String(req.params.reportType);
     if (!RC.isReportType(type)) return res.status(404).json({ success: false, code: 'UNKNOWN_REPORT', error: 'تقرير غير معروف.' });
     const builder = BUILDERS[type];
     if (builder.adminOnly && !_isAdminScope(req)) return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'هذا التقرير متاح للإدارة فقط.' });
     const filters = RC.parseReportFilters(req.query, type);
-    if (filters.warehouseId && !req.guardWh(res, filters.warehouseId)) return;
+    if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
+    req._reportWarehouseId = filters.warehouseId || '';
     const out = await builder.run(req, filters, false);
     const totalPages = Math.max(1, Math.ceil((out.total || 0) / filters.pageSize));
     res.json(RC.envelope({
@@ -601,14 +625,15 @@ router.get('/reports/:reportType', async (req, res) => {
 });
 
 // ── GET /api/inventory/reports/:reportType/export → CSV ──────────────────────
-router.get('/reports/:reportType/export', async (req, res) => {
+router.get('/reports/:reportType/export', READ, async (req, res) => {
   try {
     const type = String(req.params.reportType);
     if (!RC.isReportType(type)) return res.status(404).json({ success: false, code: 'UNKNOWN_REPORT', error: 'تقرير غير معروف.' });
     const builder = BUILDERS[type];
     if (builder.adminOnly && !_isAdminScope(req)) return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'هذا التقرير متاح للإدارة فقط.' });
     const filters = RC.parseReportFilters(req.query, type);
-    if (filters.warehouseId && !req.guardWh(res, filters.warehouseId)) return;
+    if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
+    req._reportWarehouseId = filters.warehouseId || '';
     const out = await builder.run(req, filters, true);
     let csv;
     try {

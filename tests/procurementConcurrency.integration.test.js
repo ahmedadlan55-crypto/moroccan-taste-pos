@@ -62,6 +62,7 @@ async function main() {
     await db.query('DELETE FROM purchase_orders WHERE supplier_id=?', [SUP]).catch(() => {});
     await db.query('DELETE FROM inventory_movements WHERE item_id=? OR warehouse_id=?', [ITEM, WH]).catch(() => {});
     await db.query('DELETE FROM inventory_cost_history WHERE item_id=?', [ITEM]).catch(() => {});
+    await db.query('DELETE FROM item_cost_history WHERE item_id=?', [ITEM]).catch(() => {});
     await db.query('DELETE FROM warehouse_stock WHERE item_id=?', [ITEM]).catch(() => {});
     await db.query('DELETE FROM purchase_lots WHERE inv_item_id=?', [ITEM]).catch(() => {});
     // Receipt posting bumps inv_items.stock alongside warehouse_stock — wiping

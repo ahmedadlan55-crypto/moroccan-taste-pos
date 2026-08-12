@@ -14,6 +14,7 @@ const requireCapability = require('../../middleware/requireCapability');
 const H = require('../../lib/procurement/http');
 const { err } = require('../../lib/procurement/errors');
 const calc = require('../../lib/procurement/calculations');
+const receiptTax = require('../../lib/procurement/receiptTaxSnapshot');
 const { nextNumber } = require('../../lib/procurement/numbering');
 const { runTransition } = require('../../services/procurement/TransitionExecutor');
 const inv = require('../../services/procurement/InventoryPostingService');
@@ -168,6 +169,10 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
       // (فهو لقطة وقت الشراء)، ثم سجلّ الأصناف، والكود آخر ملاذ. بدون هذا كانت
       // شاشة الاستلام لا تملك إلا الكود.
       await _fillReceiptItemNames(conn, linesToInsert);
+      // Tax is a financial snapshot, never an editable GRN field.  PO-backed
+      // receipts inherit the server-computed PO-line snapshot.  Direct GRNs
+      // persist NULL until the supplier invoice supplies the tax evidence.
+      await receiptTax.attachTrustedTaxSnapshots(conn, { poId: b.poId || null, lines: linesToInsert });
       subtotal = calc.money(subtotal);
       await conn.query(
         `INSERT INTO purchase_receipts
@@ -181,10 +186,12 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
         await conn.query(
           `INSERT INTO purchase_receipt_lines
             (id, receipt_id, po_line_id, item_id, item_name, quantity, unit, unit_cost, line_total,
-             entered_qty, entered_unit_code, conversion_factor_snapshot, base_qty, base_unit_cost, warehouse_id, lot_no, expiry_date)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             entered_qty, entered_unit_code, conversion_factor_snapshot, base_qty, base_unit_cost,
+             vat_rate, tax_code, warehouse_id, lot_no, expiry_date)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [l.id, id, l.po_line_id, l.item_id, l.item_name || null, l.quantity, l.unit, l.unit_cost, l.line_total,
-           l.entered_qty, l.entered_unit_code, l.conversion_factor_snapshot, l.base_qty, l.base_unit_cost, l.warehouse_id, l.lot_no, l.expiry_date]);
+           l.entered_qty, l.entered_unit_code, l.conversion_factor_snapshot, l.base_qty, l.base_unit_cost,
+           l.vat_rate, l.tax_code, l.warehouse_id, l.lot_no, l.expiry_date]);
       }
       await events.recordEvent(conn, { documentType: 'grn', documentId: id, action: 'create', toStatus: 'draft', actor });
       return { id, number };

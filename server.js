@@ -727,6 +727,10 @@ app.use('/api/saved-views', require('./routes/saved-views'));
 // available to everyone the per-branch capabilities already allow. It still
 // inherits loadWarehouseScope from the /api/inventory mount above, and it is
 // claimed BEFORE the /api/inventory catch-all router further down.
+// Unified warehouse/purchasing/cost intelligence is another cross-cutting
+// read-only surface.  It must also be mounted before the inventory catch-all;
+// its own route enforces report RBAC and every query uses warehouse scope.
+app.use('/api/inventory/intelligence', require('./routes/warehouse-intelligence'));
 app.use('/api/inventory/operations', require('./routes/inventory-operations'));
 app.use('/api/inventory/v2', require('./lib/v2Metrics').track);
 app.use('/api/inventory/v2', require('./lib/v2RateLimit'));

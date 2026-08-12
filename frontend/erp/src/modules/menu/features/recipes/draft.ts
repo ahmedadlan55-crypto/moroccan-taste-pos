@@ -49,7 +49,7 @@ export function newLineKey(): string {
   return `L${seq}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** `2026-07-31T21:00:00.000Z` → `2026-07-31` (what <input type="date"> wants). */
+/** `2026-07-31T21:00:00.000Z` → `2026-07-31` (the shared DatePicker contract). */
 function dateOnly(value: string | null | undefined): string {
   if (!value) return "";
   const s = String(value);

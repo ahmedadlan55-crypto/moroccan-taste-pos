@@ -261,6 +261,36 @@ describe("keyboard", () => {
 });
 
 describe("call-site compatibility", () => {
+  it("keeps the ISO text, padding and one trigger in the same box in RTL and LTR", () => {
+    document.documentElement.dir = "rtl";
+    try {
+      const { container } = render(
+        <DatePicker
+          className="mt-1 h-9 w-full max-w-xs py-1 lg:w-44 2xl:max-w-sm"
+          value="2026-08-20"
+          onChange={vi.fn()}
+        />,
+      );
+
+      const root = container.querySelector<HTMLElement>("[data-date-picker-root]");
+      expect(root).not.toBeNull();
+      expect(root).toHaveAttribute("dir", "ltr");
+      expect(root).toHaveClass("mt-1", "w-full", "max-w-xs", "lg:w-44", "2xl:max-w-sm");
+
+      const input = field();
+      expect(input.type).toBe("text");
+    expect(input).toHaveClass("h-9", "py-1", "pe-11", "ps-3", "text-start");
+      expect(input).not.toHaveClass("mt-1", "w-full", "max-w-xs", "lg:w-44", "pe-10", "text-start");
+
+      const trigger = toggle();
+      expect(trigger).toHaveClass("end-1.5");
+      expect(root).toHaveAttribute("dir", "ltr");
+      expect(root!.querySelectorAll("svg")).toHaveLength(1);
+    } finally {
+      document.documentElement.dir = "ltr";
+    }
+  });
+
   it("keeps its accessible name when wrapped in a <label> (15 call sites do this)", () => {
     render(
       <label>

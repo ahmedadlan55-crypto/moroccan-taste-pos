@@ -1,9 +1,8 @@
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { QueryProvider } from "./query-provider";
 import { AuthProvider } from "./auth-provider";
 import { PermissionProvider } from "./permission-provider";
 import { LanguagePreferenceSync } from "./language-sync";
-import { enforceEnglishDateInputs } from "./date-input-locale";
 import { ToastProvider } from "@/shared/ui";
 
 // App-wide providers, composed once. Order matters: QueryProvider wraps
@@ -12,10 +11,6 @@ import { ToastProvider } from "@/shared/ui";
 // ToastProvider is mounted here — ONCE — so every module reaches useToast()
 // through the shell; modules must NOT mount their own local ToastProvider.
 export function AppProviders({ children }: { children: ReactNode }) {
-  // Every native date field renders in English, app-wide and for the whole
-  // session — see date-input-locale.ts for why this cannot be a per-field prop.
-  useEffect(() => enforceEnglishDateInputs(), []);
-
   return (
     <QueryProvider>
       <AuthProvider>

@@ -137,6 +137,35 @@ describe("no legacy coupling in erp source", () => {
   });
 });
 
+describe("date-field architecture", () => {
+  const appRoots = [SRC_DIR, path.resolve(SRC_DIR, "..", "..", "pos", "src")];
+  const appFiles: string[] = [];
+  for (const root of appRoots) collectSources(root, appFiles);
+
+  it("uses no native date/month/week control in either React app", () => {
+    const nativeDate = /<(?:input|Input)\b[^>]*\btype\s*=\s*(?:["'](?:date|datetime-local|month|week)["']|\{\s*["'](?:date|datetime-local|month|week)["']\s*\})/i;
+    const withoutComments = (source: string) => source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    const offenders = appFiles.filter((file) => nativeDate.test(withoutComments(readFileSync(file, "utf8"))));
+    expect(offenders.map((file) => path.relative(path.resolve(SRC_DIR, "..", ".."), file))).toEqual([]);
+  });
+
+  it("has one DatePicker implementation and no retired native-date observer", () => {
+    const implementations = appFiles.filter((file) =>
+      /export\s+(?:const|function)\s+DatePicker\b/.test(readFileSync(file, "utf8")),
+    );
+    const retiredObserverReferences = appFiles.filter((file) =>
+      /date-input-locale|enforceEnglishDateInputs/.test(readFileSync(file, "utf8")),
+    );
+
+    expect(implementations.map((file) => path.relative(SRC_DIR, file))).toEqual([
+      path.join("shared", "ui", "date-picker.tsx"),
+    ]);
+    expect(retiredObserverReferences).toEqual([]);
+  });
+});
+
 describe("full-page workflow integrity", () => {
   const workflowFiles: string[] = [];
   collectSources(SRC_DIR, workflowFiles);

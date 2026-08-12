@@ -9,8 +9,8 @@
 //   product's range/preset behaviour. This renders the calendar itself, so the
 //   English-Gregorian-Latin-digits policy is enforced by our own Intl
 //   formatters (see shared/ui/calendar.tsx) rather than requested from the
-//   platform. app/providers/date-input-locale.ts still guards the ~30 raw
-//   <input type="date"> fields elsewhere in the app.
+//   platform. Native date inputs are forbidden by the architecture gate: this
+//   is the one date field for ERP and POS-facing back-office workflows.
 //
 // WHAT THE NATIVE CONTROL GAVE FOR FREE AND THIS OWES BACK: typing a known
 // date without touching a calendar, full keyboard navigation, an accessible
@@ -52,6 +52,27 @@ export interface DatePickerProps extends NativeDateProps {
   max?: string;
 }
 
+/**
+ * Call sites historically pass both control and layout utilities through
+ * `className`. A width or margin applied only to the input makes the calendar
+ * trigger use a different wrapper box. Route layout utilities to that wrapper
+ * and leave height/padding/colour utilities on the actual control.
+ */
+function splitLayoutClasses(className?: string): { wrapper?: string; control?: string } {
+  if (!className) return {};
+  const layout: string[] = [];
+  const control: string[] = [];
+  const layoutUtility = /^(?:(?:sm|md|lg|xl|2xl|print):)*(?:block|inline-block|w-.+|min-w-.+|max-w-.+|m[trblxyse]?-.+|flex-1|grow|grow-0|shrink|shrink-0|self-.+)$/;
+
+  for (const token of className.trim().split(/\s+/)) {
+    (layoutUtility.test(token) ? layout : control).push(token);
+  }
+  return {
+    wrapper: layout.length ? layout.join(" ") : undefined,
+    control: control.length ? control.join(" ") : undefined,
+  };
+}
+
 export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
   (
     {
@@ -85,6 +106,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     const toggleRef = useRef<HTMLSpanElement>(null);
     const inputRef = useRef<HTMLInputElement | null>(null);
     const gridId = useId();
+    const layoutClasses = splitLayoutClasses(className);
 
     useEffect(() => {
       if (!typing) setText(value);
@@ -146,7 +168,15 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     }
 
     return (
-      <span ref={wrapRef} className="relative block">
+      <span
+        ref={wrapRef}
+        data-date-picker-root
+        // ISO/Gregorian values are always LTR. The explicit container direction
+        // keeps the calendar trigger on the same physical side as its padding,
+        // independently from the Arabic or English document direction.
+        dir="ltr"
+        className={cn("relative block min-w-0 w-full", layoutClasses.wrapper)}
+      >
         <input
           {...props}
           ref={setInputRef}
@@ -178,9 +208,12 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             onKeyDown?.(e);
           }}
           className={cn(
-            "field py-2 pe-10 text-start tabular-nums",
+            // Logical utilities are physical here because the root is
+            // deliberately LTR for ISO dates. This preserves the global RTL
+            // token contract while reserving the trigger's right-side space.
+            "field py-2 ps-3 pe-11 text-start tabular-nums",
             invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
-            className,
+            layoutClasses.control,
           )}
         />
         {/* role="button" rather than <button>: this control is routinely

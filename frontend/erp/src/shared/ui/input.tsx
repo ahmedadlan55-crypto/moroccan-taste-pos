@@ -25,6 +25,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           className,
         )}
         {...props}
+        // Native time controls remain intentional; pin their digits/clock to
+        // the application's Latin-digit contract without a global DOM observer.
+        lang={props.lang ?? (props.type === "time" ? "en-GB" : undefined)}
       />
     );
     if (leading == null && trailing == null) return control;

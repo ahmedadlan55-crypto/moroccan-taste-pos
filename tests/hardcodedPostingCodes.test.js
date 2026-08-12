@@ -59,7 +59,7 @@ const BUDGET = {
   'lib/glPosting.js': 56,
   'lib/hrGLPosting.js': 41,
   'lib/order-to-cash/accounts.js': 0,
-  'lib/procurement/accounts.js': 1,
+  'lib/procurement/accounts.js': 0,
   'lib/procurement/posting.js': 0,
   'routes/erp.js': 120,
   'routes/erp-core.js': 0,

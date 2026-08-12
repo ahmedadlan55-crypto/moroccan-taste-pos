@@ -20,6 +20,8 @@ const { nextNumber } = require('../../lib/procurement/numbering');
 const { runTransition } = require('../../services/procurement/TransitionExecutor');
 const posting = require('../../lib/procurement/posting');
 const events = require('../../lib/procurement/events');
+const matching = require('../../lib/procurement/matching');
+const stateMachine = require('../../lib/procurement/stateMachine');
 
 const SORTABLE = { issueDate: 'si.issue_date', dueDate: 'si.due_date', createdAt: 'si.created_at', total: 'si.total_amount', status: 'si.status' };
 const LIST_STATUSES = ['draft', 'pending_review', 'pending_approval', 'approved', 'partially_paid', 'paid', 'overdue', 'closed', 'cancelled'];
@@ -134,18 +136,25 @@ router.post('/:id/match', requireCapability('supplier_invoices.create'), async (
     const out = await db.withTransaction(async (conn) => {
       const [rows] = await conn.query('SELECT * FROM supplier_invoices WHERE id = ? FOR UPDATE', [req.params.id]);
       if (!rows.length) throw err('NOT_FOUND', 'الفاتورة غير موجودة');
+      // `match` is a state-machine action even though it does not advance the
+      // status.  Without this guard an approved invoice could be re-matched,
+      // rewriting the evidence after its journal and receipt consumption.
+      stateMachine.next('supplier_invoice', rows[0].status, 'match');
       const [lines] = await conn.query('SELECT * FROM supplier_invoice_lines WHERE invoice_id = ?', [req.params.id]);
+      // Lock every referenced receipt line in deterministic order and prove
+      // capacity across ALL other invoice matches before replacing this
+      // invoice's prior draft matches.
+      const plan = await matching.lockReceiptMatchPlan(conn, req.params.id, lines);
       await conn.query('DELETE FROM supplier_invoice_matches WHERE invoice_id = ?', [req.params.id]);
+      await conn.query('UPDATE supplier_invoice_lines SET matched_qty = 0 WHERE invoice_id = ?', [req.params.id]);
       let anyVariance = false, matchedCount = 0;
-      for (const l of lines) {
-        if (!l.grn_line_id) continue;
-        const [grl] = await conn.query('SELECT id, po_line_id, base_qty, base_unit_cost, base_invoiced_qty FROM purchase_receipt_lines WHERE id = ?', [l.grn_line_id]);
-        if (!grl.length) continue;
-        const rl = grl[0];
-        const invQty = calc.qty(l.base_qty);
+      for (const candidate of plan) {
+        const l = candidate.line;
+        const rl = candidate.receipt;
+        const invQty = candidate.matchedQty;
         const rcvCost = calc.rate(rl.base_unit_cost);
         const invPrice = calc.rate(l.base_unit_price);
-        const matchedQty = invQty; // full-qty match; over-invoice handled at approve
+        const matchedQty = invQty;
         const matchedAmount = calc.money(matchedQty * rcvCost);
         const priceVar = calc.money(matchedQty * (invPrice - rcvCost));
         const orderedQty = calc.qty(rl.base_qty);
@@ -219,10 +228,10 @@ router.post('/:id/approve', requireCapability('supplier_invoices.approve'), asyn
           let grniClear = calc.money(agg[0].m);
           if (grniClear <= 0) grniClear = calc.money(row.subtotal); // no receipt link → clear full net (direct stock invoice)
           journalId = await posting.postStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), grniClear, vat: calc.money(row.vat_amount) });
-          // mark receipt lines as invoiced
-          await conn.query(
-            `UPDATE purchase_receipt_lines prl JOIN supplier_invoice_matches m ON m.receipt_line_id = prl.id
-             SET prl.base_invoiced_qty = prl.base_invoiced_qty + m.matched_qty WHERE m.invoice_id = ?`, [row.id]);
+          // Re-lock and consume each receipt line independently. The
+          // conditional update is the final guard against legacy corruption or
+          // a future mutation bypassing the match-time reservation check.
+          await matching.applyApprovedReceiptQuantities(conn, row.id);
         }
         return { extraSets: { gl_journal_id: journalId, posted_by: actor, posted_at: new Date() }, journalIds: [journalId] };
       },
@@ -239,7 +248,11 @@ router.post('/:id/cancel', requireCapability('supplier_invoices.create'), async 
       actorColumns: { by: 'cancelled_by', at: 'cancelled_at' },
       perform: async (conn, row) => {
         if (['approved', 'partially_paid', 'paid'].includes(row.status)) throw err('DOCUMENT_HAS_HISTORY', 'لا يمكن إلغاء فاتورة معتمدة — استخدم إشعار دائن');
-        return {};
+        // Draft matches reserve receipt capacity. Releasing a draft/pending
+        // invoice must release those reservations atomically with cancellation.
+        await conn.query('DELETE FROM supplier_invoice_matches WHERE invoice_id = ?', [row.id]);
+        await conn.query('UPDATE supplier_invoice_lines SET matched_qty = 0 WHERE invoice_id = ?', [row.id]);
+        return { extraSets: { matching_status: 'unmatched', matched_amount: 0 } };
       },
     });
     return H.sendOk(res, { data: { id: req.params.id }, documentNumber: r.row.code, status: r.toStatus, version: r.newVersion });
@@ -261,6 +274,9 @@ router.post('/:id/credit-note', requireCapability('supplier_invoices.credit'), a
       if (inv.gl_journal_id) {
         journalId = await posting.postReversal(conn, { originalJournalId: inv.gl_journal_id, referenceType: 'SupplierInvoice', referenceId: inv.id, actor, dateYMD: acctDate.journalDate(), description: 'إشعار دائن للفاتورة ' + (inv.invoice_no || inv.code) });
       }
+      await matching.releaseApprovedReceiptQuantities(conn, inv.id);
+      await conn.query('DELETE FROM supplier_invoice_matches WHERE invoice_id = ?', [inv.id]);
+      await conn.query('UPDATE supplier_invoice_lines SET matched_qty = 0 WHERE invoice_id = ?', [inv.id]);
       await conn.query('UPDATE supplier_invoices SET status = "cancelled", version = version + 1, cancelled_by = ?, cancelled_at = NOW() WHERE id = ?', [actor, inv.id]);
       await events.recordEvent(conn, { documentType: 'supplier_invoice', documentId: inv.id, action: 'credit_note', fromStatus: inv.status, toStatus: 'cancelled', actor, glJournalId: journalId });
       return { journalId };

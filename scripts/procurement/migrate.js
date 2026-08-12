@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * scripts/procurement/migrate.js — apply (or dry-run) the Procurement / P2P
- * schema evolution, GRNI account bootstrap, and capability seed.
+ * schema evolution, governed account-role verification, and capability seed.
  *
  * Idempotent + rerunnable. Records applied step versions in
  * `_procurement_migrations`. MySQL 8 + MariaDB safe (guarded ALTERs).
@@ -16,7 +16,10 @@ const path = require('path');
 const db = require(path.join(__dirname, '..', '..', 'db', 'connection'));
 const schema = require(path.join(__dirname, '..', '..', 'db', 'migrations', 'procurement', 'schema'));
 const capabilities = require(path.join(__dirname, '..', '..', 'db', 'migrations', 'procurement', 'capabilities'));
-const { ensureProcurementAccounts } = require(path.join(__dirname, '..', '..', 'lib', 'procurement', 'accounts'));
+const {
+  ensureProcurementAccounts,
+  PROCUREMENT_LEDGER_COMPANY_ID,
+} = require(path.join(__dirname, '..', '..', 'lib', 'procurement', 'accounts'));
 
 const STEPS = [
   { version: 'P0013', name: 'procurement_accounts_grni' },
@@ -53,9 +56,11 @@ async function run({ dryRun }) {
 
   if (!dryRun) await ensureTracking((s) => db.query(s));
 
-  // Step 1: accounts (GRNI bootstrap)
+  // Step 1: verify governed roles. This is intentionally read-only and
+  // fail-closed: a migration must not invent or silently re-route a financial
+  // control account.
   console.log('\n[accounts]');
-  const accounts = await ensureProcurementAccounts(target, { log, dryRun });
+  const accounts = await ensureProcurementAccounts(target, { companyId: PROCUREMENT_LEDGER_COMPANY_ID });
   if (!dryRun) console.log('  GRNI=%s AP=%s InputVAT=%s', accounts.grni.code, accounts.ap.code, accounts.inputVat.code);
 
   // Step 2: schema evolution

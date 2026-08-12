@@ -95,13 +95,14 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
 }
 
 // ── 4. ONE payables control account ──────────────────────────────────────
-// Supplier payments posted to 2101 while the whole V2 procurement cycle posts
-// to 2100. One liability, two accounts, and neither balance was the supplier's
-// real position.
+// Supplier payments historically split one payable balance over several legacy
+// codes.  The Saudi canonical chart owns one control account (211100), and all
+// writers must resolve it centrally rather than repeating a literal.
 {
   const cash = code(read('routes', 'cash.js'));
-  check('supplier payments now post to 2100', /recipientType === 'supplier'\s*\)\s*\{ code = '2100'/.test(cash));
-  check('…named ذمم دائنة', /name = 'ذمم دائنة'/.test(cash));
+  check('supplier payments use the central AP control account',
+    /recipientType === 'supplier'\)\s*\{ code = glPosting\.CORE_ACCOUNTS\.AP\.code/.test(cash));
+  check('…named ذمم الموردين', /name = 'ذمم الموردين'/.test(cash));
   check('the old 2101 routing is gone', !/code = '2101'/.test(cash));
 
   // The auto-create is how 2101 came to exist at all: a missing account
@@ -109,9 +110,12 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   check('the payables account is NEVER auto-created', /ap_account_missing/.test(cash));
   check('…it raises instead', /err\.code = 'ap_account_missing'; err\.status = 500; throw err/.test(cash));
 
-  check('procurement already owned 2100', /ap: String\(process\.env\.PROCUREMENT_AP_ACCOUNT_CODE \|\| '2100'\)/
-    .test(read('lib', 'procurement', 'accounts.js')));
-  check('the bootstrap targets the same account', boot.AP_CODE === '2100' && boot.AP_NAME === 'ذمم دائنة');
+  const procurementAccounts = read('lib', 'procurement', 'accounts.js');
+  check('procurement resolves AP through the governed role registry',
+    /ap: 'ACCOUNTS_PAYABLE'/.test(procurementAccounts) && /getAccountByRole/.test(procurementAccounts));
+  check('procurement has no legacy AP literal or environment fallback',
+    !/PROCUREMENT_AP_ACCOUNT_CODE|['"]2100['"]/.test(code(procurementAccounts)));
+  check('the bootstrap targets the same canonical account', boot.AP_CODE === '211100' && boot.AP_NAME === 'ذمم دائنة');
 }
 
 // ── 5. Posted history is reclassified by a JOURNAL, never rewritten ──────
@@ -135,7 +139,7 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
 // is honest and shrinks as history is cleaned up.
 {
   const src = read('lib', 'partyDimension', 'bootstrap.js');
-  check('unidentifiable balance goes to its own account', boot.UNALLOCATED_CODE === '2109');
+  check('unidentifiable balance goes to its own canonical account', boot.UNALLOCATED_CODE === '219900');
   check('…labelled as unallocated, not as a supplier', /ذمم دائنة — غير موزَّعة/.test(src));
   check('no placeholder party id is ever written',
     !/partyId: 'MISC|partyId: 'UNKNOWN|partyId: 'VARIOUS/.test(src));

@@ -7,8 +7,8 @@
  *
  * Honesty rules (data findings): value at warehouse WAC with a fallback flag;
  * NO reserved stock / barcode / real COGS-turnover (columns don't exist);
- * expiry + aging come from purchase_lots and are flagged تقديري when coverage
- * is low; orphan (NULL warehouse_id) rows surface only in the admin
+ * expiry comes from the canonical lot ledger and is explicitly non-authoritative
+ * when quantity coverage is incomplete; orphan (NULL warehouse_id) rows surface only in the admin
  * data-quality report.
  */
 'use strict';
@@ -19,6 +19,7 @@ const INV = require('../lib/inventoryReporting');
 const RC = require('../lib/reportContract');
 const CSV = require('../lib/csvExport');
 const STRICT_SCOPE = require('../lib/warehouseIntelligenceScope');
+const MOVEMENT = require('../lib/inventoryMovementSemantics');
 const { hasCapability } = require('../middleware/requireCapability');
 
 // Warehouse WAC with global-cost fallback (matches lib/inventoryReporting and
@@ -86,6 +87,46 @@ async function _perWarehouse(req) {
       GROUP BY w.id, w.name, w.code, w.type, w.location, w.manager, w.is_active
       ORDER BY w.is_main DESC, w.code`, params);
   return rows;
+}
+
+// Coverage for the canonical lot ledger. A position is complete only when the
+// expiry-tracked lot quantity reconciles to warehouse_stock; merely having one
+// lot row is not enough evidence of complete expiry coverage.
+async function _expiryLotCoverage(req) {
+  const where = [ACTIVE, "i.tracking_mode='expiry'", 'ws.qty > 0'];
+  const params = [];
+  _scopeWhere(req, 'ws.warehouse_id', where, params);
+  const [[row]] = await db.query(
+    `SELECT COUNT(*) AS tracked_positions,
+            COALESCE(SUM(ws.qty),0) AS tracked_stock_qty,
+            SUM(CASE WHEN ABS(ws.qty-COALESCE(lb.expiry_lot_qty,0)) <= 0.001 THEN 1 ELSE 0 END) AS fully_covered_positions,
+            COALESCE(SUM(LEAST(ws.qty,GREATEST(COALESCE(lb.expiry_lot_qty,0),0))),0) AS covered_qty,
+            COALESCE(SUM(ABS(ws.qty-COALESCE(lb.expiry_lot_qty,0))),0) AS quantity_drift
+       FROM warehouse_stock ws
+       JOIN inv_items i ON i.id=ws.item_id
+       LEFT JOIN (
+         SELECT b.warehouse_id,b.item_id,
+                SUM(CASE WHEN l.expiry_date IS NOT NULL AND l.lifecycle_status<>'closed' THEN b.qty ELSE 0 END) AS expiry_lot_qty
+           FROM warehouse_lot_balances b
+           JOIN inventory_lots l ON l.id=b.lot_id
+          GROUP BY b.warehouse_id,b.item_id
+       ) lb ON lb.warehouse_id=ws.warehouse_id AND lb.item_id=ws.item_id
+      WHERE ${where.join(' AND ')}`, params);
+  const trackedPositions = Number(row && row.tracked_positions) || 0;
+  const fullyCoveredPositions = Number(row && row.fully_covered_positions) || 0;
+  const trackedStockQty = Number(row && row.tracked_stock_qty) || 0;
+  const coveredQty = Number(row && row.covered_qty) || 0;
+  const quantityDrift = Number(row && row.quantity_drift) || 0;
+  return {
+    source: 'inventory_lots+warehouse_lot_balances',
+    trackedPositions,
+    fullyCoveredPositions,
+    trackedStockQty: _round2(trackedStockQty),
+    coveredQty: _round2(coveredQty),
+    quantityDrift: _round2(quantityDrift),
+    coveragePct: trackedStockQty > 0 ? _round2(Math.min(100, (coveredQty / trackedStockQty) * 100)) : 100,
+    complete: trackedPositions === fullyCoveredPositions && Math.abs(quantityDrift) <= 0.001,
+  };
 }
 
 // ── GET /api/inventory/analytics/summary ────────────────────────────────────
@@ -180,27 +221,30 @@ router.get('/analytics/summary', READ, async (req, res) => {
     });
     const movementTrend = Object.values(trendMap);
 
-    // 5) Slow / no-movement count (items holding stock, no movement in window).
+    // 5) Slow / no-movement count.  Demand consumption only: transfers,
+    // stocktakes, adjustments and waste must not reset the clock.
     const slWhere = [ACTIVE];
     const slParams = [];
     _scopeWhere(req, 'ws.warehouse_id', slWhere, slParams);
+    const consumption = MOVEMENT.outboundConsumptionSql('mm');
     const subWhere = [];
-    const subParams = [];
-    _scopeWhere(req, 'mm.warehouse_id', subWhere, subParams);
+    const subScopeParams = [];
+    _scopeWhere(req, 'mm.warehouse_id', subWhere, subScopeParams);
     const subScope = subWhere.length ? ' AND ' + subWhere.join(' AND ') : '';
     const [[slowRow]] = await db.query(
       `SELECT COUNT(*) AS cnt FROM (
          SELECT i.id,
                 COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty,
-                (SELECT MAX(mm.movement_date) FROM inventory_movements mm WHERE mm.item_id = i.id${subScope}) AS last_mv
+                (SELECT MAX(mm.movement_date) FROM inventory_movements mm WHERE mm.item_id = i.id AND ${consumption.sql}${subScope}) AS last_mv
            FROM warehouse_stock ws
            JOIN inv_items i ON i.id = ws.item_id
           WHERE ${slWhere.join(' AND ')}
           GROUP BY i.id
        ) t
        WHERE qty > 0 AND (last_mv IS NULL OR last_mv < DATE_SUB(NOW(), INTERVAL ? DAY))`,
-      slParams.concat(subParams, [filters.window]));
-    const slowNoMovement = { window: filters.window, count: Number(slowRow.cnt) || 0 };
+      // Placeholders in the SELECT subquery occur before the outer WHERE.
+      MOVEMENT.subqueryFirstParams(consumption.params, subScopeParams, slParams, [filters.window]));
+    const slowNoMovement = { window: filters.window, count: Number(slowRow.cnt) || 0, basis: 'outbound_consumption' };
 
     // 6) Transfers: pending / in-transit + remaining-to-receive.
     const tWhere = [];
@@ -230,16 +274,15 @@ router.get('/analytics/summary', READ, async (req, res) => {
               SUM(CASE WHEN i.min_stock <= 0 THEN 1 ELSE 0 END) AS missing_min_stock
          FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id
         WHERE ${dq.where.join(' AND ')}`, dq.params);
-    // Expiry coverage → flag تقديري when few items that hold stock have lots.
-    let expiryCoverage = { lots: 0, covered: 0, reliable: true };
+    // Expiry risk is authoritative only when the canonical lot ledger fully
+    // reconciles every expiry-tracked stock position by quantity.
+    let expiryCoverage = { source: 'inventory_lots+warehouse_lot_balances', trackedPositions: 0, fullyCoveredPositions: 0, trackedStockQty: 0, coveredQty: 0, quantityDrift: 0, coveragePct: 0, complete: false };
     try {
-      const eWhere = [];
-      const eParams = [];
-      _scopeWhere(req, 'warehouse_id', eWhere, eParams);
-      const [[lc]] = await db.query('SELECT COUNT(*) AS lots, COUNT(DISTINCT inv_item_id) AS items FROM purchase_lots WHERE qty_remaining > 0' + (eWhere.length ? ' AND ' + eWhere.join(' AND ') : ''), eParams);
-      expiryCoverage = { lots: Number(lc.lots) || 0, covered: Number(lc.items) || 0, reliable: (Number(lc.lots) || 0) > 0 };
-      if (!expiryCoverage.reliable) RC.pushWarning(warnings, 'EXPIRY_LOW_COVERAGE', 'لا توجد طبقات استلام (purchase_lots) كافية — تقارير انتهاء الصلاحية والتقادم تقديرية.', 'warning');
-    } catch (_) {}
+      expiryCoverage = await _expiryLotCoverage(req);
+      if (!expiryCoverage.complete) RC.pushWarning(warnings, 'EXPIRY_LOT_COVERAGE_INCOMPLETE', 'تغطية دفعات الصلاحية جزئية؛ لا يمكن اعتبار قيم الصلاحية أو التقادم نهائية.', 'warning');
+    } catch (_) {
+      RC.pushWarning(warnings, 'CANONICAL_LOT_LEDGER_UNAVAILABLE', 'دفتر الدفعات المعياري غير متاح؛ لم يُعرض تقييم صلاحية بديل.', 'error');
+    }
     const dataQualityIndicators = {
       estimatedCostItems: Number(dqRow && dqRow.estimated_cost_items) || 0,
       missingMinStock: Number(dqRow && dqRow.missing_min_stock) || 0,
@@ -471,79 +514,88 @@ const BUILDERS = {
     },
   },
 
-  // 10) No-movement items.
+  // 10) No outbound consumption (sales/independent issue/production material).
   'no-movement': {
-    headers: ['الصنف', 'الفئة', 'الكمية', 'القيمة', 'آخر حركة', 'أيام بلا حركة'],
-    csvRow: (r) => [r.name, r.category, r.qty, r.value, r.lastMovement || 'لا يوجد', r.daysSince == null ? '∞' : r.daysSince],
+    headers: ['الصنف', 'الفئة', 'الكمية', 'القيمة', 'آخر استهلاك/صرف', 'أيام بلا استهلاك'],
+    csvRow: (r) => [r.name, r.category, r.qty, r.value, r.lastOutboundAt || 'لا يوجد', r.daysSinceOutbound == null ? '∞' : r.daysSinceOutbound],
     async run(req, filters, forExport) {
       const where = [ACTIVE];
       const params = [];
       _scopeWhere(req, 'ws.warehouse_id', where, params);
       if (filters.category) { where.push('i.category = ?'); params.push(filters.category); }
+      const consumption = MOVEMENT.outboundConsumptionSql('mm');
       const sub = [];
-      const subParams = [];
-      _scopeWhere(req, 'mm.warehouse_id', sub, subParams);
+      const subScopeParams = [];
+      _scopeWhere(req, 'mm.warehouse_id', sub, subScopeParams);
       const subScope = sub.length ? ' AND ' + sub.join(' AND ') : '';
       const innerSel = `SELECT i.id AS item_id, i.name, i.category, i.unit,
                COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty ELSE 0 END),0) AS qty,
                COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty*${VALUE_EXPR} ELSE 0 END),0) AS value,
-               (SELECT MAX(mm.movement_date) FROM inventory_movements mm WHERE mm.item_id = i.id${subScope}) AS last_movement
+               (SELECT MAX(mm.movement_date) FROM inventory_movements mm WHERE mm.item_id = i.id AND ${consumption.sql}${subScope}) AS last_movement
           FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id
          WHERE ${where.join(' AND ')}
          GROUP BY i.id, i.name, i.category, i.unit`;
-      const innerParams = params.concat(subParams);
+      // The SELECT subquery placeholders occur before the outer WHERE.
+      const innerParams = MOVEMENT.subqueryFirstParams(consumption.params, subScopeParams, params);
       const havQty = ' HAVING qty > 0 AND (last_movement IS NULL OR last_movement < DATE_SUB(NOW(), INTERVAL ' + Number(filters.window) + ' DAY))';
       const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(value),0) AS v FROM (' + innerSel + havQty + ') t', innerParams);
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
       const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
       const [rows] = await db.query('SELECT * FROM (' + innerSel + havQty + ') t' + order + pg, forExport ? innerParams : innerParams.concat([filters.pageSize, filters.offset]));
       return {
-        rows: rows.map((r) => ({ itemId: String(r.item_id), name: r.name, category: r.category || '', unit: r.unit || '', qty: Number(r.qty) || 0, value: _round2(r.value), lastMovement: r.last_movement || null, daysSince: r.last_movement ? Math.floor((Date.now() - new Date(r.last_movement).getTime()) / 86400000) : null })),
-        total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, totalValue: _round2(c.v), window: filters.window }, warnings: [],
+        rows: rows.map((r) => {
+          const lastOutboundAt = r.last_movement || null;
+          const daysSinceOutbound = lastOutboundAt ? Math.floor((Date.now() - new Date(lastOutboundAt).getTime()) / 86400000) : null;
+          return { itemId: String(r.item_id), name: r.name, category: r.category || '', unit: r.unit || '', qty: Number(r.qty) || 0, value: _round2(r.value), lastOutboundAt, daysSinceOutbound, lastMovement: lastOutboundAt, daysSince: daysSinceOutbound };
+        }),
+        total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, totalValue: _round2(c.v), window: filters.window, basis: 'outbound_consumption' }, warnings: [],
       };
     },
   },
 
-  // 11) Expiry (purchase_lots; flagged تقديري when coverage is low).
+  // 11) Expiry from the canonical lot ledger. Partial coverage is explicit
+  // and never presented as a complete aging/expiry population.
   'expiry': {
     headers: ['الصنف', 'المستودع', 'الدفعة', 'الكمية المتبقية', 'تكلفة الوحدة', 'القيمة', 'تاريخ الانتهاء', 'أيام متبقية', 'الحالة'],
     csvRow: (r) => [r.itemName, r.warehouseName, r.batch, r.qtyRemaining, r.unitCost, r.value, r.expiryDate, r.daysToExpiry == null ? '' : r.daysToExpiry, r.statusLabel],
     async run(req, filters, forExport) {
-      const where = ['pl.qty_remaining > 0', 'pl.expiry_date IS NOT NULL'];
+      const where = ['b.qty > 0', 'l.expiry_date IS NOT NULL', "l.lifecycle_status<>'closed'"];
       const params = [];
-      _scopeWhere(req, 'pl.warehouse_id', where, params);
+      _scopeWhere(req, 'b.warehouse_id', where, params);
       if (filters.q) { where.push('i.name LIKE ?'); params.push('%' + filters.q + '%'); }
       const whereSql = ' WHERE ' + where.join(' AND ');
-      const from = ' FROM purchase_lots pl JOIN inv_items i ON i.id = pl.inv_item_id LEFT JOIN warehouses w ON w.id = pl.warehouse_id';
+      const from = ' FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id JOIN inv_items i ON i.id=l.item_id LEFT JOIN warehouse_stock ws ON ws.warehouse_id=b.warehouse_id AND ws.item_id=b.item_id LEFT JOIN warehouses w ON w.id=b.warehouse_id';
       let total = 0, sumVal = 0;
       let rows = [];
       const warnings = [];
+      let sourceAvailable = true;
       try {
-        const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(pl.qty_remaining*pl.unit_cost),0) AS v' + from + whereSql, params);
+        const valuationCost = 'COALESCE(NULLIF(ws.avg_cost,0),NULLIF(i.cost,0),0)';
+        const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(b.qty*' + valuationCost + '),0) AS v' + from + whereSql, params);
         total = Number(c.n) || 0; sumVal = _round2(c.v);
         const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
         const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-        const [r] = await db.query('SELECT pl.id, pl.inv_item_id, i.name AS item_name, pl.warehouse_id, w.name AS warehouse_name, pl.batch_number, pl.qty_remaining, pl.unit_cost, (pl.qty_remaining*pl.unit_cost) AS lot_value, pl.expiry_date, DATEDIFF(pl.expiry_date, CURDATE()) AS days_to_expiry' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+        const [r] = await db.query('SELECT l.id, l.item_id AS inv_item_id, i.name AS item_name, b.warehouse_id, w.name AS warehouse_name, l.lot_number AS batch_number, b.qty AS qty_remaining, ' + valuationCost + ' AS unit_cost, l.unit_cost AS lot_receipt_cost, (b.qty*' + valuationCost + ') AS lot_value, l.expiry_date, l.lifecycle_status, DATEDIFF(l.expiry_date, CURDATE()) AS days_to_expiry' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
         rows = r.map((x) => {
           const d = x.days_to_expiry == null ? null : Number(x.days_to_expiry);
           const st = d == null ? 'unknown' : d < 0 ? 'expired' : d <= 7 ? 'critical' : d <= 30 ? 'soon' : 'safe';
-          return { id: x.id, itemId: String(x.inv_item_id), itemName: x.item_name, warehouseId: x.warehouse_id || '', warehouseName: x.warehouse_name || '', batch: x.batch_number || '', qtyRemaining: Number(x.qty_remaining) || 0, unitCost: _round2(x.unit_cost), value: _round2(x.lot_value), expiryDate: x.expiry_date, daysToExpiry: d, status: st, statusLabel: { expired: 'منتهٍ', critical: 'حرج', soon: 'قريب', safe: 'آمن', unknown: 'غير معروف' }[st] };
+          return { id: x.id, itemId: String(x.inv_item_id), itemName: x.item_name, warehouseId: x.warehouse_id || '', warehouseName: x.warehouse_name || '', batch: x.batch_number || '', qtyRemaining: Number(x.qty_remaining) || 0, unitCost: _round2(x.unit_cost), lotReceiptCost: _round2(x.lot_receipt_cost), value: _round2(x.lot_value), costBasis: 'warehouse_wac', expiryDate: x.expiry_date, lifecycleStatus: x.lifecycle_status, daysToExpiry: d, status: st, statusLabel: { expired: 'منتهٍ', critical: 'حرج', soon: 'قريب', safe: 'آمن', unknown: 'غير معروف' }[st] };
         });
-      } catch (_) { /* purchase_lots variant */ }
-      // Coverage check → تقديري flag.
+      } catch (_) {
+        sourceAvailable = false;
+        RC.pushWarning(warnings, 'CANONICAL_LOT_LEDGER_UNAVAILABLE', 'دفتر الدفعات المعياري غير متاح؛ لم يُستخدم purchase_lots كبديل صامت.', 'error');
+      }
+      let coverage = { source: 'inventory_lots+warehouse_lot_balances', trackedPositions: 0, fullyCoveredPositions: 0, trackedStockQty: 0, coveredQty: 0, quantityDrift: 0, coveragePct: 0, complete: false };
       try {
-        const cw = [ACTIVE, 'ws.qty > 0'];
-        const cp = [];
-        _scopeWhere(req, 'ws.warehouse_id', cw, cp);
-        const [[cov]] = await db.query('SELECT COUNT(DISTINCT ws.item_id) AS stocked FROM warehouse_stock ws JOIN inv_items i ON i.id=ws.item_id WHERE ' + cw.join(' AND '), cp);
-        const lw = [];
-        const lp = [];
-        _scopeWhere(req, 'warehouse_id', lw, lp);
-        const [[lots]] = await db.query('SELECT COUNT(DISTINCT inv_item_id) AS covered FROM purchase_lots WHERE qty_remaining > 0' + (lw.length ? ' AND ' + lw.join(' AND ') : ''), lp);
-        const stocked = Number(cov.stocked) || 0, covered = Number(lots.covered) || 0;
+        coverage = await _expiryLotCoverage(req);
+        const stocked = coverage.trackedPositions, covered = coverage.fullyCoveredPositions;
         if (stocked > 0 && covered < stocked) RC.pushWarning(warnings, 'EXPIRY_LOW_COVERAGE', 'تقديري: ' + covered + ' من ' + stocked + ' صنف لها طبقات استلام — الأصناف بلا طبقات لا تظهر هنا.', 'warning');
-      } catch (_) {}
-      return { rows, total, totals: { count: total, totalValue: sumVal }, warnings };
+        if (!coverage.complete && !(stocked > 0 && covered < stocked)) RC.pushWarning(warnings, 'EXPIRY_LOT_QUANTITY_DRIFT', 'أرصدة دفعات الصلاحية لا تطابق رصيد المستودع؛ التقرير غير نهائي.', 'warning');
+      } catch (_) {
+        sourceAvailable = false;
+        if (!warnings.some((w) => w.code === 'CANONICAL_LOT_LEDGER_UNAVAILABLE')) RC.pushWarning(warnings, 'CANONICAL_LOT_LEDGER_UNAVAILABLE', 'تعذر قياس تغطية دفتر الدفعات.', 'error');
+      }
+      return { rows, total, totals: { count: total, totalValue: sumVal, costBasis: 'warehouse_wac', lotSource: coverage.source, coverage, authoritative: sourceAvailable && coverage.complete }, warnings };
     },
   },
 
@@ -563,7 +615,7 @@ const BUILDERS = {
       await one('جرد بلا مستودع', "SELECT COUNT(*) AS cnt FROM stocktakes WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
       await one('أصناف بتكلفة تقديرية', "SELECT COUNT(*) AS cnt FROM warehouse_stock ws WHERE ws.qty>0 AND COALESCE(NULLIF(ws.avg_cost,0),0)=0", 'WAC غير متوفر — قُيّمت بالتكلفة العامة');
       await one('أصناف بلا حد أدنى', "SELECT COUNT(*) AS cnt FROM inv_items WHERE active=1 AND deleted_at IS NULL AND (min_stock IS NULL OR min_stock<=0)", 'تقارير المنخفض قد تكون ناقصة');
-      await one('طبقات استلام نشطة', 'SELECT COUNT(*) AS cnt FROM purchase_lots WHERE qty_remaining>0', 'مصدر تقارير الصلاحية/التقادم');
+      await one('دفعات معيارية برصيد نشط', 'SELECT COUNT(*) AS cnt FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.qty>0', 'المصدر المعياري لتقارير الصلاحية والتتبع');
       return { rows, total: rows.length, totals: { metrics: rows.length }, warnings: [] };
     },
   },

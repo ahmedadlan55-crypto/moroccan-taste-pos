@@ -5,8 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "pretest": "node tests/invoiceReprint.test.js && node tests/warehouseIntelligenceScope.test.js && node tests/procurementReportScope.test.js && node tests/procurementReportAccounting.test.js && node tests/procurementReceiptTaxSnapshot.test.js",
-    "test:procurement-accounts": "node tests/procurementAccounts.test.js",
+    "pretest": "node tests/invoiceReprint.test.js && node tests/warehouseIntelligenceScope.test.js && node tests/inventoryAccountingReport.test.js && node tests/inventoryAccountingRoutes.test.js && node tests/inventoryMovementSemantics.test.js && node tests/warehouseReportTruth.test.js && node tests/procurementAccounts.test.js && node tests/procurementMatchIntegrity.test.js && node tests/procurementReportScope.test.js && node tests/procurementReportAccounting.test.js && node tests/procurementReceiptTaxSnapshot.test.js",
+    "test:procurement-accounts": "node tests/procurementAccounts.test.js && node tests/procurementMatchIntegrity.test.js",
     "test:accounting-consolidation": "node tests/coaSaudiCanonical.test.js && node tests/coaSingleInventory.test.js && node tests/procurementAccounts.test.js && node tests/erpCoreInventoryAtomicity.test.js && node tests/salesPostingCapture.test.js && node tests/salesPostingAggregate.test.js && node tests/salesPostingService.test.js",
     "dev": "nodemon server.js",
     "build": "npm run build:pos && npm run build:erp",

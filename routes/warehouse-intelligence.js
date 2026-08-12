@@ -17,6 +17,8 @@ const { hasCapability } = require('../middleware/requireCapability');
 const { sendCsv, CSV_ROW_CAP } = require('../lib/procurement/http');
 const WI = require('../lib/warehouseIntelligence');
 const STRICT_SCOPE = require('../lib/warehouseIntelligenceScope');
+const IAR = require('../lib/inventoryAccountingReport');
+const { getAccountByRole, AccountRoleError } = require('../lib/accountRoles');
 
 // The Reports Center is visible to the finance-report roles, while the
 // procurement module has its own purchasing-report grant.  Requiring only one
@@ -36,6 +38,20 @@ async function READ(req, res, next) {
     return next();
   } catch (_) {
     return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لعرض تقارير المستودعات والمشتريات' });
+  }
+}
+
+async function FINANCE_READ(req, res, next) {
+  try {
+    if (!req.user || !req.user.username) {
+      return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'Authentication required' });
+    }
+    if (!await hasCapability(req.user, 'finance.reports.view')) {
+      return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'Finance report permission required' });
+    }
+    return next();
+  } catch (_) {
+    return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'Finance report permission required' });
   }
 }
 
@@ -85,6 +101,33 @@ function guardRequestedWarehouse(req, res, filters) {
     error: 'لا تملك صلاحية الوصول إلى هذا المستودع.',
   });
   return false;
+}
+
+function guardCurrentValuationOnly(req, res, filters) {
+  if (!filters.from && !filters.to && !req.query.asOf && !req.query.asOfDate) return true;
+  res.status(422).json({
+    success: false,
+    code: 'HISTORICAL_VALUE_LEDGER_REQUIRED',
+    error: 'Historical inventory valuation is unavailable until an immutable valued-movement ledger exists. This report is current-state only.',
+  });
+  return false;
+}
+
+async function resolveLedgerRole(roleKey) {
+  // The current ledger is intentionally single-company (CO-MAIN).  Resolve
+  // the governed symbolic role every request so a reassignment/revocation is
+  // effective immediately; accountRoles deliberately has no stale cache and
+  // no silent fallback.
+  try {
+    return await getAccountByRole(db, roleKey, { companyId: 'CO-MAIN' });
+  } catch (error) {
+    if (!(error instanceof AccountRoleError) && error.name !== 'AccountRoleError') throw error;
+    const readiness = new Error(`Governed ledger role ${roleKey} is not ready: ${error.code || 'ACCOUNT_ROLE_ERROR'}`);
+    readiness.code = 'ACCOUNT_ROLE_READINESS_MISSING';
+    readiness.status = 503;
+    readiness.details = { roleKey, cause: error.code || 'ACCOUNT_ROLE_ERROR' };
+    throw readiness;
+  }
 }
 
 function purchaseWhere(req, filters, model) {
@@ -455,6 +498,269 @@ router.get('/overview', READ, async (req, res) => {
       filters: { from: filters.from, to: filters.to, warehouseId: filters.warehouseId },
       scope: scopeMeta(req, filters),
       warnings,
+      generatedAt: now(),
+    });
+  } catch (error) { return handleError(res, error); }
+});
+
+/**
+ * Current inventory subledger -> GL control reconciliation.
+ *
+ * This endpoint intentionally rejects historical/as-of filters.  The current
+ * schema does not persist a complete immutable value on every inventory
+ * movement, so recomputing an old balance with today's WAC would be false.
+ */
+router.get('/accounting-reconciliation', FINANCE_READ, async (req, res) => {
+  try {
+    const filters = WI.parseFilters(req.query);
+    if (!guardRequestedWarehouse(req, res, filters) || !guardCurrentValuationOnly(req, res, filters)) return;
+    const schema = await capabilities();
+    WI.requireColumns(schema, {
+      warehouse_stock: ['warehouse_id', 'item_id', 'qty', 'avg_cost'],
+      inv_items: ['id', 'cost'],
+      warehouses: ['id', 'name'],
+      gl_accounts: ['id', 'code'],
+      account_roles: ['role_key', 'company_id', 'account_id', 'is_active'],
+      gl_journals: ['id', 'status'],
+      gl_entries: ['journal_id', 'account_id', 'account_code', 'warehouse_id', 'debit', 'credit'],
+    });
+
+    const stockWhere = ['ws.qty <> 0'];
+    const stockParams = [];
+    if (filters.warehouseId) { stockWhere.push('ws.warehouse_id = ?'); stockParams.push(filters.warehouseId); }
+    STRICT_SCOPE.append(req.warehouseScope, 'ws.warehouse_id', stockWhere, stockParams);
+    const costExpr = 'COALESCE(NULLIF(ws.avg_cost,0), NULLIF(i.cost,0))';
+    const [stockRows] = await db.query(
+      `SELECT ws.warehouse_id, COALESCE(w.name,ws.warehouse_id) AS warehouse_name,
+              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * COALESCE(${costExpr},0) ELSE 0 END),0) AS positive_value,
+              COALESCE(SUM(CASE WHEN ws.qty < 0 THEN ws.qty * COALESCE(${costExpr},0) ELSE 0 END),0) AS negative_value,
+              COALESCE(SUM(ws.qty * COALESCE(${costExpr},0)),0) AS subledger_value,
+              COUNT(*) AS stock_positions,
+              SUM(CASE WHEN NULLIF(ws.avg_cost,0) IS NOT NULL THEN 1 ELSE 0 END) AS wac_positions,
+              SUM(CASE WHEN NULLIF(ws.avg_cost,0) IS NULL AND NULLIF(i.cost,0) IS NOT NULL THEN 1 ELSE 0 END) AS fallback_positions,
+              SUM(CASE WHEN ${costExpr} IS NULL THEN 1 ELSE 0 END) AS missing_cost_positions,
+              SUM(CASE WHEN ws.qty < 0 THEN 1 ELSE 0 END) AS negative_positions,
+              SUM(CASE WHEN i.id IS NULL THEN 1 ELSE 0 END) AS orphan_stock_positions,
+              SUM(CASE WHEN ${costExpr} < 0 THEN 1 ELSE 0 END) AS negative_cost_positions
+         FROM warehouse_stock ws
+         LEFT JOIN inv_items i ON i.id=ws.item_id
+         LEFT JOIN warehouses w ON w.id=ws.warehouse_id
+        WHERE ${stockWhere.join(' AND ')}
+        GROUP BY ws.warehouse_id,w.name`, stockParams);
+
+    const inventoryRole = await resolveLedgerRole(IAR.INVENTORY_ROLE);
+    const glWhere = ["gj.status='posted'", '(ge.account_id=? OR (ge.account_id IS NULL AND ge.account_code=?))'];
+    const glParams = [inventoryRole.accountId, inventoryRole.code];
+    if (WI.hasColumn(schema, 'gl_journals', 'deleted_at')) glWhere.push('gj.deleted_at IS NULL');
+    if (filters.warehouseId) { glWhere.push('ge.warehouse_id = ?'); glParams.push(filters.warehouseId); }
+    STRICT_SCOPE.append(req.warehouseScope, 'ge.warehouse_id', glWhere, glParams);
+    const [glRows] = await db.query(
+      `SELECT ge.warehouse_id, COALESCE(w.name,ge.warehouse_id,'Unallocated') AS warehouse_name,
+              COALESCE(SUM(ge.debit-ge.credit),0) AS gl_balance
+         FROM gl_entries ge
+         JOIN gl_journals gj ON gj.id=ge.journal_id
+         LEFT JOIN gl_accounts ga ON ga.id=ge.account_id
+         LEFT JOIN warehouses w ON w.id=ge.warehouse_id
+        WHERE ${glWhere.join(' AND ')}
+        GROUP BY ge.warehouse_id,w.name`, glParams);
+
+    let inventoryMethod = 'perpetual';
+    if (WI.hasColumn(schema, 'settings', 'setting_key') && WI.hasColumn(schema, 'settings', 'setting_value')) {
+      const [methodRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key='inventory_method' LIMIT 1");
+      if (methodRows.length && methodRows[0].setting_value) inventoryMethod = String(methodRows[0].setting_value);
+    }
+    inventoryMethod = inventoryMethod.trim().toLowerCase();
+    const rows = IAR.mergeReconciliationRows(stockRows, glRows);
+    const publicScope = STRICT_SCOPE.publicScope(req.warehouseScope);
+    const summary = IAR.summarizeReconciliation(rows, {
+      scopeAll: publicScope.all && !filters.warehouseId,
+      inventorySystem: inventoryMethod,
+    });
+    const perpetualReconciliationReady = inventoryMethod === 'perpetual' && summary.state === 'reconciled';
+    const accountingBasisState = inventoryMethod === 'perpetual'
+      ? 'perpetual_current_control'
+      : inventoryMethod === 'periodic'
+        ? 'periodic_close_required'
+        : 'unsupported_inventory_system';
+
+    return res.json({
+      success: true,
+      data: {
+        rows,
+        summary,
+        measurement: {
+          inventorySystem: inventoryMethod,
+          accountingBasisState,
+          perpetualReconciliationReady,
+          costFormula: 'weighted_average_by_item_and_warehouse',
+          currentOnly: true,
+          inventoryControlAccount: { role: IAR.INVENTORY_ROLE, accountId: inventoryRole.accountId, code: inventoryRole.code },
+          includesRecoverableVat: false,
+          includesLandedCost: false,
+        },
+        ias2Readiness: {
+          carryingAmount: summary.subledgerValue,
+          carryingAmountReady: IAR.isCarryingAmountReady(summary, inventoryMethod),
+          byInventoryClass: { state: 'unavailable', reason: 'INVENTORY_CLASSIFICATION_NOT_GOVERNED' },
+          nrvAndWriteDowns: { state: 'unavailable', reason: 'NRV_TEST_AND_WRITE_DOWN_LEDGER_MISSING' },
+          writeDownReversals: { state: 'unavailable', reason: 'WRITE_DOWN_REVERSAL_LEDGER_MISSING' },
+          pledgedInventory: { state: 'unavailable', reason: 'PLEDGE_REGISTER_MISSING' },
+          fairValueLessCostsToSell: { state: 'not_applicable_unless_such_inventory_exists', reason: 'NO_GOVERNED_FAIR_VALUE_CLASSIFICATION' },
+        },
+      },
+      scope: scopeMeta(req, filters),
+      warnings: summary.blockers.map((code) => warning(
+        code,
+        code,
+        ['ORPHAN_STOCK_ITEM', 'NEGATIVE_COST', 'PERIODIC_INVENTORY_SYSTEM', 'INVENTORY_SYSTEM_UNSUPPORTED', 'SUBLEDGER_GL_DIFFERENCE'].includes(code)
+          ? 'error'
+          : 'warning',
+      )),
+      generatedAt: now(),
+    });
+  } catch (error) { return handleError(res, error); }
+});
+
+/** Current GRNI operational balance, aging and GL reconciliation. */
+router.get('/grni-reconciliation', FINANCE_READ, async (req, res) => {
+  try {
+    const filters = WI.parseFilters(req.query);
+    if (!guardRequestedWarehouse(req, res, filters) || !guardCurrentValuationOnly(req, res, filters)) return;
+    const schema = await capabilities();
+    WI.requireColumns(schema, {
+      purchase_receipts: ['id', 'receipt_date', 'status', 'warehouse_id', 'supplier_id'],
+      purchase_receipt_lines: ['id', 'receipt_id'],
+      supplier_invoice_matches: ['invoice_id', 'receipt_line_id', 'matched_amount'],
+      supplier_invoices: ['id', 'status'],
+      purchase_returns: ['receipt_id', 'phase', 'status', 'subtotal'],
+      gl_accounts: ['id', 'code'],
+      account_roles: ['role_key', 'company_id', 'account_id', 'is_active'],
+      gl_journals: ['id', 'status'],
+      gl_entries: ['journal_id', 'account_id', 'account_code', 'debit', 'credit'],
+    });
+    const model = WI.purchaseModel(schema);
+    const receiptWhere = ["pr.status='posted'"];
+    const receiptParams = [];
+    if (filters.warehouseId) { receiptWhere.push('pr.warehouse_id=?'); receiptParams.push(filters.warehouseId); }
+    if (filters.supplierId) { receiptWhere.push('pr.supplier_id=?'); receiptParams.push(filters.supplierId); }
+    STRICT_SCOPE.append(req.warehouseScope, 'pr.warehouse_id', receiptWhere, receiptParams);
+
+    const receiptNumber = model.receiptNumber;
+    const supplierName = model.supplierName;
+    const grniOpenSql =
+      `SELECT pr.id AS receipt_id, ${receiptNumber} AS receipt_number,
+              pr.receipt_date, pr.warehouse_id, COALESCE(w.name,pr.warehouse_id) AS warehouse_name,
+              pr.supplier_id, ${supplierName} AS supplier_name,
+              DATEDIFF(CURDATE(),pr.receipt_date) AS age_days,
+              COALESCE(SUM(${model.netAmount}),0) AS received_value,
+              COALESCE(MAX(matched.matched_value),0) AS invoiced_value,
+              COALESCE(MAX(ret.returned_value),0) AS returned_value,
+              COALESCE(SUM(${model.netAmount}),0)-COALESCE(MAX(matched.matched_value),0)-COALESCE(MAX(ret.returned_value),0) AS outstanding_value
+         FROM purchase_receipts pr
+         JOIN purchase_receipt_lines prl ON prl.receipt_id=pr.id
+         LEFT JOIN purchase_orders po ON po.id=pr.po_id
+         LEFT JOIN suppliers s ON s.id=pr.supplier_id
+         LEFT JOIN inv_items i ON i.id=prl.item_id
+         LEFT JOIN warehouses w ON w.id=pr.warehouse_id
+         LEFT JOIN (
+           SELECT x.receipt_id, SUM(m.matched_amount) AS matched_value
+             FROM purchase_receipt_lines x
+             JOIN supplier_invoice_matches m ON m.receipt_line_id=x.id
+             JOIN supplier_invoices si ON si.id=m.invoice_id
+            WHERE si.status IN ('approved','partially_paid','paid','overdue','closed')
+            GROUP BY x.receipt_id
+         ) matched ON matched.receipt_id=pr.id
+         LEFT JOIN (
+           SELECT receipt_id, SUM(subtotal) AS returned_value
+             FROM purchase_returns
+            WHERE phase='before_invoice' AND status IN ('posted','settled')
+            GROUP BY receipt_id
+         ) ret ON ret.receipt_id=pr.id
+        WHERE ${receiptWhere.join(' AND ')}
+        GROUP BY pr.id,${receiptNumber},pr.receipt_date,pr.warehouse_id,w.name,pr.supplier_id,${supplierName}
+       HAVING ABS(outstanding_value) > 0.009`;
+    // Detail is deliberately capped for response size, but every aging and GL
+    // reconciliation number below comes from the uncapped aggregate query.
+    // Never compare a LIMITed subledger population with the complete GL.
+    const [detailQuery, aggregateQuery] = await Promise.all([
+      db.query(`${grniOpenSql} ORDER BY pr.receipt_date,pr.id LIMIT ?`, receiptParams.concat([IAR.GRNI_DETAIL_LIMIT])),
+      db.query(
+        `SELECT COUNT(*) AS open_count,
+                COALESCE(SUM(outstanding_value),0) AS total,
+                COALESCE(SUM(CASE WHEN outstanding_value < 0 THEN outstanding_value ELSE 0 END),0) AS negative,
+                COALESCE(SUM(CASE WHEN outstanding_value >= 0 AND age_days <= 0 THEN outstanding_value ELSE 0 END),0) AS current_value,
+                COALESCE(SUM(CASE WHEN outstanding_value >= 0 AND age_days BETWEEN 1 AND 30 THEN outstanding_value ELSE 0 END),0) AS d30,
+                COALESCE(SUM(CASE WHEN outstanding_value >= 0 AND age_days BETWEEN 31 AND 60 THEN outstanding_value ELSE 0 END),0) AS d60,
+                COALESCE(SUM(CASE WHEN outstanding_value >= 0 AND age_days BETWEEN 61 AND 90 THEN outstanding_value ELSE 0 END),0) AS d90,
+                COALESCE(SUM(CASE WHEN outstanding_value >= 0 AND age_days > 90 THEN outstanding_value ELSE 0 END),0) AS d90plus
+           FROM (${grniOpenSql}) grni_open`, receiptParams),
+    ]);
+    const rows = detailQuery[0] || [];
+
+    const reportRows = rows.map((row) => {
+      const outstanding = IAR.round2(Number(row.received_value) - Number(row.invoiced_value) - Number(row.returned_value));
+      return {
+        receiptId: String(row.receipt_id), receiptNumber: String(row.receipt_number || row.receipt_id),
+        receiptDate: row.receipt_date, warehouseId: row.warehouse_id == null ? null : String(row.warehouse_id),
+        warehouseName: String(row.warehouse_name || ''), supplierId: row.supplier_id == null ? null : String(row.supplier_id),
+        supplierName: String(row.supplier_name || ''), ageDays: Number(row.age_days) || 0,
+        receivedValue: IAR.round2(row.received_value), invoicedValue: IAR.round2(row.invoiced_value),
+        returnedBeforeInvoiceValue: IAR.round2(row.returned_value), outstandingValue: outstanding,
+      };
+    });
+    const aggregate = (aggregateQuery[0] && aggregateQuery[0][0]) || {};
+    const aging = {
+      current: IAR.round2(aggregate.current_value), d30: IAR.round2(aggregate.d30),
+      d60: IAR.round2(aggregate.d60), d90: IAR.round2(aggregate.d90),
+      d90plus: IAR.round2(aggregate.d90plus), negative: IAR.round2(aggregate.negative),
+      total: IAR.round2(aggregate.total),
+    };
+    const openCount = Number(aggregate.open_count) || 0;
+    const detailTruncated = openCount > reportRows.length;
+
+    const publicScope = STRICT_SCOPE.publicScope(req.warehouseScope);
+    const canReconcileCompanyGl = publicScope.all && !filters.warehouseId && !filters.supplierId;
+    const grniRole = await resolveLedgerRole(IAR.GRNI_ROLE);
+    let glBalance = null;
+    if (canReconcileCompanyGl) {
+      const glWhere = ["gj.status='posted'", '(ge.account_id=? OR (ge.account_id IS NULL AND ge.account_code=?))'];
+      if (WI.hasColumn(schema, 'gl_journals', 'deleted_at')) glWhere.push('gj.deleted_at IS NULL');
+      const [gl] = await db.query(
+        `SELECT COALESCE(SUM(ge.credit-ge.debit),0) AS balance
+           FROM gl_entries ge
+           JOIN gl_journals gj ON gj.id=ge.journal_id
+           LEFT JOIN gl_accounts ga ON ga.id=ge.account_id
+          WHERE ${glWhere.join(' AND ')}`, [grniRole.accountId, grniRole.code]);
+      glBalance = IAR.round2(gl[0] && gl[0].balance);
+    }
+    const difference = glBalance == null ? null : IAR.round2(aging.total - glBalance);
+    const blockers = [];
+    if (!canReconcileCompanyGl) blockers.push('GRNI_GL_NOT_WAREHOUSE_DIMENSIONED');
+    if (aging.negative < -0.01) blockers.push('GRNI_OVER_CLEARED');
+    if (difference != null && Math.abs(difference) > IAR.RECONCILIATION_TOLERANCE) blockers.push('GRNI_GL_DIFFERENCE');
+
+    const reportWarnings = blockers.map((code) => warning(code, code, code === 'GRNI_GL_DIFFERENCE' ? 'error' : 'warning'));
+    if (detailTruncated) reportWarnings.push(warning('GRNI_DETAIL_TRUNCATED', `Detail shows ${reportRows.length} of ${openCount} open receipts; aging and reconciliation still use the complete population.`, 'info'));
+
+    return res.json({
+      success: true,
+      data: {
+        rows: reportRows,
+        aging,
+        detail: { shown: reportRows.length, totalOpenReceipts: openCount, truncated: detailTruncated, limit: IAR.GRNI_DETAIL_LIMIT },
+        reconciliation: {
+          operationalOutstanding: aging.total,
+          glBalance,
+          difference,
+          state: blockers.length ? 'not_reconciled' : 'reconciled',
+          blockers,
+          grniAccount: { role: IAR.GRNI_ROLE, accountId: grniRole.accountId, code: grniRole.code },
+          currentOnly: true,
+          population: 'uncapped_all_open_receipts',
+        },
+      },
+      scope: scopeMeta(req, filters),
+      warnings: reportWarnings,
       generatedAt: now(),
     });
   } catch (error) { return handleError(res, error); }

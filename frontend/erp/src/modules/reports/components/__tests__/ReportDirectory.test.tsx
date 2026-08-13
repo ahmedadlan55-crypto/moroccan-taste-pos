@@ -36,6 +36,7 @@ function renderDirectory() {
         openLabel="فتح التقرير"
         countLabel={(count) => `${count} تقرير`}
         emptyLabel="لا توجد نتائج"
+        searchable
       />
     </MemoryRouter>,
   );
@@ -44,7 +45,7 @@ function renderDirectory() {
 describe("ReportDirectory", () => {
   it("renders grouped real routes with accessible actions", () => {
     renderDirectory();
-    expect(screen.getByTestId("report-directory-grid")).toHaveClass("xl:grid-cols-2");
+    expect(screen.getByTestId("report-directory-grid")).toHaveClass("lg:grid-cols-2");
     expect(document.querySelectorAll("[data-report-group]")).toHaveLength(2);
     expect(document.querySelectorAll("[data-report-item]")).toHaveLength(3);
     expect(screen.getAllByRole("link", { name: /فتح التقرير/ })).toHaveLength(3);

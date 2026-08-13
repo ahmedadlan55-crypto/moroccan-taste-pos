@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -145,15 +145,20 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
     }))
     .filter((family) => family.items.length > 0);
 
+  const firstGroup = groups[0];
+  if (firstGroup) {
+    firstGroup.items.unshift({
+      id: `${mode}-control-center`,
+      title: t(mode === "inventory" ? "warehouseIntelligence.inventory.title" : "warehouseIntelligence.purchases.title"),
+      to: `/reports/${mode}?workspace=1`,
+      icon: mode === "inventory" ? Boxes : ShoppingCart,
+      tone: "teal",
+    });
+  }
+
   return (
     <section id="report-catalog" className="scroll-mt-24" aria-labelledby="warehouse-report-catalog">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="warehouse-report-catalog" className="text-lg font-extrabold text-slate-900">{t("warehouseIntelligence.catalog.title")}</h2>
-          <p className="mt-1 max-w-3xl text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.catalog.subtitle")}</p>
-        </div>
-        <Badge tone="neutral">{t("warehouseIntelligence.catalog.count", { count: reports.length })}</Badge>
-      </div>
+      <h2 id="warehouse-report-catalog" className="sr-only">{t("warehouseIntelligence.catalog.title")}</h2>
 
       <ReportDirectory
         groups={groups}
@@ -164,10 +169,6 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
         emptyLabel={t("misc.reports.directory.empty")}
       />
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-[11px] font-semibold leading-5 text-slate-500">
-        <ShieldCheck className="me-1 inline h-4 w-4 text-teal-700" />
-        {t("warehouseIntelligence.assurance.legend")}
-      </div>
     </section>
   );
 }
@@ -921,11 +922,23 @@ function MiniTotal({ label, value }: { label: string; value: string }) {
 
 export function WarehouseIntelligenceHub({ mode }: { mode: WarehouseIntelligenceMode }) {
   const t = useT();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { scope } = useWarehouseScope();
   const [range, setRange] = useState<DateRange>(initialRange);
   const titleKey = mode === "inventory" ? "warehouseIntelligence.inventory.title" : "warehouseIntelligence.purchases.title";
   const subtitleKey = mode === "inventory" ? "warehouseIntelligence.inventory.subtitle" : "warehouseIntelligence.purchases.subtitle";
+  const isDirectory = location.search === "" && location.hash === "";
+
+  if (isDirectory) {
+    return (
+      <div data-testid="warehouse-report-directory" data-mode={mode}>
+        <PageHeader eyebrow={t("warehouseIntelligence.eyebrow")} title={t(titleKey)} subtitle={t(subtitleKey)} />
+        <ReportCatalog mode={mode} range={range} scope={scope} />
+      </div>
+    );
+  }
+
   return (
     <div data-testid="warehouse-intelligence-hub" data-mode={mode}>
       <PageHeader
@@ -941,9 +954,6 @@ export function WarehouseIntelligenceHub({ mode }: { mode: WarehouseIntelligence
         <DateRangePicker value={range} onChange={setRange} labels={{ presets: presetLabels(t), from: t("warehouseIntelligence.filters.from"), to: t("warehouseIntelligence.filters.to"), presetAriaLabel: t("warehouseIntelligence.filters.period") }} />
         <WarehouseScopeSelect fullWidth />
       </section>
-      <div className="mb-6">
-        <ReportCatalog mode={mode} range={range} scope={scope} />
-      </div>
       {mode === "inventory" ? <InventoryDecisionView range={range} scope={scope} /> : <PurchasingDecisionView range={range} scope={scope} />}
     </div>
   );

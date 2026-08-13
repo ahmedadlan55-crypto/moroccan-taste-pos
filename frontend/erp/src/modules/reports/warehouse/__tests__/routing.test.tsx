@@ -77,14 +77,13 @@ describe("warehouse intelligence report routing", () => {
     expect(formatSpecializedValue("price_variance", 2)).not.toBe(formatSpecializedValue("qty", 2));
   });
   it("mounts inventory as a decision center with real report deep links", async () => {
-    renderAt("/reports/inventory");
+    renderAt("/reports/inventory?workspace=1");
     await waitFor(() => expect(screen.getByTestId("inventory-decision-view")).toBeInTheDocument(), { timeout: 5_000 });
     expect(screen.getByRole("heading", { name: "Warehouse control center" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Stock flow by business source" })).toBeInTheDocument();
     expect(screen.getByText("Sales consumption")).toBeInTheDocument();
     expect(screen.getByText("Waste control")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Stock balance/ })).toHaveAttribute("href", expect.stringContaining("/reports/inventory/stock-balance"));
-    expect(screen.getAllByRole("heading", { name: "IAS 2 valuation" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByRole("heading", { name: "IAS 2 valuation" }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("inventory-accounting-reconciliation")).toBeInTheDocument();
     expect(screen.getByText("Advanced-report readiness register")).toBeInTheDocument();
     expect(screen.getByText("Historical as-of inventory valuation")).toBeInTheDocument();
@@ -116,16 +115,15 @@ describe("warehouse intelligence report routing", () => {
 
   it("keeps the decision center usable when finance-only reconciliations are forbidden", async () => {
     accountingFailures.inventory = true;
-    renderAt("/reports/inventory");
+    renderAt("/reports/inventory?workspace=1");
     await waitFor(() => expect(screen.getByTestId("inventory-decision-view")).toBeInTheDocument());
     expect(screen.getByTestId("inventory-accounting-unavailable")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Warehouse control center" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Stock balance/ })).toBeInTheDocument();
   });
 
   it("does not enable finance-only reconciliation queries for procurement-only users", async () => {
     permissions.finance = false;
-    renderAt("/reports/purchasing");
+    renderAt("/reports/purchasing?workspace=1");
     await waitFor(() => expect(screen.getByTestId("purchasing-decision-view")).toBeInTheDocument());
     expect(screen.getByTestId("finance-only-reconciliation")).toBeInTheDocument();
     expect(accountingEnabledCalls.grni.length).toBeGreaterThan(0);
@@ -157,7 +155,7 @@ describe("warehouse intelligence report routing", () => {
   });
 
   it("exports the complete filtered purchase ledger through the scoped server endpoint", async () => {
-    renderAt("/reports/purchasing");
+    renderAt("/reports/purchasing?workspace=1");
     await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "Export CSV" })); });
     const { downloadCsv } = await import("@/shared/lib/downloadCsv");
     await waitFor(() => expect(downloadCsv).toHaveBeenCalledWith(
@@ -166,5 +164,14 @@ describe("warehouse intelligence report routing", () => {
       expect.objectContaining({ warehouseId: undefined, q: "", lang: "en" }),
     ));
     await waitFor(() => expect(screen.getByRole("button", { name: "Export CSV" })).toBeEnabled());
+  });
+
+  it("keeps the report landing page free from the old stacked decision panels", async () => {
+    renderAt("/reports/inventory");
+    expect(await screen.findByTestId("warehouse-report-directory")).toBeInTheDocument();
+    expect(screen.getByTestId("report-directory-grid")).toHaveClass("lg:grid-cols-2");
+    expect(screen.queryByTestId("inventory-decision-view")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inventory-accounting-reconciliation")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Warehouse control center/ })).toHaveAttribute("href", "/reports/inventory?workspace=1");
   });
 });

@@ -40,6 +40,7 @@ export interface ReportDirectoryProps {
   openLabel: string;
   countLabel: (count: number) => string;
   emptyLabel: string;
+  searchable?: boolean;
   className?: string;
 }
 
@@ -71,6 +72,7 @@ export function ReportDirectory({
   openLabel,
   countLabel,
   emptyLabel,
+  searchable = false,
   className,
 }: ReportDirectoryProps) {
   const [query, setQuery] = useState("");
@@ -90,7 +92,7 @@ export function ReportDirectory({
 
   return (
     <section className={cn("space-y-4", className)} data-testid="report-directory">
-      <div className="surface flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+      {searchable && <div className="surface flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
         <label className="relative block min-w-0 flex-1 sm:max-w-xl">
           <span className="sr-only">{searchLabel}</span>
           <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
@@ -105,26 +107,22 @@ export function ReportDirectory({
         <span className="shrink-0 self-start rounded-full bg-slate-100 px-3 py-1.5 text-xs font-extrabold text-slate-600 sm:self-auto">
           {countLabel(visibleTotal)}
         </span>
-      </div>
+      </div>}
 
       {visibleGroups.length === 0 ? (
         <div className="surface px-5 py-12 text-center text-sm font-bold text-slate-500">{emptyLabel}</div>
       ) : (
-        <div className="grid items-start gap-4 xl:grid-cols-2" data-testid="report-directory-grid">
+        <div className="grid items-start gap-4 lg:grid-cols-2" data-testid="report-directory-grid">
           {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             return (
               <section key={group.id} className="surface overflow-hidden" data-report-group={group.id} aria-labelledby={`report-group-${group.id}`}>
-                <header className="flex min-h-16 items-start gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3.5">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm">
+                <header className="flex min-h-[3.25rem] items-center gap-2.5 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white text-slate-700 shadow-sm ring-1 ring-slate-200">
                     <GroupIcon className="h-4.5 w-4.5" aria-hidden="true" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-3">
-                      <h2 id={`report-group-${group.id}`} className="text-sm font-black text-slate-950">{group.title}</h2>
-                      <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-slate-500 shadow-sm">{group.items.length}</span>
-                    </span>
-                    {group.description && <span className="mt-0.5 block text-xs font-semibold leading-5 text-slate-500">{group.description}</span>}
+                    <h2 id={`report-group-${group.id}`} className="text-sm font-black text-slate-950">{group.title}</h2>
                   </span>
                 </header>
 
@@ -139,21 +137,17 @@ export function ReportDirectory({
                       <li
                         key={item.id}
                         data-report-item={item.id}
-                        className={cn("flex min-w-0 flex-col gap-3 border-s-2 border-transparent px-4 py-3.5 transition sm:flex-row sm:items-center", tone.hover)}
+                        className={cn("grid min-h-[4.5rem] min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-x-3 border-s-2 border-transparent px-4 py-3 transition sm:grid-cols-[2.75rem_minmax(0,1fr)_auto]", tone.hover)}
                       >
-                        <div className="group flex min-w-0 flex-1 items-center gap-3">
-                          <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-full", tone.icon)}>
+                        <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-full", tone.icon)}>
                             <Icon className="h-5 w-5" aria-hidden="true" />
-                          </span>
-                          <span className="min-w-0 flex-1">
+                        </span>
+                        <span className="group min-w-0">
                             {item.eyebrow && <span className="block text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">{item.eyebrow}</span>}
-                            <span className="block text-sm font-extrabold leading-5 text-slate-900 transition group-hover:text-teal-800">{item.title}</span>
-                            {item.description && <span className="mt-0.5 line-clamp-2 block text-xs font-medium leading-5 text-slate-500">{item.description}</span>}
-                          </span>
-                        </div>
+                            <span className="block break-words text-sm font-extrabold leading-6 text-slate-900 transition group-hover:text-teal-800">{item.title}</span>
+                        </span>
 
-                        <div className="flex shrink-0 flex-wrap items-center gap-1.5 ps-14 sm:ps-0" role="group" aria-label={item.title}>
-                          {item.badge && <span className="me-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-500">{item.badge}</span>}
+                        <div className="col-span-2 mt-2 flex shrink-0 flex-wrap items-center gap-1.5 ps-14 sm:col-span-1 sm:mt-0 sm:ps-0" role="group" aria-label={item.title}>
                           {actions.map((action) => {
                             const ActionIcon = action.icon ?? Eye;
                             return (

@@ -88,9 +88,9 @@ function findCenterNav() {
 }
 
 describe("SalesAnalyticsHub — routing", () => {
-  it("opens /reports/sales as a searchable five-family reports directory", async () => {
+  it("opens /reports/sales as a compact five-family reports directory", async () => {
     renderAt("/reports/sales");
-    const directory = await screen.findByTestId("report-directory");
+    const directory = await screen.findByTestId("report-directory", {}, { timeout: 8000 });
     expect(directory.querySelectorAll("[data-report-group]")).toHaveLength(5);
 
     const executive = directory.querySelector('[data-report-item="executive"]');

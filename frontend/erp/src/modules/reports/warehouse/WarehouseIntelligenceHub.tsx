@@ -933,7 +933,7 @@ export function WarehouseIntelligenceHub({ mode }: { mode: WarehouseIntelligence
   if (isDirectory) {
     return (
       <div data-testid="warehouse-report-directory" data-mode={mode}>
-        <PageHeader eyebrow={t("warehouseIntelligence.eyebrow")} title={t(titleKey)} subtitle={t(subtitleKey)} />
+        <PageHeader title={t(mode === "inventory" ? "warehouseIntelligence.inventory.directoryTitle" : "warehouseIntelligence.purchases.directoryTitle")} />
         <ReportCatalog mode={mode} range={range} scope={scope} />
       </div>
     );

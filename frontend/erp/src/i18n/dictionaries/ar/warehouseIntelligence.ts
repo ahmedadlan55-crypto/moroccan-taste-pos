@@ -17,6 +17,7 @@ export const warehouseIntelligence = {
     reconciliation: { label: "المصالحات والامتثال", description: "الجرد والتسويات والمطابقة الثلاثية وضريبة المدخلات وجودة البيانات." },
   },
   inventory: {
+    directoryTitle: "تقارير المخزون",
     title: "مركز رقابة المستودعات",
     subtitle: "واجهة قرار واحدة لقيمة المخزون وحركته والاستثناءات وتغطية التكلفة وجميع تقارير المستودعات.",
     valueByWarehouse: "قيمة المخزون حسب المستودع",
@@ -32,6 +33,7 @@ export const warehouseIntelligence = {
     inTransit: "تحويلات قيد النقل",
   },
   purchases: {
+    directoryTitle: "تقارير المشتريات",
     title: "مركز رقابة المشتريات والتكلفة",
     subtitle: "تتبّع كل كمية مشتراة بالتاريخ والمورد والصنف والمستودع، ثم طابق السعر والاستلام والفاتورة والالتزام.",
     bySupplier: "المشتريات حسب المورد",

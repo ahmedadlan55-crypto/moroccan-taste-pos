@@ -5,6 +5,7 @@
 export const salesReports = {
   hub: {
     eyebrow: "Sales · Decision center",
+    directoryTitle: "Sales reports",
     title: "Sales Decision Center",
     subtitle: "Understand performance and act from one place — trusted figures by item, hour, branch, cashier and payment method",
     workspaceLabel: "Current decision path",

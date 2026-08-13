@@ -17,6 +17,7 @@ export const warehouseIntelligence = {
     reconciliation: { label: "Reconciliation and compliance", description: "Stocktakes, adjustments, three-way match, input VAT and data quality." },
   },
   inventory: {
+    directoryTitle: "Inventory reports",
     title: "Warehouse control center",
     subtitle: "One decision surface for stock value, movement, exceptions, cost coverage and every warehouse report.",
     valueByWarehouse: "Inventory value by warehouse",
@@ -32,6 +33,7 @@ export const warehouseIntelligence = {
     inTransit: "Transfers in transit",
   },
   purchases: {
+    directoryTitle: "Purchasing reports",
     title: "Purchasing and cost control center",
     subtitle: "Trace every purchased quantity by date, supplier, item and warehouse, then reconcile price, receipt, invoice and liability.",
     bySupplier: "Purchases by supplier",

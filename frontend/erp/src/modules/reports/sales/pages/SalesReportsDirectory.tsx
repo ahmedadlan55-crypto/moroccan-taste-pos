@@ -80,7 +80,7 @@ export default function SalesReportsDirectory() {
 
   return (
     <>
-      <PageHeader eyebrow={t("salesReports.hub.eyebrow")} title={t("salesReports.hub.title")} subtitle={t("salesReports.hub.subtitle")} />
+      <PageHeader title={t("salesReports.hub.directoryTitle")} />
       <ReportDirectory
         groups={groups}
         searchLabel={t("misc.reports.directory.searchLabel")}

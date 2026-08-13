@@ -18,6 +18,7 @@
  *  en/salesReports.ts (identical shape). */
 export const salesReports = {
   hub: {
+    directoryTitle: "تقارير المبيعات",
     eyebrow: "المبيعات · مركز القرار",
     title: "مركز قرار المبيعات",
     subtitle: "افهم الأداء واتخذ القرار من مكان واحد — أرقام موثوقة حسب الصنف والساعة والفرع والكاشير وطريقة الدفع",

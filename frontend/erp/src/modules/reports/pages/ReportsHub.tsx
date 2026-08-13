@@ -28,7 +28,7 @@ export default function ReportsHub({ section }: { section: ReportSection }) {
 
   return (
     <div>
-      <PageHeader eyebrow={t("misc.reports.eyebrow")} title={t(section.title)} subtitle={t(section.subtitle)} />
+      <PageHeader title={t(section.title)} />
       <ReportDirectory
         groups={groups}
         searchLabel={t("misc.reports.directory.searchLabel")}

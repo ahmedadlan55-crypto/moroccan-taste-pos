@@ -5,6 +5,24 @@ export const misc = {
   reports: {
     eyebrow: "Reports",
     emptyTitle: "No reports in this section yet",
+    directory: {
+      searchLabel: "Search reports",
+      searchPlaceholder: "Search by report name or purpose…",
+      open: "Open report",
+      count: "{count} reports",
+      empty: "No reports match your search",
+    },
+    groups: {
+      inventoryControl: { title: "Inventory control", description: "Balances, movement, stocktakes, expiry, and replenishment." },
+      purchasingDocuments: { title: "Purchasing and suppliers", description: "Purchase orders, invoices, payments, and returns." },
+      financialStatements: { title: "Financial statements and analysis", description: "Financial position, performance, cash flows, and equity changes." },
+      ledgerControl: { title: "Ledger and accounting control", description: "General ledger, trial balance, and sales-posting control." },
+      receivablesPayables: { title: "Receivables, payables, cost and profit", description: "Aging, profitability, and inventory valuation." },
+      workforce: { title: "Workforce and custody", description: "Employee register, organisation structure, and custody." },
+      timeAttendance: { title: "Time and entitlements", description: "Attendance, leave, and payroll runs." },
+      posControl: { title: "POS and shifts", description: "Shift closure, performance, and cash variances." },
+      operationsControl: { title: "Operational control", description: "Action log and inventory operating indicators." },
+    },
     // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
     sections: {
       inventory: {
@@ -44,9 +62,16 @@ export const misc = {
       glIncomeStatement: { label: "Income Statement", description: "Revenue and expenses." },
       glBalanceSheet: { label: "Balance Sheet", description: "Financial position." },
       glCashFlow: { label: "Cash Flow", description: "Cash movement." },
+      glEquityChanges: { label: "Changes in Equity", description: "Opening, movement, and closing balances of equity." },
+      glFinancialRatios: { label: "Financial Ratios", description: "Liquidity, profitability, and solvency indicators from available facts." },
+      glSalesPosting: { label: "Sales Posting Control", description: "Match sales batches to posted journals and review exceptions." },
       glArAging: { label: "AR Aging", description: "Aging of customer receivables." },
       glApAging: { label: "AP Aging", description: "Aging of supplier payables." },
+      glProfitability: { label: "Profitability Analysis", description: "Revenue, cost, and margin across the available dimensions." },
+      glInventoryValuation: { label: "Inventory Valuation", description: "Inventory value, cost coverage, and accounting differences." },
       pplEmployees: { label: "Employees", description: "Employee data." },
+      pplOrgTree: { label: "Organisation Structure", description: "Reporting lines, positions, and supervision relationships." },
+      pplCustody: { label: "Employee Custody", description: "Assets assigned to employees, their status, and responsibility." },
       pplAttendance: { label: "Attendance", description: "Clock-in and clock-out." },
       pplPayroll: { label: "Payroll", description: "Payroll runs." },
       pplLeaves: { label: "Leaves", description: "Leave balances and requests." },

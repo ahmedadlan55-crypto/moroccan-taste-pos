@@ -10,6 +10,24 @@ export const misc = {
     eyebrow: "التقارير",
     // Shown when a hub section has no destination links yet.
     emptyTitle: "لا توجد تقارير في هذا القسم بعد",
+    directory: {
+      searchLabel: "البحث في التقارير",
+      searchPlaceholder: "ابحث باسم التقرير أو الغرض منه…",
+      open: "فتح التقرير",
+      count: "{count} تقرير",
+      empty: "لا توجد تقارير مطابقة للبحث",
+    },
+    groups: {
+      inventoryControl: { title: "الرقابة على المخزون", description: "الأرصدة والحركة والجرد والصلاحية وإعادة الطلب." },
+      purchasingDocuments: { title: "دورة المشتريات والموردين", description: "أوامر الشراء والفواتير والمدفوعات والمرتجعات." },
+      financialStatements: { title: "القوائم والتحليل المالي", description: "المركز المالي والأداء والتدفقات والتغير في حقوق الملكية." },
+      ledgerControl: { title: "الأستاذ والرقابة المحاسبية", description: "الأستاذ العام وميزان المراجعة ورقابة ترحيل المبيعات." },
+      receivablesPayables: { title: "الذمم والتكلفة والربحية", description: "أعمار الذمم وربحية النشاط وتقييم المخزون." },
+      workforce: { title: "القوى العاملة والعهد", description: "سجل الموظفين والهيكل التنظيمي والعهد." },
+      timeAttendance: { title: "الوقت والاستحقاقات", description: "الحضور والإجازات ومسيرات الرواتب." },
+      posControl: { title: "نقاط البيع والورديات", description: "إغلاقات الوردية والأداء والفروقات النقدية." },
+      operationsControl: { title: "الرقابة التشغيلية", description: "سجل الإجراءات ومؤشرات تشغيل المخزون." },
+    },
     // Section headings — one per /reports/* manifest path (see reportLinks.tsx).
     // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
     sections: {
@@ -51,9 +69,16 @@ export const misc = {
       glIncomeStatement: { label: "قائمة الدخل", description: "الإيرادات والمصروفات." },
       glBalanceSheet: { label: "الميزانية", description: "المركز المالي." },
       glCashFlow: { label: "التدفقات النقدية", description: "حركة النقد." },
+      glEquityChanges: { label: "التغيرات في حقوق الملكية", description: "الحركات والأرصدة الافتتاحية والختامية لحقوق الملكية." },
+      glFinancialRatios: { label: "النسب المالية", description: "مؤشرات السيولة والربحية والملاءة من الأرقام المتاحة." },
+      glSalesPosting: { label: "رقابة ترحيل المبيعات", description: "مطابقة دفعات المبيعات مع القيود المرحلة والاستثناءات." },
       glArAging: { label: "أعمار الذمم المدينة", description: "أعمار مديونيات العملاء." },
       glApAging: { label: "أعمار الذمم الدائنة", description: "أعمار مستحقات الموردين." },
+      glProfitability: { label: "تحليل الربحية", description: "الإيرادات والتكاليف وهوامش الربح حسب الأبعاد المتاحة." },
+      glInventoryValuation: { label: "تقييم المخزون", description: "قيمة المخزون وتغطية التكلفة والاختلافات المحاسبية." },
       pplEmployees: { label: "الموظفون", description: "بيانات الموظفين." },
+      pplOrgTree: { label: "الهيكل التنظيمي", description: "التدرج الإداري والمناصب وعلاقات الإشراف." },
+      pplCustody: { label: "العهد", description: "العهد المسلمة للموظفين وحالتها ومسؤوليتها." },
       pplAttendance: { label: "الحضور", description: "الحضور والانصراف." },
       pplPayroll: { label: "الرواتب", description: "مسيّرات الرواتب." },
       pplLeaves: { label: "الإجازات", description: "أرصدة وطلبات الإجازات." },

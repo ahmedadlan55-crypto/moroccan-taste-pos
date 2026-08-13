@@ -138,7 +138,9 @@ function pickPeriodPreset(preset: keyof typeof PERIOD_PRESETS) {
 beforeEach(() => {
   for (const k of Object.keys(caps)) delete caps[k];
   caps["analytics.view"] = true;
-  wire.get = async () => [];
+  wire.get = async (path) => path === "/analytics/metadata"
+    ? { success: true, data: { metrics: [], dimensions: [] } }
+    : [];
   wire.post = async () => EMPTY_RESULT;
 });
 

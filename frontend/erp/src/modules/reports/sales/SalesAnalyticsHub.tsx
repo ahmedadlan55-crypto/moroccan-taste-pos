@@ -60,9 +60,9 @@ import { ViewSwitcher } from "./components/ViewSwitcher";
 import { useListSeparator } from "./lib/listSeparator";
 import { ReportRailProvider } from "./lib/reportRail";
 import { VIEW_PAGES } from "./pages/registry";
+import SalesReportsDirectory from "./pages/SalesReportsDirectory";
 
 const BASE = "/reports/sales";
-const DEFAULT_CENTER = "executive";
 
 /** Reset value per filter key — the codec's default, so the URL param is removed. */
 function clearingPatch(keys: readonly FilterKey[]): Partial<AnalyticsFilters> {
@@ -149,7 +149,7 @@ export default function SalesAnalyticsHub() {
 
   if (!canViewAnalytics) return <PermissionDenied />;
 
-  if (routeKey === BASE) return <Navigate to={`${BASE}/${DEFAULT_CENTER}`} replace />;
+  if (routeKey === BASE) return <SalesReportsDirectory />;
 
   const header = (
     <PageHeader

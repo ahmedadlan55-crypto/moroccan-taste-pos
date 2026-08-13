@@ -59,6 +59,7 @@ import {
   type ReportFamily,
 } from "./reportCatalog";
 import type { IntelligenceWarning, PurchaseIntelligenceRow } from "./contracts";
+import { ReportDirectory, type ReportDirectoryGroup, type ReportDirectoryTone } from "../components/ReportDirectory";
 
 export type WarehouseIntelligenceMode = "inventory" | "purchasing";
 
@@ -117,29 +118,32 @@ function IntelligenceNavigation({ mode }: { mode: WarehouseIntelligenceMode }) {
 
 function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode; range: DateRange; scope: string }) {
   const t = useT();
-  const lang = useLang();
-  const [activeFamily, setActiveFamily] = useState<ReportFamily | "all">("all");
-  const GoArrow = lang === "ar" ? ArrowLeft : ArrowRight;
   const reports = mode === "inventory" ? INVENTORY_INTELLIGENCE_REPORTS : PURCHASING_INTELLIGENCE_REPORTS;
-  const families = REPORT_FAMILIES
-    .map((family) => ({ ...family, reports: reports.filter((report) => report.family === family.id) }))
-    .filter((family) => family.reports.length > 0);
-  const visibleFamilies = activeFamily === "all" ? families : families.filter((family) => family.id === activeFamily);
-
-  const metadata = (report: IntelligenceReportLink) => (
-    <span className="mt-3 flex flex-wrap gap-1.5">
-      <Badge tone={report.maturity === "authoritative" ? "success" : report.maturity === "conditional" ? "warning" : "neutral"}>
-        {t(`warehouseIntelligence.assurance.maturity.${report.maturity}`)}
-      </Badge>
-      <Badge tone="neutral">{t(`warehouseIntelligence.assurance.basis.${report.basis}`)}</Badge>
-      {report.standard && <Badge tone="info">{t(`warehouseIntelligence.assurance.standard.${report.standard}`)}</Badge>}
-      {report.requiresSupplier && <Badge tone="purple">{t("warehouseIntelligence.assurance.requiresSupplier")}</Badge>}
-      <span className="basis-full mt-1 block w-full text-[11px] font-semibold leading-5 text-slate-500">
-        <span className="font-extrabold text-slate-600">{t("warehouseIntelligence.assurance.sourceLabel")}:</span>{" "}
-        {t(`warehouseIntelligence.assurance.source.${report.basis}`)}
-      </span>
-    </span>
-  );
+  const familyTones: Partial<Record<ReportFamily, ReportDirectoryTone>> = {
+    stock: "teal",
+    valuation: "amber",
+    movement: "blue",
+    procurement: "violet",
+    productionCost: "lime",
+    reconciliation: "rose",
+  };
+  const groups: ReportDirectoryGroup[] = REPORT_FAMILIES
+    .map((family) => ({
+      id: family.id,
+      title: t(family.labelKey),
+      description: t(family.descriptionKey),
+      icon: family.icon,
+      items: reports.filter((report) => report.family === family.id).map((report) => ({
+        id: report.id,
+        title: t(report.labelKey),
+        description: t(report.descriptionKey),
+        to: withScope(report, range, scope),
+        icon: report.icon,
+        tone: familyTones[family.id],
+        badge: t(`warehouseIntelligence.assurance.maturity.${report.maturity}`),
+      })),
+    }))
+    .filter((family) => family.items.length > 0);
 
   return (
     <section id="report-catalog" className="scroll-mt-24" aria-labelledby="warehouse-report-catalog">
@@ -151,66 +155,14 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
         <Badge tone="neutral">{t("warehouseIntelligence.catalog.count", { count: reports.length })}</Badge>
       </div>
 
-      <div className="no-print mb-4 flex gap-2 overflow-x-auto pb-1" role="group" aria-label={t("warehouseIntelligence.catalog.familyFilter")}>
-        <button
-          type="button"
-          onClick={() => setActiveFamily("all")}
-          aria-pressed={activeFamily === "all"}
-          className={cn("min-h-10 shrink-0 rounded-xl border px-3 text-xs font-extrabold transition", activeFamily === "all" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-teal-300")}
-        >
-          {t("warehouseIntelligence.catalog.allFamilies")}
-        </button>
-        {families.map((family) => {
-          const Icon = family.icon;
-          return <button
-            key={family.id}
-            type="button"
-            onClick={() => setActiveFamily(family.id)}
-            aria-pressed={activeFamily === family.id}
-            className={cn("inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-xs font-extrabold transition", activeFamily === family.id ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-teal-300")}
-          >
-            <Icon className="h-4 w-4" />
-            {t(family.labelKey)}
-            <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", activeFamily === family.id ? "bg-white/20" : "bg-slate-100")}>{family.reports.length}</span>
-          </button>;
-        })}
-      </div>
-
-      <div className="space-y-5">
-        {visibleFamilies.map((family) => {
-          const FamilyIcon = family.icon;
-          return <section key={family.id} className="surface overflow-hidden" data-report-family={family.id} aria-labelledby={`report-family-${family.id}`}>
-            <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-teal-700 shadow-sm"><FamilyIcon className="h-4.5 w-4.5" /></span>
-              <div>
-                <h3 id={`report-family-${family.id}`} className="text-sm font-extrabold text-slate-900">{t(family.labelKey)}</h3>
-                <p className="mt-0.5 text-xs font-semibold leading-5 text-slate-500">{t(family.descriptionKey)}</p>
-              </div>
-            </div>
-            <div className="grid gap-px bg-slate-100 lg:grid-cols-2">
-              {family.reports.map((report) => {
-                const Icon = report.icon;
-                return <Link
-                  key={report.id}
-                  to={withScope(report, range, scope)}
-                  data-report-id={report.id}
-                  className="group flex min-h-36 items-start gap-3 bg-white p-4 transition hover:bg-teal-50/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-teal-100"
-                >
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700"><Icon className="h-5 w-5" /></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2 text-sm font-extrabold text-slate-900">
-                      {t(report.labelKey)}
-                      <GoArrow className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-teal-600" />
-                    </span>
-                    <span className="mt-1.5 block text-xs font-medium leading-5 text-slate-500">{t(report.descriptionKey)}</span>
-                    {metadata(report)}
-                  </span>
-                </Link>;
-              })}
-            </div>
-          </section>;
-        })}
-      </div>
+      <ReportDirectory
+        groups={groups}
+        searchLabel={t("misc.reports.directory.searchLabel")}
+        searchPlaceholder={t("misc.reports.directory.searchPlaceholder")}
+        openLabel={t("misc.reports.directory.open")}
+        countLabel={(count) => t("misc.reports.directory.count", { count })}
+        emptyLabel={t("misc.reports.directory.empty")}
+      />
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 text-[11px] font-semibold leading-5 text-slate-500">
         <ShieldCheck className="me-1 inline h-4 w-4 text-teal-700" />
@@ -601,7 +553,6 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
       </section>
 
       <InventoryExceptionQueue exceptions={exceptions} />
-      <ReportCatalog mode="inventory" range={range} scope={scope} />
 
       <section className="grid gap-4 xl:grid-cols-2">
         <DecisionTable
@@ -841,7 +792,6 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
         <MetricCard label={t("warehouseIntelligence.kpis.openPoValue")} value={formatCurrency(k.openPoValue)} note={t("warehouseIntelligence.kpis.openPoQty", { qty: formatQty(k.openPoQty) })} icon={ClipboardList} tone="amber" />
         <MetricCard label={t("warehouseIntelligence.kpis.suppliers")} value={formatNumber(k.supplierCount)} note={t("warehouseIntelligence.kpis.suppliersNote")} icon={Users} tone="violet" />
       </section>
-      <ReportCatalog mode="purchasing" range={range} scope={scope} />
       <section className="grid gap-4 xl:grid-cols-2">
         <DecisionTable id="supplier-analysis" title={t("warehouseIntelligence.purchases.bySupplier")} empty={t("warehouseIntelligence.purchases.noSuppliers")} headers={[t("warehouseIntelligence.table.supplier"), t("warehouseIntelligence.table.documents"), t("warehouseIntelligence.table.qty"), t("warehouseIntelligence.table.spend")]} rows={overview.data.purchaseBySupplier.slice(0, 10).map((row) => [row.supplierName, formatNumber(row.documentCount), formatQty(row.receivedQty), formatCurrency(row.spend)])} />
         <DecisionTable id="purchase-trend" title={t("warehouseIntelligence.purchases.trend")} empty={t("warehouseIntelligence.purchases.noTrend")} headers={[t("warehouseIntelligence.table.period"), t("warehouseIntelligence.table.qty"), t("warehouseIntelligence.table.spend")]} rows={overview.data.purchaseTrend.slice(-10).map((row) => [formatDate(row.period), formatQty(row.receivedQty), formatCurrency(row.spend)])} />
@@ -991,6 +941,9 @@ export function WarehouseIntelligenceHub({ mode }: { mode: WarehouseIntelligence
         <DateRangePicker value={range} onChange={setRange} labels={{ presets: presetLabels(t), from: t("warehouseIntelligence.filters.from"), to: t("warehouseIntelligence.filters.to"), presetAriaLabel: t("warehouseIntelligence.filters.period") }} />
         <WarehouseScopeSelect fullWidth />
       </section>
+      <div className="mb-6">
+        <ReportCatalog mode={mode} range={range} scope={scope} />
+      </div>
       {mode === "inventory" ? <InventoryDecisionView range={range} scope={scope} /> : <PurchasingDecisionView range={range} scope={scope} />}
     </div>
   );

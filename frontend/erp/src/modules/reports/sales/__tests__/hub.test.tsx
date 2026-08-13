@@ -88,13 +88,17 @@ function findCenterNav() {
 }
 
 describe("SalesAnalyticsHub — routing", () => {
-  it("redirects /reports/sales to the executive centre", async () => {
+  it("opens /reports/sales as a searchable five-family reports directory", async () => {
     renderAt("/reports/sales");
-    const nav = await findCenterNav();
-    expect(nav.querySelector('[data-center-id="executive"]')).toHaveAttribute("aria-current", "page");
-    await waitFor(() =>
-      expect(document.querySelector('[data-state="empty"]')).toBeInTheDocument(),
-    );
+    const directory = await screen.findByTestId("report-directory");
+    expect(directory.querySelectorAll("[data-report-group]")).toHaveLength(5);
+
+    const executive = directory.querySelector('[data-report-item="executive"]');
+    expect(executive).toBeInTheDocument();
+    const executiveLink = executive?.querySelector("a");
+    expect(executiveLink).toHaveAttribute("href", "/reports/sales/executive?view=executive");
+    fireEvent.click(executiveLink as HTMLAnchorElement);
+    await waitFor(() => expect(here()).toContain("/reports/sales/executive?view=executive"));
   }, 20000);
 
   it("renders the not-found state for an unknown segment", async () => {

@@ -18,6 +18,7 @@ import { useLotList } from "@/modules/inventory/lib/hooks/useLots";
 import { useExpirySummary } from "@/modules/inventory/lib/hooks/useExpiry";
 import { useLotIntegrity } from "@/modules/inventory/lib/hooks/useLotIntegrity";
 import { LotDetailDrawer } from "./LotDetailDrawer";
+import { PageCounter } from "@/shared/tables";
 
 const PAGE_SIZES = [25, 50, 100];
 
@@ -150,7 +151,7 @@ export function LotsPage() {
                   <div className="flex items-center gap-2">
                     <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((n) => <option key={n} value={n}>{t("inventoryRest.ui.perPage", { count: n })}</option>)}</select>
                     <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}>‹</Button>
-                    <span className="font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
+                    <PageCounter page={page} pageCount={totalPages} className="font-bold text-slate-600" />
                     <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}>›</Button>
                   </div>
                 </div>

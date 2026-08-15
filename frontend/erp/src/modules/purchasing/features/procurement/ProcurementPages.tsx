@@ -16,6 +16,7 @@ import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { useT } from "@/i18n";
 import { st } from "./labels";
+import { PageCounter } from "@/shared/tables";
 import {
   useProcurementDashboard, useOrders, useReceipts, useInvoices, usePayments,
   useReturns, useProcurementReport, type ListParams,
@@ -50,7 +51,7 @@ function Pager({ page, totalPages, onPage }: { page: number; totalPages: number;
   return (
     <div className="mt-3 flex items-center justify-end gap-2 text-sm">
       <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>{t("purchasing.pager.prev")}</Button>
-      <span className="tabular-nums text-slate-500">{page} / {totalPages}</span>
+      <PageCounter page={page} pageCount={totalPages} className="text-slate-500" />
       <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>{t("purchasing.pager.next")}</Button>
     </div>
   );

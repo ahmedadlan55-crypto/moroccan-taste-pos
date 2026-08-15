@@ -3,6 +3,43 @@ import { cn, formatNumber } from "@/shared/lib";
 import { IconButton } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
 
+/**
+ * The "page N of M" counter. One implementation, because there were ten.
+ *
+ * TWO DEFECTS IT FIXES, and the second is not cosmetic:
+ *
+ *   1. IT WRAPPED. As a flex item with no `whitespace-nowrap`, the span shrinks
+ *      when the row is tight and the text breaks at its spaces — so "1 / 1"
+ *      stacked into three lines, one character each.
+ *
+ *   2. IT READ BACKWARDS. Without `dir="ltr"` the bidi algorithm reorders the
+ *      run inside an RTL page: measured in a real browser, the source text
+ *      "2 / 10" renders visually as "10 / 2". On page 2 of 10 the user was told
+ *      they were on page 10 of 2. "1 / 1" hid it — the only pair symmetric
+ *      enough to look right.
+ *
+ * `tabular-nums` keeps the counter from twitching as the digit count changes.
+ */
+export function PageCounter({
+  page,
+  pageCount,
+  className,
+}: {
+  page: number;
+  pageCount: number;
+  className?: string;
+}) {
+  return (
+    <span
+      dir="ltr"
+      aria-current="page"
+      className={cn("shrink-0 whitespace-nowrap text-center tabular-nums", className)}
+    >
+      {formatNumber(page)} / {formatNumber(pageCount)}
+    </span>
+  );
+}
+
 export interface PaginationProps {
   page: number;
   pageCount: number;
@@ -83,9 +120,7 @@ export function Pagination({
           {/* RTL: "previous" points to the right */}
           <ChevronRight className="h-4 w-4" />
         </IconButton>
-        <span className="min-w-16 text-center tabular-nums" aria-current="page">
-          {formatNumber(page)} / {formatNumber(pageCount)}
-        </span>
+        <PageCounter page={page} pageCount={pageCount} className="min-w-16" />
         <IconButton
           aria-label={t("table.nextPage")}
           size="sm"

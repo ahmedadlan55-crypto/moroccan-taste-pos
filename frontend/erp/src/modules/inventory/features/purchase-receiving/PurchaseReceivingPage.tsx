@@ -9,6 +9,7 @@ import { Progress } from "@/shared/ui";
 import { useT } from "@/i18n";
 import { formatCurrency, formatNumber, formatDate, formatQty } from "@/shared/lib";
 import { useOpenPurchases } from "@/modules/inventory/lib/hooks/usePurchaseReceiving";
+import { PageCounter } from "@/shared/tables";
 
 const PAGE_SIZES = [10, 25, 50];
 
@@ -142,7 +143,7 @@ export function PurchaseReceivingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4" /></Button>
-                <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
+                <PageCounter page={page} pageCount={totalPages} className="text-xs font-bold text-slate-600" />
                 <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4" /></Button>
               </div>
             </div>

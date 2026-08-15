@@ -15,6 +15,7 @@ import { useProductionList } from "@/modules/inventory/lib/hooks/useProduction";
 import { useT } from "@/i18n";
 import { productionStatusLabel } from "./status-i18n";
 import { ProductionBatchListPanel } from "../batches/ProductionBatchListPanel";
+import { PageCounter } from "@/shared/tables";
 
 const PAGE_SIZES = [10, 25, 50];
 
@@ -220,7 +221,7 @@ export function ProductionPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="ghost" size="icon" aria-label={t("table.prevPage")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}><ChevronRight className="h-4 w-4 rotate-180 rtl:rotate-0" aria-hidden="true" /></Button>
-                <span className="text-xs font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
+                <PageCounter page={page} pageCount={totalPages} className="text-xs font-bold text-slate-600" />
                 <Button variant="ghost" size="icon" aria-label={t("table.nextPage")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}><ChevronLeft className="h-4 w-4 rotate-180 rtl:rotate-0" aria-hidden="true" /></Button>
               </div>
             </div>

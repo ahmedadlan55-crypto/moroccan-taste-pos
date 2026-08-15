@@ -13,6 +13,7 @@ import { useReport } from "@/modules/inventory/lib/hooks/useReport";
 import { downloadReportCsv } from "@/shared/lib";
 import { formatCurrency, formatNumber, formatQty, formatDate, formatDateTime } from "@/shared/lib";
 import { REPORTS, type ColFormat, type ReportColumn } from "@/modules/inventory/lib/reports-config";
+import { PageCounter } from "@/shared/tables";
 
 // Status filter option VALUES per report; labels resolve via
 // inventoryRest.reports.statusFilter.<key> (partially_received → partiallyReceived).
@@ -277,7 +278,7 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
                   {[25, 50, 100, 200].map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}
                 </select>
                 <Button variant="secondary" disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)} aria-label={t("inventoryRest.ui.prev")}>{t("inventoryRest.ui.prev")}</Button>
-                <span className="px-1 font-bold text-slate-600">{formatNumber(page)} / {formatNumber(totalPages)}</span>
+                <PageCounter page={page} pageCount={totalPages} className="px-1 font-bold text-slate-600" />
                 <Button variant="secondary" disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)} aria-label={t("inventoryRest.ui.next")}>{t("inventoryRest.ui.next")}</Button>
               </div>
             </div>

@@ -1,6 +1,6 @@
 import { Download } from "lucide-react";
-import { Button, DatePicker } from "@/shared/ui";
-import { formatDate } from "@/shared/lib";
+import { Button, DatePicker, PrintDocument } from "@/shared/ui";
+import { formatForPeriod } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
 import {
   useEquityChanges,
@@ -17,8 +17,6 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
@@ -163,7 +161,7 @@ export function EquityChangesPage() {
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useEquityChanges(filter.applied);
   const data = query.data;
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
+  const period = formatForPeriod(filter.applied.from, filter.applied.to);
 
   return (
     <div>
@@ -196,12 +194,14 @@ export function EquityChangesPage() {
         emptyBody={t("accounting.equity.emptyBody")}
       >
         {data && (
-          <PrintArea>
-            <div className="surface mb-5 p-4">
-              <PrintBanner title={t("accounting.equity.printTitle")} period={period} />
+          <>
+            {/* The balance-sheet cross-check is a verdict on this run, not a
+                line of the statement of changes in equity. Screen only. */}
+            <div className="no-print mb-4">
               <ReconciliationBadge rec={data.reconciliation} closing={data.totals.closing} />
             </div>
 
+            <PrintDocument title={t("accounting.equity.printTitle")} subtitle={period}>
             {data.buckets.map((b) => (
               <BucketSection key={b.key} bucket={b} />
             ))}
@@ -220,7 +220,8 @@ export function EquityChangesPage() {
                 </span>
               </span>
             </div>
-          </PrintArea>
+            </PrintDocument>
+          </>
         )}
       </ReportState>
     </div>

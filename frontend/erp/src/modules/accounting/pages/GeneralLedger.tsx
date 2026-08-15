@@ -415,7 +415,7 @@ export function GeneralLedgerPage() {
                 <>
                   <Badge tone="info">{t("accounting.generalLedger.singleAccountScope")}</Badge>
                   <Link
-                    to="/accounting/general-ledger"
+                    to="/reports/financial/general-ledger"
                     className="no-print text-xs font-bold text-teal-700 underline"
                   >
                     {t("accounting.generalLedger.clearAccountScope")}
@@ -426,7 +426,7 @@ export function GeneralLedgerPage() {
                 <>
                   <Badge tone="info">{t("accounting.generalLedger.parentAccountScope")}</Badge>
                   <Link
-                    to="/accounting/general-ledger"
+                    to="/reports/financial/general-ledger"
                     className="no-print text-xs font-bold text-teal-700 underline"
                   >
                     {t("accounting.generalLedger.clearAccountScope")}

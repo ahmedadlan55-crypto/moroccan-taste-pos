@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Download, Info } from "lucide-react";
-import { Button, Select } from "@/shared/ui";
+import { Button, PrintDocument, Select } from "@/shared/ui";
+import { formatAsAt } from "@/shared/lib";
 import { Pagination } from "@/shared/tables";
 import { useT, type TFunction } from "@/i18n";
 import {
@@ -17,8 +18,6 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
@@ -95,7 +94,11 @@ export function InventoryValuationPage() {
   const whName =
     warehouses.data?.find((w) => w.id === filter.applied.warehouseId)?.name ?? t("accounting.invValuation.allWarehouses");
   const brandName = brands.data?.find((b) => b.id === filter.applied.brandId)?.name ?? t("accounting.invValuation.allBrands");
-  const period = `${t("accounting.common.asOfPrefix")} ${todayISO()} · ${whName} · ${brandName}`;
+  // The date is WHEN, the warehouse/brand pair is WHAT SCOPE — PrintDocument
+  // keeps them apart (`subtitle` vs `meta`) instead of running all three into
+  // one dot-separated string.
+  const asAt = formatAsAt(todayISO());
+  const scope = `${whName} · ${brandName}`;
 
   return (
     <div>
@@ -151,26 +154,30 @@ export function InventoryValuationPage() {
         emptyBody={t("accounting.invValuation.empty")}
       >
         {data && (
-          <PrintArea>
-            <div className="surface mb-5 p-4">
-              <PrintBanner title={t("accounting.invValuation.title")} period={period} />
-              {/* Honest cost-basis note: the recorded item cost, NOT a moving average. */}
-              <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                <div>
-                  <div className="font-bold">
-                    {t("accounting.invValuation.costNote")}
-                  </div>
-                  {data.note && <div className="mt-1 font-medium">{data.note}</div>}
-                  {data.costBasis && (
-                    <div className="mt-1 font-medium text-amber-700">
-                      {t("accounting.invValuation.costBasis")} <code>{data.costBasis}</code>
-                    </div>
-                  )}
-                </div>
-              </div>
+          <>
+            {/* The cost basis SURVIVES — a valuation whose basis is unstated is
+                unreadable — but as one compact screen chip, not a three-line
+                amber panel printed on top of the report. The basis itself also
+                rides onto the paper as PrintDocument's `meta`, so the printed
+                sheet still says what the figures were valued at. */}
+            <div className="no-print mb-4 inline-flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {t("accounting.invValuation.costNote")}
+                {data.costBasis && (
+                  <>
+                    {" — "}
+                    <code>{data.costBasis}</code>
+                  </>
+                )}
+              </span>
             </div>
 
+            <PrintDocument
+              title={t("accounting.invValuation.title")}
+              subtitle={asAt}
+              meta={scope}
+            >
             <div className="mb-5 grid gap-3 sm:grid-cols-3">
               <Kpi label={t("accounting.invValuation.itemCount")} value={data.grand.itemCount} isCount />
               <Kpi label={t("accounting.invValuation.totalQty")} value={data.grand.totalQty} />
@@ -261,7 +268,8 @@ export function InventoryValuationPage() {
                 </div>
               )}
             </div>
-          </PrintArea>
+            </PrintDocument>
+          </>
         )}
       </ReportState>
     </div>

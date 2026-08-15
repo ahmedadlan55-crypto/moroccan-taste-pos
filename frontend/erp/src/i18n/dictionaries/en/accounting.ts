@@ -523,6 +523,20 @@ export const accounting = {
     netProfit: "Net profit",
     grossMargin: "Profit margin",
     netProfitPeriod: "Net profit for the period",
+    lineHeader: "Line",
+    amountHeader: "Amount",
+    totalOf: "Total {section}",
+    grossProfit: "Gross profit",
+    operatingIncome: "Operating income",
+    netIncome: "Net income",
+    sections: {
+      revenue: "Revenue",
+      cogs: "Cost of sales",
+      opex: "Operating expenses",
+      gAndA: "General and administrative expenses",
+      otherIncome: "Other income",
+      otherExpense: "Other expenses",
+    },
   },
 
   balanceSheet: {
@@ -538,6 +552,11 @@ export const accounting = {
     currentLiab: "Current liabilities",
     nonCurrentLiab: "Non-current liabilities",
     equity: "Equity",
+    lineHeader: "Line",
+    amountHeader: "Amount",
+    totalOf: "Total {section}",
+    totalLiabilities: "Total liabilities",
+    totalEquity: "Total equity",
   },
 
   cashFlow: {

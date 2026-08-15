@@ -63,7 +63,6 @@ export default function SalesReportsDirectory() {
   const groups: ReportDirectoryGroup[] = CENTERS.map((center) => ({
     id: center.id,
     title: t(`salesReports.centers.${center.id}.title`),
-    description: t(`salesReports.centers.${center.id}.subtitle`),
     icon: CENTER_ICONS[center.id],
     items: center.views
       .map((id) => REPORT_BY_ID[id])
@@ -71,7 +70,6 @@ export default function SalesReportsDirectory() {
       .map((report) => ({
         id: report.id,
         title: t(`salesReports.pages.${report.id}.title`),
-        description: t(`salesReports.pages.${report.id}.subtitle`),
         to: `/reports/sales/${report.center}?view=${report.id}`,
         icon: REPORT_ICONS[report.id as keyof typeof REPORT_ICONS] ?? BarChart3,
         tone: CENTER_TONES[center.id],
@@ -83,10 +81,7 @@ export default function SalesReportsDirectory() {
       <PageHeader title={t("salesReports.hub.directoryTitle")} />
       <ReportDirectory
         groups={groups}
-        searchLabel={t("misc.reports.directory.searchLabel")}
-        searchPlaceholder={t("misc.reports.directory.searchPlaceholder")}
         openLabel={t("misc.reports.directory.open")}
-        countLabel={(count) => t("misc.reports.directory.count", { count })}
         emptyLabel={t("misc.reports.directory.empty")}
       />
     </>

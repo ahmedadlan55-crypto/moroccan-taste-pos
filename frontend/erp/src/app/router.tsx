@@ -56,11 +56,12 @@ export const ROUTE_PATHS: ReadonlySet<string> = new Set<string>(
 export const SUBROUTE_BASE_PATHS: ReadonlySet<string> = new Set<string>(
   NAV_ITEMS.filter((i) => i.subRoutes).map((i) => i.path),
 );
-// ── Retired-surface redirects (Sales Analytics Hub rationalization) ─────────
+// ── Retired-surface redirects ──────────────────────────────────────────────
 // The ONE allow-listed place old report paths may live forever: each retired
-// screen keeps its deep links working by redirecting into the hub, carrying its
-// query params along. `params` maps old param name → new param name; any param
-// NOT in the map passes through unchanged (so foreign params like ?doc= survive).
+// screen keeps its deep links working by redirecting to where the surface now
+// lives, carrying its query params along. `params` maps old param name → new
+// param name; any param NOT in the map passes through unchanged (so foreign
+// params like ?doc= survive).
 // NOTE (release note, mandated by the rationalization doc §7): the old
 // /accounting/sales-analytics page SENT brandId/branchId but the old backend
 // read `brand`/`branch` — the filters never worked. The redirect carries the
@@ -92,6 +93,27 @@ export const REDIRECTS: readonly RedirectSpec[] = [
     to: "/menu/recipes",
     params: { item: "productId", brandId: "brandId" },
   },
+  // The eleven financial reports moved out of the accounting module and into
+  // the one place every report lives, /reports/financial/<id>. Same page, same
+  // capability, new home — so these are pure address changes and every param a
+  // saved link carries (accountId, parentId, from, to, dimension…) passes
+  // through untouched. Permanent: a bookmark, a printed footer URL or a mailed
+  // link from before the move must keep working forever.
+  ...(
+    [
+      "general-ledger",
+      "trial-balance",
+      "income-statement",
+      "balance-sheet",
+      "cash-flow",
+      "ar-aging",
+      "ap-aging",
+      "financial-ratios",
+      "equity-changes",
+      "profitability",
+      "inventory-valuation",
+    ] as const
+  ).map((report) => ({ from: `/accounting/${report}`, to: `/reports/financial/${report}` })),
 ];
 
 /** Query-preserving redirect: maps params per the spec, passes the rest through.

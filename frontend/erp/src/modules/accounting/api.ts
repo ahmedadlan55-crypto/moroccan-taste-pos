@@ -172,6 +172,73 @@ export function usePnl(range: DateRange | null) {
   });
 }
 
+// ── Income Statement (IAS 1) — GET /api/erp/reports/income ──────────────────
+//
+// WHY THIS EXISTS NEXT TO usePnl
+//   /reports/pnl answers with two flat lists — `revenue` and `expenses` — and
+//   nothing else. From those two lists there is no COGS, therefore no gross
+//   profit, therefore no operating income: the three subtotals that make a P&L
+//   a STATEMENT rather than a two-column list of accounts. They cannot be
+//   derived on the client either; the only honest source for "is this account
+//   cost of sales" is gl_accounts.report_section, which is exactly what
+//   lib/coa/classify.js reads and what routes/erp/reports/income.js already
+//   buckets by. So the statement reads the statement endpoint.
+//
+//   Both routes are gated on the SAME capability (finance.reports.view), so
+//   moving between them widens nothing.
+//
+//   `usePnl` is kept: it answers a different question (movement by account,
+//   groupable by brand / branch / cost centre) and nothing about it changed.
+export interface IncomeLine {
+  id: string;
+  code: string;
+  name: string;
+  balance: number;
+  level: number;
+}
+export interface IncomeStatementResponse {
+  error?: string;
+  revenue: IncomeLine[];
+  totalRevenue: number;
+  cogs: IncomeLine[];
+  totalCOGS: number;
+  grossProfit: number;
+  opex: IncomeLine[];
+  totalOpex: number;
+  gAndA: IncomeLine[];
+  totalGAndA: number;
+  operatingIncome: number;
+  otherIncome: IncomeLine[];
+  totalOtherInc: number;
+  otherExpense: IncomeLine[];
+  totalOtherExp: number;
+  netIncome: number;
+  period?: { startDate: string | null; endDate: string | null };
+  /**
+   * The route's catch block answers HTTP 200 with every figure zeroed and this
+   * flag set. A statement of zeros is indistinguishable from a company that
+   * traded nothing, so it must NEVER reach the screen as data — `unwrap` alone
+   * would pass it through, which is how an all-zero balance sheet once shipped
+   * unnoticed. The hook turns it into an error below.
+   */
+  degraded?: boolean;
+}
+export function useIncomeStatement(range: DateRange | null) {
+  return useQuery({
+    queryKey: ["acc", "income-statement", range?.from, range?.to],
+    enabled: !!range,
+    queryFn: async () => {
+      const data = unwrap(
+        await apiClient.get<IncomeStatementResponse>("/erp/reports/income", {
+          params: { startDate: range!.from, endDate: range!.to },
+        }),
+      );
+      if (data.degraded) throw new Error("تعذّر تحميل قائمة الدخل");
+      return data;
+    },
+  });
+}
+
 // ── Balance Sheet (IAS 1) — GET /api/erp/reports/balance-sheet-ifrs ─────────
 export interface BsFlatItem {
   id: string;

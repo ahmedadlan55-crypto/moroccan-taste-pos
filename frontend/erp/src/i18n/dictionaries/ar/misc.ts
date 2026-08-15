@@ -8,40 +8,23 @@ export const misc = {
   reports: {
     // Shared eyebrow for every /reports/* hub page + the Saved Reports page.
     eyebrow: "التقارير",
-    // Shown when a hub section has no destination links yet.
-    emptyTitle: "لا توجد تقارير في هذا القسم بعد",
     directory: {
-      searchLabel: "البحث في التقارير",
-      searchPlaceholder: "ابحث باسم التقرير أو الغرض منه…",
       open: "فتح التقرير",
-      count: "{count} تقرير",
-      empty: "لا توجد تقارير مطابقة للبحث",
+      empty: "لا توجد تقارير متاحة",
     },
+    // أسماء عائلات التقارير المالية — تقرأها FinancialReportsDirectory.
     groups: {
-      inventoryControl: { title: "الرقابة على المخزون", description: "الأرصدة والحركة والجرد والصلاحية وإعادة الطلب." },
-      purchasingDocuments: { title: "دورة المشتريات والموردين", description: "أوامر الشراء والفواتير والمدفوعات والمرتجعات." },
-      financialStatements: { title: "القوائم والتحليل المالي", description: "المركز المالي والأداء والتدفقات والتغير في حقوق الملكية." },
-      ledgerControl: { title: "الأستاذ والرقابة المحاسبية", description: "الأستاذ العام وميزان المراجعة ورقابة ترحيل المبيعات." },
-      receivablesPayables: { title: "الذمم والتكلفة والربحية", description: "أعمار الذمم وربحية النشاط وتقييم المخزون." },
-      workforce: { title: "القوى العاملة والعهد", description: "سجل الموظفين والهيكل التنظيمي والعهد." },
-      timeAttendance: { title: "الوقت والاستحقاقات", description: "الحضور والإجازات ومسيرات الرواتب." },
-      posControl: { title: "نقاط البيع والورديات", description: "إغلاقات الوردية والأداء والفروقات النقدية." },
-      operationsControl: { title: "الرقابة التشغيلية", description: "سجل الإجراءات ومؤشرات تشغيل المخزون." },
+      financialStatements: { title: "القوائم المالية" },
+      ledgerControl: { title: "الأستاذ والأرصدة" },
+      receivablesPayables: { title: "الذمم والتقييم" },
+      // مجموعات تقارير الموظفين والتشغيل انتقلت إلى operationalReports.groups.*
+      // مع سجلّي التقارير اللذين يولّدان القسمين.
     },
-    // Section headings — one per /reports/* manifest path (see reportLinks.tsx).
-    // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
+    // Section headings. Inventory/purchasing/sales/receivables carry their own
+    // (warehouseIntelligence.*, salesReports.*, receivablesReports.*).
     sections: {
-      inventory: {
-        title: "تقارير المخزون",
-        subtitle: "الأرصدة والحركات والجرد والصلاحية.",
-      },
-      purchasing: {
-        title: "تقارير المشتريات",
-        subtitle: "أوامر الشراء وفواتير الموردين والمدفوعات.",
-      },
       financial: {
         title: "التقارير المالية",
-        subtitle: "القوائم المالية وأعمار الذمم — تُدار ضمن وحدة المحاسبة.",
       },
       people: {
         title: "تقارير الموظفين",
@@ -52,40 +35,21 @@ export const misc = {
         subtitle: "الورديات ونقاط البيع وسجل الإجراءات.",
       },
     },
-    // Card links inside the hub sections — each maps to a canonical report route.
+    // أسماء التقارير المالية الأحد عشر — يقرأها سجلّ /reports/financial.
+    // حُذفت روابط inv*/pur*/ppl*/ops*: كانت تفتح شاشات إدارة خارج قسم التقارير،
+    // وحُذف glSalesPosting لأن ترحيل المبيعات يُنشئ قيوداً وليس تقريراً.
     links: {
-      invBalances: { label: "الأرصدة", description: "أرصدة الأصناف في المستودعات." },
-      invTransfers: { label: "التحويلات", description: "حركة الأصناف بين المستودعات." },
-      invStocktakes: { label: "الجرد", description: "فروقات الجرد وتسوياتها." },
-      invLotsExpiry: { label: "الصلاحية", description: "التشغيلات القريبة من الانتهاء." },
-      invReplenishment: { label: "إعادة الطلب", description: "الأصناف تحت حد الطلب." },
-      purOrders: { label: "أوامر الشراء", description: "أوامر الشراء وحالتها." },
-      purInvoices: { label: "فواتير الموردين", description: "مطالبات الموردين." },
-      purPayments: { label: "مدفوعات الموردين", description: "سداد مستحقات الموردين." },
-      purReturns: { label: "مرتجعات المشتريات", description: "المرتجعات للموردين." },
-      purSuppliers: { label: "الموردون", description: "أداء الموردين وأرصدتهم." },
-      glGeneralLedger: { label: "الأستاذ العام", description: "حركة كل حساب." },
-      glTrialBalance: { label: "ميزان المراجعة", description: "أرصدة الحسابات." },
-      glIncomeStatement: { label: "قائمة الدخل", description: "الإيرادات والمصروفات." },
-      glBalanceSheet: { label: "الميزانية", description: "المركز المالي." },
-      glCashFlow: { label: "التدفقات النقدية", description: "حركة النقد." },
-      glEquityChanges: { label: "التغيرات في حقوق الملكية", description: "الحركات والأرصدة الافتتاحية والختامية لحقوق الملكية." },
-      glFinancialRatios: { label: "النسب المالية", description: "مؤشرات السيولة والربحية والملاءة من الأرقام المتاحة." },
-      glSalesPosting: { label: "رقابة ترحيل المبيعات", description: "مطابقة دفعات المبيعات مع القيود المرحلة والاستثناءات." },
-      glArAging: { label: "أعمار الذمم المدينة", description: "أعمار مديونيات العملاء." },
-      glApAging: { label: "أعمار الذمم الدائنة", description: "أعمار مستحقات الموردين." },
-      glProfitability: { label: "تحليل الربحية", description: "الإيرادات والتكاليف وهوامش الربح حسب الأبعاد المتاحة." },
-      glInventoryValuation: { label: "تقييم المخزون", description: "قيمة المخزون وتغطية التكلفة والاختلافات المحاسبية." },
-      pplEmployees: { label: "الموظفون", description: "بيانات الموظفين." },
-      pplOrgTree: { label: "الهيكل التنظيمي", description: "التدرج الإداري والمناصب وعلاقات الإشراف." },
-      pplCustody: { label: "العهد", description: "العهد المسلمة للموظفين وحالتها ومسؤوليتها." },
-      pplAttendance: { label: "الحضور", description: "الحضور والانصراف." },
-      pplPayroll: { label: "الرواتب", description: "مسيّرات الرواتب." },
-      pplLeaves: { label: "الإجازات", description: "أرصدة وطلبات الإجازات." },
-      opsShifts: { label: "الورديات", description: "إغلاق الورديات والفروقات." },
-      opsPosReports: { label: "تحليلات الورديات", description: "إجماليات الورديات وفروقاتها في هَب تقارير المبيعات." },
-      opsActionLog: { label: "سجل الإجراءات", description: "سجل إجراءات المعاملات." },
-      opsInventoryOverview: { label: "نظرة المخزون", description: "مؤشرات المخزون التشغيلية." },
+      glGeneralLedger: { label: "الأستاذ العام" },
+      glTrialBalance: { label: "ميزان المراجعة" },
+      glIncomeStatement: { label: "قائمة الدخل" },
+      glBalanceSheet: { label: "الميزانية" },
+      glCashFlow: { label: "التدفقات النقدية" },
+      glEquityChanges: { label: "التغيرات في حقوق الملكية" },
+      glFinancialRatios: { label: "النسب المالية" },
+      glArAging: { label: "أعمار الذمم المدينة" },
+      glApAging: { label: "أعمار الذمم الدائنة" },
+      glProfitability: { label: "تحليل الربحية" },
+      glInventoryValuation: { label: "تقييم المخزون" },
     },
     // Saved Reports page (/reports/saved).
     saved: {

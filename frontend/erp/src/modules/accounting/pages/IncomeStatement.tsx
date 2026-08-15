@@ -1,73 +1,141 @@
-import { DatePicker } from "@/shared/ui";
-import { formatDate } from "@/shared/lib";
-import { useT } from "@/i18n";
-import { usePnl, startOfYearISO, todayISO, type DateRange, type PnlRow } from "../api";
+// /accounting/income-statement — the Income Statement, as a STATEMENT.
+//
+// WHAT CHANGED, AND WHY IT HAD TO
+//   This page used to be two side-by-side lists: every revenue account in one
+//   card, every expense account in the other, four KPI tiles above them and a
+//   net-profit strip below. That is a pair of account listings, not an income
+//   statement. It had no cost of sales, therefore no gross profit, therefore no
+//   operating income — the three subtotals a reader actually looks for — and
+//   the two columns sat side by side, so nothing on the page was in the order
+//   the figures are read in.
+//
+//   The subtotals are not derivable from what /reports/pnl returns. Splitting
+//   cost of sales out of "expenses" needs gl_accounts.report_section, which is
+//   what lib/coa/classify.js reads and what /reports/income already buckets by.
+//   So this reads /reports/income (same capability, see api.ts) and renders it
+//   through the shared StatementTable in statement order:
+//
+//     Revenue → Cost of sales → GROSS PROFIT → Operating expenses → G&A
+//       → OPERATING INCOME → Other income → Other expenses → NET INCOME
+//
+//   Every subtotal on the page is the server's own figure. Nothing here sums a
+//   column: `grossProfit`, `operatingIncome` and `netIncome` are read straight
+//   off the response, and the bottom line goes through StatementTable's
+//   server-totals footer.
+//
+// NO COMPARATIVE COLUMN
+//   /reports/income accepts startDate/endDate and nothing else — there is no
+//   prior-period parameter and no prior figure anywhere in its response. A
+//   comparative column would have to be invented on the client, so the table
+//   renders a single period. When the endpoint gains a comparative, this is a
+//   `groups` array and a second column, and nothing else.
+import { useState } from "react";
+import { DatePicker, PrintDocument } from "@/shared/ui";
+import { formatForPeriod } from "@/shared/lib";
+import { StatementTable, type StatementRowBase } from "@/shared/reports";
+import { useT, type TFunction } from "@/i18n";
+import {
+  useIncomeStatement,
+  startOfYearISO,
+  todayISO,
+  type DateRange,
+  type IncomeLine,
+  type IncomeStatementResponse,
+} from "../api";
 import {
   Num,
-  fmt,
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
 } from "../components";
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return (
-    <div className="surface p-4">
-      <div className="text-xs font-bold text-slate-500">{label}</div>
-      <div className={`mt-1 text-2xl font-extrabold tabular-nums ${tone}`} dir="ltr">
-        {value}
-      </div>
-    </div>
-  );
+interface PnlRowModel extends StatementRowBase {
+  amount: number | null;
 }
 
-function Section({ title, rows, total, totalTone }: { title: string; rows: PnlRow[]; total: number; totalTone: string }) {
-  const t = useT();
-  return (
-    <div className="surface overflow-hidden">
-      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
-        <h3 className="text-sm font-extrabold text-slate-900">{title}</h3>
-        <span className={`text-sm font-extrabold tabular-nums ${totalTone}`} dir="ltr">
-          {fmt(total)}
-        </span>
-      </div>
-      <table className="w-full text-sm">
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td className="px-5 py-3 text-sm font-medium text-slate-400">{t("accounting.incomeStatement.noAccounts")}</td>
-            </tr>
-          ) : (
-            rows.map((r) => (
-              <tr key={r.accountId ?? r.code} className="border-b border-slate-50 last:border-0">
-                <td className="px-5 py-2">
-                  <span className="font-semibold text-slate-700">{r.nameAr}</span>{" "}
-                  <code className="text-[11px] text-slate-400">{r.code}</code>
-                </td>
-                <td className="px-5 py-2 text-left">
-                  <Num value={r.amount} />
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+/**
+ * One section of the statement: a heading, its account lines, and the server's
+ * total for the section.
+ *
+ * A section with no lines AND a zero total is omitted entirely rather than
+ * printed as an empty heading over a dash — an income statement lists what
+ * happened, and "Other expenses ……… —" is a line that says nothing. A section
+ * that is empty but carries a total is still printed, because then the total is
+ * a real figure whose detail the classifier could not place.
+ */
+function section(
+  rows: PnlRowModel[],
+  id: string,
+  heading: string,
+  totalLabel: string,
+  lines: IncomeLine[] | undefined,
+  total: number,
+): void {
+  const items = lines ?? [];
+  if (items.length === 0 && Math.abs(total) < 0.005) return;
+
+  rows.push({ id, depth: 0, label: heading, kind: "line", hasChildren: items.length > 0, amount: null });
+  for (const line of items) {
+    rows.push({
+      id: `${id}:${line.id ?? line.code}`,
+      parentId: id,
+      depth: 1,
+      label: line.name,
+      labelText: line.name,
+      kind: "line",
+      amount: line.balance,
+    });
+  }
+  rows.push({ id: `${id}:total`, depth: 0, label: totalLabel, kind: "subtotal", amount: total });
+}
+
+/** A standalone measure line — gross profit, operating income. */
+function measure(rows: PnlRowModel[], id: string, label: string, amount: number): void {
+  rows.push({ id, depth: 0, label, kind: "subtotal", amount });
+}
+
+function buildRows(t: TFunction, data: IncomeStatementResponse): PnlRowModel[] {
+  const rows: PnlRowModel[] = [];
+  const totalOf = (name: string) => t("accounting.incomeStatement.totalOf", { section: name });
+
+  const revenue = t("accounting.incomeStatement.sections.revenue");
+  const cogs = t("accounting.incomeStatement.sections.cogs");
+  const opex = t("accounting.incomeStatement.sections.opex");
+  const gAndA = t("accounting.incomeStatement.sections.gAndA");
+  const otherIncome = t("accounting.incomeStatement.sections.otherIncome");
+  const otherExpense = t("accounting.incomeStatement.sections.otherExpense");
+
+  section(rows, "revenue", revenue, totalOf(revenue), data.revenue, data.totalRevenue);
+  section(rows, "cogs", cogs, totalOf(cogs), data.cogs, data.totalCOGS);
+  measure(rows, "gross-profit", t("accounting.incomeStatement.grossProfit"), data.grossProfit);
+  section(rows, "opex", opex, totalOf(opex), data.opex, data.totalOpex);
+  section(rows, "g-and-a", gAndA, totalOf(gAndA), data.gAndA, data.totalGAndA);
+  measure(rows, "operating-income", t("accounting.incomeStatement.operatingIncome"), data.operatingIncome);
+  section(rows, "other-income", otherIncome, totalOf(otherIncome), data.otherIncome, data.totalOtherInc);
+  section(rows, "other-expense", otherExpense, totalOf(otherExpense), data.otherExpense, data.totalOtherExp);
+
+  return rows;
 }
 
 export function IncomeStatementPage() {
   const t = useT();
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
-  const query = usePnl(filter.applied);
+  const query = useIncomeStatement(filter.applied);
   const data = query.data;
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
-  const isEmpty = !!data && data.revenue.length === 0 && data.expenses.length === 0;
+  const period = formatForPeriod(filter.applied.from, filter.applied.to);
+  const rows = data ? buildRows(t, data) : [];
+  // Collapse is a SCREEN preference only — StatementTable still prints and
+  // exports every row, so a folded section can never fall out of the paper copy.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const toggleRow = (id: string) =>
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   return (
     <div>
@@ -88,42 +156,38 @@ export function IncomeStatementPage() {
       <ReportState
         isLoading={query.isLoading}
         error={query.error}
-        isEmpty={isEmpty}
+        isEmpty={rows.length === 0}
         onRetry={() => query.refetch()}
       >
         {data && (
-          <PrintArea>
-            <div className="surface mb-5 p-4">
-              <PrintBanner title={t("accounting.incomeStatement.title")} period={period} />
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <Kpi label={t("accounting.incomeStatement.totalRevenue")} value={fmt(data.summary.totalRevenue)} tone="text-emerald-600" />
-                <Kpi label={t("accounting.incomeStatement.totalExpense")} value={fmt(data.summary.totalExpense)} tone="text-rose-600" />
-                <Kpi
-                  label={t("accounting.incomeStatement.netProfit")}
-                  value={fmt(data.summary.netProfit)}
-                  tone={data.summary.netProfit >= 0 ? "text-teal-700" : "text-rose-600"}
-                />
-                <Kpi label={t("accounting.incomeStatement.grossMargin")} value={`${fmt(data.summary.grossMargin)}%`} tone="text-slate-900" />
-              </div>
+          <PrintDocument title={t("accounting.incomeStatement.title")} subtitle={period}>
+            <div className="surface p-4">
+              <StatementTable<PnlRowModel>
+                rows={rows}
+                labelHeader={t("accounting.incomeStatement.lineHeader")}
+                collapsedIds={collapsed}
+                onToggleRow={toggleRow}
+                expandLabel={t("accounting.coa.expand")}
+                collapseLabel={t("accounting.coa.collapse")}
+                columns={[
+                  {
+                    id: "amount",
+                    header: t("accounting.incomeStatement.amountHeader"),
+                    align: "end",
+                    render: (row) =>
+                      row.amount == null ? null : (
+                        <Num value={row.amount} signed strong={row.kind !== "line"} />
+                      ),
+                    csv: (row) => row.amount ?? "",
+                  },
+                ]}
+                totals={{
+                  label: t("accounting.incomeStatement.netIncome"),
+                  values: { amount: <Num value={data.netIncome} signed strong /> },
+                }}
+              />
             </div>
-
-            <div className="grid gap-5 lg:grid-cols-2">
-              <Section title={t("accounting.accountType.revenue")} rows={data.revenue} total={data.summary.totalRevenue} totalTone="text-emerald-600" />
-              <Section title={t("accounting.accountType.expense")} rows={data.expenses} total={data.summary.totalExpense} totalTone="text-rose-600" />
-            </div>
-
-            <div className="surface mt-5 flex items-center justify-between px-5 py-4">
-              <span className="text-base font-extrabold text-slate-900">{t("accounting.incomeStatement.netProfitPeriod")}</span>
-              <span
-                className={`text-xl font-extrabold tabular-nums ${
-                  data.summary.netProfit >= 0 ? "text-teal-700" : "text-rose-600"
-                }`}
-                dir="ltr"
-              >
-                {fmt(data.summary.netProfit)}
-              </span>
-            </div>
-          </PrintArea>
+          </PrintDocument>
         )}
       </ReportState>
     </div>

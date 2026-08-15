@@ -1,0 +1,189 @@
+// People & Operations reports — groups, report names, column headers, filters.
+// Arabic mirror: frontend/erp/src/i18n/dictionaries/ar/operationalReports.ts
+//
+// Employee statuses and month names are NOT repeated here: they are read from
+// people.status.* and people.payroll.months.*, which already own them.
+export const operationalReports = {
+  backToDirectory: "Back to report directory",
+  print: "Print",
+  run: "View report",
+
+  unknown: {
+    title: "Unknown report",
+    body: "This link does not point to a report in this directory.",
+  },
+  empty: {
+    title: "No data for the selected period",
+    body: "Change the period or the filters and view the report again.",
+  },
+
+  groups: {
+    payroll: {
+      title: "Payroll & entitlements",
+      description: "Payroll registers, wage structure and staff advances.",
+    },
+    timeAttendance: {
+      title: "Attendance & leave",
+      description: "Days present, absent and late, and the leave register.",
+    },
+    custody: {
+      title: "Petty cash custody",
+      description: "Open custody balances and their movement.",
+    },
+    posControl: {
+      title: "Point-of-sale control",
+      description: "Shift closings and cash / card variances.",
+    },
+    governance: {
+      title: "Control & governance",
+      description: "User actions and the transaction trail.",
+    },
+  },
+
+  reports: {
+    payrollRegister: {
+      label: "Payroll register",
+      description: "Entitlements, deductions and net pay per employee for one payroll run.",
+    },
+    wageStructure: {
+      label: "Monthly wage structure",
+      description: "Basic pay, allowances and monthly gross per employee, by department and branch.",
+    },
+    staffAdvances: {
+      label: "Staff advances and balances",
+      description: "Each advance, what has been repaid, what is outstanding and the monthly instalment.",
+    },
+    attendanceSummary: {
+      label: "Attendance and absence summary",
+      description: "Days present, absent, late and overtime per employee for a month.",
+    },
+    leaveRegister: {
+      label: "Leave register",
+      description: "Leave requests with type, duration, status and who approved them.",
+    },
+    openCustody: {
+      label: "Open custody and balances",
+      description: "Total top-ups, total spend and the remaining balance of each custody.",
+    },
+    shiftVariance: {
+      label: "Shifts and cash variances",
+      description: "Expected versus counted cash and card per shift, and the closing variance.",
+    },
+    userActions: {
+      label: "User action log",
+      description: "Who did what, to which record, when and from which address.",
+    },
+    transactionLog: {
+      label: "Transaction log and overdue items",
+      description: "Transactions raised in the period, their status, owner, and what is past its due date.",
+    },
+  },
+
+  filter: {
+    from: "From",
+    to: "To",
+    month: "Month",
+    year: "Year",
+    status: "Status",
+    payrollRun: "Payroll run",
+    employmentStatus: "Employment status",
+  },
+
+  total: {
+    employees: "Employees",
+    gross: "Total gross",
+    deductions: "Total deductions",
+    net: "Total net",
+  },
+
+  col: {
+    employeeNumber: "Employee no.",
+    employeeName: "Employee",
+    department: "Department",
+    branch: "Branch",
+    jobTitle: "Job title",
+    basicSalary: "Basic salary",
+    housingAllowance: "Housing allowance",
+    transportAllowance: "Transport allowance",
+    otherAllowance: "Other allowances",
+    totalAllowances: "Total allowances",
+    overtimeAmount: "Overtime pay",
+    grossSalary: "Gross pay",
+    absenceDeduction: "Absence deduction",
+    lateDeduction: "Lateness deduction",
+    advanceDeduction: "Advance deduction",
+    otherDeduction: "Other deductions",
+    totalDeductions: "Total deductions",
+    netSalary: "Net pay",
+    actualDays: "Days worked",
+    absentDays: "Days absent",
+    leaveDays: "Leave days",
+    workingDays: "Working days in month",
+    presentDays: "Days present",
+    lateDays: "Days late",
+    lateMinutes: "Late minutes",
+    overtimeMinutes: "Overtime minutes",
+    leaveType: "Leave type",
+    startDate: "From",
+    endDate: "To",
+    days: "Days",
+    status: "Status",
+    approvedBy: "Approved by",
+    requestDate: "Request date",
+    advanceAmount: "Advance amount",
+    advancePaid: "Repaid",
+    advanceRemaining: "Outstanding",
+    monthlyDeduction: "Monthly instalment",
+    deductionMonths: "Instalments",
+    custodyNumber: "Custody no.",
+    custodian: "Custodian",
+    openedOn: "Opened on",
+    topups: "Total top-ups",
+    spent: "Total spend",
+    balance: "Balance",
+    cashier: "Cashier",
+    shiftStart: "Shift opened",
+    shiftEnd: "Shift closed",
+    openingFloat: "Opening float",
+    expectedCash: "Expected cash",
+    actualCash: "Counted cash",
+    cashVariance: "Cash variance",
+    expectedCard: "Expected card",
+    actualCard: "Counted card",
+    cardVariance: "Card variance",
+    totalVariance: "Total variance",
+    at: "Date & time",
+    user: "User",
+    action: "Action",
+    entity: "Record type",
+    reference: "Reference",
+    details: "Details",
+    ip: "IP address",
+    txnNumber: "Transaction no.",
+    txnType: "Type",
+    subject: "Subject",
+    createdBy: "Raised by",
+    assignee: "With",
+    importance: "Priority",
+    createdAt: "Raised on",
+    dueDate: "Due",
+    overdue: "Overdue",
+  },
+
+  txnStatus: {
+    draft: "Draft",
+    pending: "Pending approval",
+    in_progress: "In progress",
+    approved: "Approved",
+    rejected: "Rejected",
+    completed: "Completed",
+    cancelled: "Cancelled",
+  },
+
+  importance: {
+    critical: "Critical",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+  },
+} as const;

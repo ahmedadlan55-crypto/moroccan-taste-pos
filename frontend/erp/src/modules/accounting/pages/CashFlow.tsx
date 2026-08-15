@@ -1,5 +1,5 @@
-import { DatePicker } from "@/shared/ui";
-import { formatDate } from "@/shared/lib";
+import { DatePicker, PrintDocument } from "@/shared/ui";
+import { formatForPeriod } from "@/shared/lib";
 import { useT } from "@/i18n";
 import { useCashFlow, startOfYearISO, todayISO, type DateRange, type CashFlowSection } from "../api";
 import {
@@ -8,8 +8,6 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
@@ -60,7 +58,7 @@ export function CashFlowPage() {
   const filter = useAppliedFilter<DateRange>({ from: startOfYearISO(), to: todayISO() });
   const query = useCashFlow(filter.applied);
   const data = query.data;
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
+  const period = formatForPeriod(filter.applied.from, filter.applied.to);
 
   return (
     <div>
@@ -85,22 +83,24 @@ export function CashFlowPage() {
         onRetry={() => query.refetch()}
       >
         {data && (
-          <PrintArea>
-            <div className="surface mb-5 p-4">
-              <PrintBanner title={t("accounting.cashFlow.title")} period={period} />
-              <div
-                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
-                  data.isReconciled
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-amber-200 bg-amber-50 text-amber-700"
-                }`}
-              >
-                {data.isReconciled
-                  ? t("accounting.cashFlow.reconciled")
-                  : t("accounting.cashFlow.reconDiff", { amount: fmt(data.reconciliationDiff) })}
-              </div>
+          <>
+            {/* The reconciliation verdict is a fact about THIS RUN — whether
+                the three activity sections add up to the cash the ledger really
+                moved — not a line of the statement. It stays on screen and off
+                the paper. */}
+            <div
+              className={`no-print mb-4 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold ${
+                data.isReconciled
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-700"
+              }`}
+            >
+              {data.isReconciled
+                ? t("accounting.cashFlow.reconciled")
+                : t("accounting.cashFlow.reconDiff", { amount: fmt(data.reconciliationDiff) })}
             </div>
 
+            <PrintDocument title={t("accounting.cashFlow.title")} subtitle={period}>
             <div className="grid gap-5">
               <Section title={t("accounting.cashFlow.operating")} section={data.operating} />
               <Section title={t("accounting.cashFlow.investing")} section={data.investing} />
@@ -117,7 +117,8 @@ export function CashFlowPage() {
                 <ReconRow label={t("accounting.cashFlow.actualMovement")} value={data.actualMovement} signed />
               </div>
             </div>
-          </PrintArea>
+            </PrintDocument>
+          </>
         )}
       </ReportState>
     </div>

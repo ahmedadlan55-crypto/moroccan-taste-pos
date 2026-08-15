@@ -2,7 +2,7 @@
 // subtree via subRoutes:true in the manifest).
 //
 // FIVE CENTERS, NOT SEVENTEEN REPORTS
-//   /reports/sales                      → <Navigate replace> to the executive centre
+//   /reports/sales                      → the sales report catalogue
 //   /reports/sales/<centre>[?view=…]    → picker + view switcher + top bar + report
 //   /reports/sales/<retired-segment>    → <Navigate replace> onto its centre + view,
 //                                         QUERY STRING INTACT (a bookmark is a promise)

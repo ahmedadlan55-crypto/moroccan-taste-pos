@@ -169,29 +169,18 @@ export const NAV: NavGroup[] = [
       // and /import as real, refresh-survivable URLs.
       { id: "ac-coa", path: "/accounting/chart-of-accounts", label: "nav.items.ac-coa", icon: "BookText", cap: "finance.gl.view", module: "accounting", subRoutes: true },
       { id: "ac-journals", path: "/accounting/journals", label: "nav.items.ac-journals", icon: "BookOpen", cap: "accounting.journals.view", module: "accounting" },
-      { id: "ac-gl", path: "/accounting/general-ledger", label: "nav.items.ac-gl", icon: "Layers", cap: "accounting.reports.view", module: "accounting" },
-      // Tier A.1 corrective gate — this cap matches routes/erp-core.js's real
-      // requireCapability('finance.reports.view') gate exactly. (The other
-      // report nav items below still use 'accounting.reports.view', whose
-      // matching backend gate has not been individually verified — see
-      // ADR 0002 section 7; not changed here to avoid guessing.)
-      // Release integration — the i18n sprint rewrote every label in this block
-      // into a t() key and, doing so, carried this cap back to
-      // 'accounting.reports.view'. Restored, because it is load-bearing:
-      // e2e/erp/trial-balance-rbac.spec.ts asserts a cashier is never offered
-      // this link, and that only holds while the nav cap matches the backend
-      // gate. Nothing else in the block changed.
-      { id: "ac-tb", path: "/accounting/trial-balance", label: "nav.items.ac-tb", icon: "Scale", cap: "finance.reports.view", module: "accounting" },
+      // ELEVEN REPORT LEAVES LEFT THIS GROUP — general-ledger, trial-balance,
+      // income-statement, balance-sheet, cash-flow, ar-aging, ap-aging,
+      // financial-ratios, equity-changes, profitability, inventory-valuation.
+      // Every report in the product now has ONE home, /reports/<section>/<id>;
+      // they live at /reports/financial/<id> and keep the exact capability they
+      // carried here (see modules/reports/financial/registry.ts — trial-balance
+      // stays on 'finance.reports.view', the other ten on
+      // 'accounting.reports.view'; nothing was widened). Old bookmarks keep
+      // working through REDIRECTS in app/router.tsx. Accounting keeps only what
+      // it OPERATES: the chart of accounts, journals, periods, cost centers,
+      // dimensions, royalties and the sales-posting run.
       { id: "ac-sales-posting", path: "/accounting/sales-posting", label: "nav.items.ac-sales-posting", icon: "Send", cap: "finance.reports.view", module: "accounting" },
-      { id: "ac-pnl", path: "/accounting/income-statement", label: "nav.items.ac-pnl", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-bs", path: "/accounting/balance-sheet", label: "nav.items.ac-bs", icon: "Building2", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-cf", path: "/accounting/cash-flow", label: "nav.items.ac-cf", icon: "LineChart", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ar-aging", path: "/accounting/ar-aging", label: "nav.items.ac-ar-aging", icon: "HandCoins", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ap-aging", path: "/accounting/ap-aging", label: "nav.items.ac-ap-aging", icon: "PiggyBank", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-ratios", path: "/accounting/financial-ratios", label: "nav.items.ac-ratios", icon: "Gauge", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-equity-changes", path: "/accounting/equity-changes", label: "nav.items.ac-equity-changes", icon: "Landmark", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-profitability", path: "/accounting/profitability", label: "nav.items.ac-profitability", icon: "TrendingUp", cap: "accounting.reports.view", module: "accounting" },
-      { id: "ac-inventory-valuation", path: "/accounting/inventory-valuation", label: "nav.items.ac-inventory-valuation", icon: "Boxes", cap: "accounting.reports.view", module: "accounting" },
       // The accounting sales-analytics leaf was retired → the Sales Analytics Hub
       // (/reports/sales/executive). Redirect lives in app/router.tsx.
       { id: "ac-royalties", path: "/accounting/royalties", label: "nav.items.ac-royalties", icon: "Crown", cap: "royalty.view", module: "accounting" },
@@ -245,11 +234,21 @@ export const NAV: NavGroup[] = [
     id: "reports",
     label: "nav.groups.reports",
     items: [
+      // Every leaf here OWNS its subtree: `/reports/<section>` is the catalogue
+      // and `/reports/<section>/<id>` is the report itself, a real refreshable
+      // URL. A section WITHOUT subRoutes can only ever be a catalogue that
+      // links somewhere else — which is exactly how the report rows ended up
+      // pointing at `#anchors` and at other top-level sections.
       { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports", subRoutes: true },
-      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports" },
-      { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports" },
-      { id: "rp-people", path: "/reports/people", label: "nav.items.rp-people", icon: "FileBarChart", cap: "reports.view", module: "reports" },
-      { id: "rp-operations", path: "/reports/operations", label: "nav.items.rp-operations", icon: "FileBarChart", cap: "reports.view", module: "reports" },
+      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports", subRoutes: true },
+      { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports", subRoutes: true },
+      // Order-to-cash reporting. `ar_reports.view` is the capability the O2C
+      // report routes already enforce server-side — copied, never widened — and
+      // the section is hidden until the orderToCash flag is on, because without
+      // it the endpoints behind every row do not exist.
+      { id: "rp-receivables", path: "/reports/receivables", label: "nav.items.rp-receivables", icon: "HandCoins", cap: "ar_reports.view", flag: "orderToCash", module: "reports", subRoutes: true },
+      { id: "rp-people", path: "/reports/people", label: "nav.items.rp-people", icon: "FileBarChart", cap: "reports.view", module: "reports", subRoutes: true },
+      { id: "rp-operations", path: "/reports/operations", label: "nav.items.rp-operations", icon: "FileBarChart", cap: "reports.view", module: "reports", subRoutes: true },
       { id: "rp-saved", path: "/reports/saved", label: "nav.items.rp-saved", icon: "Files", cap: "reports.view", module: "reports" },
     ],
   },

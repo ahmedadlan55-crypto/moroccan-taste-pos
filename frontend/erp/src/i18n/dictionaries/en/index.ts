@@ -11,12 +11,14 @@ import { menu } from "./menu";
 import { menuRest } from "./menuRest";
 import { misc } from "./misc";
 import { nav } from "./nav";
+import { operationalReports } from "./operationalReports";
 import { operations } from "./operations";
 import { overview } from "./overview";
 import { people } from "./people";
 import { posAdmin } from "./posAdmin";
 import { production } from "./production";
 import { purchasing } from "./purchasing";
+import { receivablesReports } from "./receivablesReports";
 import { recipes } from "./recipes";
 import { sales } from "./sales";
 import { salesReports } from "./salesReports";
@@ -52,12 +54,14 @@ export const en = {
   menuRest,
   misc,
   nav,
+  operationalReports,
   operations,
   overview,
   people,
   posAdmin,
   production,
   purchasing,
+  receivablesReports,
   recipes,
   sales,
   salesReports,

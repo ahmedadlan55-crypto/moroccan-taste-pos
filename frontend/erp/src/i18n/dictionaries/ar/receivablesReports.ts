@@ -1,0 +1,115 @@
+/** "receivablesReports" namespace — the receivables & collections section of
+ *  /reports (modules/reports/receivables). English mirror:
+ *  en/receivablesReports.ts (identical key shape).
+ *
+ *  `values.*` translates the literals the SERVER puts in a row: sales-summary's
+ *  metric names and data-quality's issue names arrive hard-coded in Arabic from
+ *  services/order-to-cash/O2CReportingService.js, and zatca/refund codes arrive
+ *  as DB enum values. They are business data keyed by the server, mapped here so
+ *  the English screen is really English. Column HEADERS also live here rather
+ *  than being read off the server's `columns[].label`, which is Arabic-only. */
+export const receivablesReports = {
+  directoryTitle: "تقارير الذمم والتحصيل",
+  totalsLabel: "الإجمالي",
+  groups: {
+    salesAnalysis: { title: "ملخّص المبيعات وتحليلها" },
+    receivables: { title: "الذمم والتحصيل" },
+    returns: { title: "المرتجعات" },
+    taxCompliance: { title: "الامتثال الضريبي" },
+    dataQuality: { title: "جودة البيانات" },
+  },
+  reports: {
+    salesSummary: { title: "ملخّص المبيعات", subtitle: "الصافي والضريبة والمرتجعات والمُحصّل والمتبقّي عن الفترة." },
+    salesByCustomer: { title: "المبيعات حسب العميل", subtitle: "قيمة الفواتير وصافيها لكل عميل." },
+    salesByProduct: { title: "المبيعات حسب الصنف", subtitle: "الكميات والصافي والضريبة لكل صنف مُباع." },
+    salesByChannel: { title: "المبيعات حسب القناة", subtitle: "توزيع المبيعات على قنوات البيع." },
+    salesByCashier: { title: "المبيعات حسب الكاشير", subtitle: "عدد الفواتير وإجماليها لكل كاشير." },
+    arAging: { title: "أعمار الذمم المدينة", subtitle: "أرصدة العملاء موزّعة على فئات التأخّر حسب تاريخ الاستحقاق." },
+    openInvoices: { title: "الفواتير المفتوحة", subtitle: "الفواتير غير المسدّدة بالكامل ومواعيد استحقاقها." },
+    collections: { title: "التحصيلات", subtitle: "سندات القبض المُرحّلة خلال الفترة وما خُصّص منها." },
+    unallocatedPayments: { title: "الدفعات غير المخصّصة", subtitle: "المبالغ المقبوضة التي لم تُخصَّص بعد على فواتير." },
+    creditExposure: { title: "التعرّض الائتماني", subtitle: "الحد الائتماني والرصيد القائم والمتاح لكل عميل." },
+    returns: { title: "مرتجعات المبيعات", subtitle: "المرتجعات المُرحّلة خلال الفترة وطريقة ردّ قيمتها." },
+    zatcaStatus: { title: "حالة فوترة زاتكا", subtitle: "توزيع المستندات على حالات الإرسال إلى هيئة الزكاة والضريبة والجمارك." },
+    dataQuality: { title: "جودة بيانات الذمم", subtitle: "ملاحظات تمنع اكتمال دورة الفوترة والتحصيل." },
+  },
+  columns: {
+    metric: "المؤشر",
+    value: "القيمة",
+    customer: "العميل",
+    invoices: "الفواتير",
+    net: "الصافي",
+    vat: "الضريبة",
+    total: "الإجمالي",
+    item: "الصنف",
+    qty: "الكمية",
+    channel: "القناة",
+    cashier: "الكاشير",
+    bucketCurrent: "جاري",
+    bucket1_30: "1-30",
+    bucket31_60: "31-60",
+    bucket61_90: "61-90",
+    bucket91_120: "91-120",
+    bucket120Plus: "+120",
+    invoice: "الفاتورة",
+    issueDate: "تاريخ الإصدار",
+    dueDate: "الاستحقاق",
+    paid: "المسدّد",
+    balance: "المتبقّي",
+    voucher: "السند",
+    date: "التاريخ",
+    amount: "المبلغ",
+    allocated: "المخصّص",
+    unallocated: "غير مخصّص",
+    creditLimit: "الحد الائتماني",
+    exposure: "التعرّض",
+    available: "المتاح",
+    returnNumber: "المرتجع",
+    refundMethod: "طريقة الرد",
+    zatcaStatus: "حالة زاتكا",
+    documents: "المستندات",
+    issue: "الملاحظة",
+    count: "العدد",
+  },
+  filters: {
+    from: "من تاريخ",
+    to: "إلى تاريخ",
+    asOf: "كما في",
+  },
+  values: {
+    metric: {
+      invoiceCount: "عدد الفواتير",
+      netSales: "صافي المبيعات",
+      vat: "الضريبة",
+      total: "الإجمالي",
+      returns: "المرتجعات",
+      netAfterReturns: "صافي المبيعات بعد المرتجعات",
+      collected: "المُحصّل",
+      outstanding: "المتبقّي (ذمم)",
+    },
+    issue: {
+      b2bWithoutVat: "عملاء B2B/B2G بدون رقم ضريبي",
+      openWithoutDueDate: "فواتير مفتوحة بلا تاريخ استحقاق",
+      negativeBalance: "فواتير برصيد سالب",
+      unallocatedPostedPayments: "دفعات مُرحّلة غير مخصّصة",
+      pendingZatca: "فواتير بانتظار زاتكا",
+    },
+    zatcaStatus: {
+      pending: "بانتظار الإرسال",
+      submitted: "أُرسلت",
+      accepted: "مقبولة",
+      rejected: "مرفوضة",
+      notRequired: "غير مطلوبة",
+    },
+    refundMethod: {
+      cash: "نقدًا",
+      bank: "تحويل بنكي",
+      arReduction: "خصم من الذمم",
+      customerDeposit: "رصيد للعميل",
+    },
+  },
+  states: {
+    unknownTitle: "تقرير غير معروف",
+    back: "العودة إلى تقارير الذمم والتحصيل",
+  },
+} as const;

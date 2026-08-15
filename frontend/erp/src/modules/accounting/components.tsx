@@ -103,24 +103,24 @@ export function FilterField({ label, children }: { label: string; children: Reac
   );
 }
 
-/** Screen + print banner shown at the top of the printable results area. */
-export function PrintBanner({ title, period }: { title: string; period: string }) {
-  const t = useT();
-  return (
-    <div className="mb-4 flex flex-col gap-1 border-b border-slate-200 pb-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-lg font-extrabold text-slate-900">{title}</h2>
-        <span className="text-xs font-extrabold text-teal-700">{t("accounting.common.systemName")}</span>
-      </div>
-      <div className="text-xs font-bold text-slate-500">{period}</div>
-    </div>
-  );
-}
-
-/** Wrap the printable report body so only it prints (see index.css @media print). */
-export function PrintArea({ children }: { children: ReactNode }) {
-  return <div className="print-document">{children}</div>;
-}
+// PrintArea and PrintBanner were DELETED here, not deprecated.
+//
+//   PrintBanner stamped `accounting.common.systemName` — the literal string
+//   "نظام ADLAN" — in the top corner of every sheet it headed. That is the
+//   software's name, not the entity's, and on an accounting document the issuer
+//   line is the one thing that must be true: a balance sheet whose letterhead
+//   names the accounting package tells a reader nothing about whose balance
+//   sheet it is. `PrintDocument` resolves the real legal name and VAT number
+//   from GET /api/settings/invoice-identity, and prints NOTHING when it cannot.
+//
+//   PrintArea was the bare `.print-document` wrapper the banner sat inside. It
+//   carried no title, no period and no printed-at stamp, so a sheet produced
+//   through it could not say what it was or when it was run.
+//
+//   Keeping either as a working export would leave the wrong letterhead one
+//   import away. Every screen that printed through them is on PrintDocument
+//   now, and `import { PrintArea } from "../components"` no longer resolves —
+//   which is the point.
 
 /** Uniform loading / error / empty gate for a report body. */
 export function ReportState({

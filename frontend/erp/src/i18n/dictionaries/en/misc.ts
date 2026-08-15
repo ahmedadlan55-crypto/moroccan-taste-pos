@@ -4,38 +4,23 @@
 export const misc = {
   reports: {
     eyebrow: "Reports",
-    emptyTitle: "No reports in this section yet",
     directory: {
-      searchLabel: "Search reports",
-      searchPlaceholder: "Search by report name or purpose…",
       open: "Open report",
-      count: "{count} reports",
-      empty: "No reports match your search",
+      empty: "No reports available",
     },
+    // The financial report families — read by FinancialReportsDirectory.
     groups: {
-      inventoryControl: { title: "Inventory control", description: "Balances, movement, stocktakes, expiry, and replenishment." },
-      purchasingDocuments: { title: "Purchasing and suppliers", description: "Purchase orders, invoices, payments, and returns." },
-      financialStatements: { title: "Financial statements and analysis", description: "Financial position, performance, cash flows, and equity changes." },
-      ledgerControl: { title: "Ledger and accounting control", description: "General ledger, trial balance, and sales-posting control." },
-      receivablesPayables: { title: "Receivables, payables, cost and profit", description: "Aging, profitability, and inventory valuation." },
-      workforce: { title: "Workforce and custody", description: "Employee register, organisation structure, and custody." },
-      timeAttendance: { title: "Time and entitlements", description: "Attendance, leave, and payroll runs." },
-      posControl: { title: "POS and shifts", description: "Shift closure, performance, and cash variances." },
-      operationsControl: { title: "Operational control", description: "Action log and inventory operating indicators." },
+      financialStatements: { title: "Financial statements" },
+      ledgerControl: { title: "Ledger and balances" },
+      receivablesPayables: { title: "Receivables and valuation" },
+      // The People / Operations report families moved to
+      // operationalReports.groups.*, alongside the registries that build them.
     },
-    // (No `sales` section: /reports/sales/* is the Sales Analytics Hub.)
+    // Section headings. Inventory/purchasing/sales/receivables carry their own
+    // (warehouseIntelligence.*, salesReports.*, receivablesReports.*).
     sections: {
-      inventory: {
-        title: "Inventory Reports",
-        subtitle: "Balances, movements, stocktakes, and expiry.",
-      },
-      purchasing: {
-        title: "Purchasing Reports",
-        subtitle: "Purchase orders, supplier invoices, and payments.",
-      },
       financial: {
         title: "Financial Reports",
-        subtitle: "Financial statements and aging — managed within the Accounting module.",
       },
       people: {
         title: "Employee Reports",
@@ -46,39 +31,22 @@ export const misc = {
         subtitle: "Shifts, point of sale, and the action log.",
       },
     },
+    // The eleven financial report names — read by the /reports/financial registry.
+    // The inv*/pur*/ppl*/ops* links are gone: each opened a CRUD workspace
+    // outside the reports section, and glSalesPosting went with them because
+    // sales posting writes journals — it is not a report.
     links: {
-      invBalances: { label: "Balances", description: "Item balances across warehouses." },
-      invTransfers: { label: "Transfers", description: "Item movement between warehouses." },
-      invStocktakes: { label: "Stocktakes", description: "Stocktake variances and adjustments." },
-      invLotsExpiry: { label: "Expiry", description: "Lots nearing expiry." },
-      invReplenishment: { label: "Replenishment", description: "Items below the reorder point." },
-      purOrders: { label: "Purchase Orders", description: "Purchase orders and their status." },
-      purInvoices: { label: "Supplier Invoices", description: "Supplier claims." },
-      purPayments: { label: "Supplier Payments", description: "Settlement of supplier dues." },
-      purReturns: { label: "Purchase Returns", description: "Returns to suppliers." },
-      purSuppliers: { label: "Suppliers", description: "Supplier performance and balances." },
-      glGeneralLedger: { label: "General Ledger", description: "Movement of each account." },
-      glTrialBalance: { label: "Trial Balance", description: "Account balances." },
-      glIncomeStatement: { label: "Income Statement", description: "Revenue and expenses." },
-      glBalanceSheet: { label: "Balance Sheet", description: "Financial position." },
-      glCashFlow: { label: "Cash Flow", description: "Cash movement." },
-      glEquityChanges: { label: "Changes in Equity", description: "Opening, movement, and closing balances of equity." },
-      glFinancialRatios: { label: "Financial Ratios", description: "Liquidity, profitability, and solvency indicators from available facts." },
-      glSalesPosting: { label: "Sales Posting Control", description: "Match sales batches to posted journals and review exceptions." },
-      glArAging: { label: "AR Aging", description: "Aging of customer receivables." },
-      glApAging: { label: "AP Aging", description: "Aging of supplier payables." },
-      glProfitability: { label: "Profitability Analysis", description: "Revenue, cost, and margin across the available dimensions." },
-      glInventoryValuation: { label: "Inventory Valuation", description: "Inventory value, cost coverage, and accounting differences." },
-      pplEmployees: { label: "Employees", description: "Employee data." },
-      pplOrgTree: { label: "Organisation Structure", description: "Reporting lines, positions, and supervision relationships." },
-      pplCustody: { label: "Employee Custody", description: "Assets assigned to employees, their status, and responsibility." },
-      pplAttendance: { label: "Attendance", description: "Clock-in and clock-out." },
-      pplPayroll: { label: "Payroll", description: "Payroll runs." },
-      pplLeaves: { label: "Leaves", description: "Leave balances and requests." },
-      opsShifts: { label: "Shifts", description: "Shift closing and variances." },
-      opsPosReports: { label: "Shift Analytics", description: "Shift totals and variances in the sales analytics hub." },
-      opsActionLog: { label: "Action Log", description: "Transaction action log." },
-      opsInventoryOverview: { label: "Inventory Overview", description: "Operational inventory indicators." },
+      glGeneralLedger: { label: "General Ledger" },
+      glTrialBalance: { label: "Trial Balance" },
+      glIncomeStatement: { label: "Income Statement" },
+      glBalanceSheet: { label: "Balance Sheet" },
+      glCashFlow: { label: "Cash Flow" },
+      glEquityChanges: { label: "Changes in Equity" },
+      glFinancialRatios: { label: "Financial Ratios" },
+      glArAging: { label: "AR Aging" },
+      glApAging: { label: "AP Aging" },
+      glProfitability: { label: "Profitability Analysis" },
+      glInventoryValuation: { label: "Inventory Valuation" },
     },
     saved: {
       title: "Saved Reports",

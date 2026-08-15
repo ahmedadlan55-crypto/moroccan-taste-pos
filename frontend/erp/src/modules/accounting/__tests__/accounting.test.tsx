@@ -174,13 +174,18 @@ describe("TrialBalance", () => {
     await screen.findAllByText("الصندوق");
     fireEvent.change(screen.getByLabelText(/ابحث باسم الحساب/), { target: { value: "الصندوق" } });
 
-    expect(await screen.findByText(/تذييل التقرير هو الإجمالي المعتمد من الخادم/)).toBeInTheDocument();
-    expect(screen.getByText("إجمالي النطاق الكامل")).toBeInTheDocument();
+    // The paragraph that used to state "the footer is the server's authorised
+    // total" was deleted with the rest of the in-document notices — it restated,
+    // in prose, the label of the footer cell it sat above, and it printed. The
+    // ASSERTION it was making is unchanged and is the line below: filtering the
+    // view must relabel the footer "إجمالي النطاق الكامل", so the reader is
+    // still told the total is full-scope while the rows are not.
+    expect(await screen.findByText("إجمالي النطاق الكامل")).toBeInTheDocument();
     expect(screen.getByLabelText("الصندوق، المستوى الهرمي 2")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "فتح دفتر الأستاذ للحساب الصندوق" })[0]);
     await waitFor(() => expect(screen.getByTestId("location").textContent).toContain(
-      "/accounting/general-ledger?accountId=a1&from=",
+      "/reports/financial/general-ledger?accountId=a1&from=",
     ));
   });
 
@@ -211,7 +216,7 @@ describe("TrialBalance", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: "فتح دفتر الأستاذ للحساب الأصول" })[0]);
     await waitFor(() => expect(screen.getByTestId("location").textContent).toContain(
-      "/accounting/general-ledger?parentId=root-1&from=",
+      "/reports/financial/general-ledger?parentId=root-1&from=",
     ));
   });
 });

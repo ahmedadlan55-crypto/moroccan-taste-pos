@@ -540,6 +540,22 @@ export const accounting = {
     netProfit: "صافي الربح",
     grossMargin: "هامش الربح",
     netProfitPeriod: "صافي ربح الفترة",
+    // Statement form — the sections and subtotals of /erp/reports/income,
+    // in the order the statement is read.
+    lineHeader: "البيان",
+    amountHeader: "المبلغ",
+    totalOf: "إجمالي {section}",
+    grossProfit: "مجمل الربح",
+    operatingIncome: "الربح التشغيلي",
+    netIncome: "صافي الدخل",
+    sections: {
+      revenue: "الإيرادات",
+      cogs: "تكلفة المبيعات",
+      opex: "المصروفات التشغيلية",
+      gAndA: "المصروفات العمومية والإدارية",
+      otherIncome: "إيرادات أخرى",
+      otherExpense: "مصروفات أخرى",
+    },
   },
 
   // ── Balance Sheet ──────────────────────────────────────────────────────────
@@ -556,6 +572,12 @@ export const accounting = {
     currentLiab: "الالتزامات المتداولة",
     nonCurrentLiab: "الالتزامات غير المتداولة",
     equity: "حقوق الملكية",
+    // Report form — one column, section subtotal after each section.
+    lineHeader: "البيان",
+    amountHeader: "المبلغ",
+    totalOf: "إجمالي {section}",
+    totalLiabilities: "إجمالي الالتزامات",
+    totalEquity: "إجمالي حقوق الملكية",
   },
 
   // ── Cash Flow ──────────────────────────────────────────────────────────────

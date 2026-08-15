@@ -60,6 +60,7 @@ import {
 } from "./reportCatalog";
 import type { IntelligenceWarning, PurchaseIntelligenceRow } from "./contracts";
 import { ReportDirectory, type ReportDirectoryGroup, type ReportDirectoryTone } from "../components/ReportDirectory";
+import { PurchasingReportsDirectory } from "../purchasing/PurchasingReportsDirectory";
 
 export type WarehouseIntelligenceMode = "inventory" | "purchasing";
 
@@ -131,16 +132,13 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
     .map((family) => ({
       id: family.id,
       title: t(family.labelKey),
-      description: t(family.descriptionKey),
       icon: family.icon,
       items: reports.filter((report) => report.family === family.id).map((report) => ({
         id: report.id,
         title: t(report.labelKey),
-        description: t(report.descriptionKey),
         to: withScope(report, range, scope),
         icon: report.icon,
         tone: familyTones[family.id],
-        badge: t(`warehouseIntelligence.assurance.maturity.${report.maturity}`),
       })),
     }))
     .filter((family) => family.items.length > 0);
@@ -162,10 +160,7 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
 
       <ReportDirectory
         groups={groups}
-        searchLabel={t("misc.reports.directory.searchLabel")}
-        searchPlaceholder={t("misc.reports.directory.searchPlaceholder")}
         openLabel={t("misc.reports.directory.open")}
-        countLabel={(count) => t("misc.reports.directory.count", { count })}
         emptyLabel={t("misc.reports.directory.empty")}
       />
 
@@ -929,6 +924,12 @@ export function WarehouseIntelligenceHub({ mode }: { mode: WarehouseIntelligence
   const titleKey = mode === "inventory" ? "warehouseIntelligence.inventory.title" : "warehouseIntelligence.purchases.title";
   const subtitleKey = mode === "inventory" ? "warehouseIntelligence.inventory.subtitle" : "warehouseIntelligence.purchases.subtitle";
   const isDirectory = location.search === "" && location.hash === "";
+
+  // Purchasing's catalogue now lives with the pages it opens: every row is a
+  // real /reports/purchasing/<id> route rather than a `?report=X#anchor` back
+  // into THIS page, so it is rendered from the purchasing registry, not from
+  // the governance catalog. This page keeps serving the WORKSPACE below.
+  if (isDirectory && mode === "purchasing") return <PurchasingReportsDirectory />;
 
   if (isDirectory) {
     return (

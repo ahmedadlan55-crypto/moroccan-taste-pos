@@ -236,7 +236,7 @@ describe("every screen that prints, prints a document", () => {
     // trusting the sentence.
     "detail-shared.tsx": "shared print button; every caller wraps — verified below",
     // The printing helper itself.
-    "components.tsx": "defines printReport()/PrintArea for the accounting module",
+    "components.tsx": "defines printReport() for the accounting module",
     // A hub SEGMENT. SalesAnalyticsHub wraps whichever segment is routed, so
     // the print button here triggers the hub's document — the page owning its
     // own wrapper would nest two of them.

@@ -1,8 +1,8 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Download, Search } from "lucide-react";
 import { Button, DatePicker, Input, PrintDocument, Select, Toggle } from "@/shared/ui";
-import { formatDate } from "@/shared/lib";
+import { formatForPeriod } from "@/shared/lib";
 import { useLang, useT } from "@/i18n";
 import {
   useTrialBalance,
@@ -10,7 +10,6 @@ import {
   todayISO,
   type DateRange,
   type TrialBalanceRow,
-  type TrialBalanceDiagnostics,
 } from "../api";
 import {
   Num,
@@ -154,10 +153,12 @@ export function TrialBalancePage() {
   );
   const visibleIds = useMemo(() => new Set(flat.map((row) => row.accountId)), [flat]);
   const totals = query.data?.totals;
-  const diagnostics = query.data?.diagnostics;
+  // `query.data.diagnostics` is deliberately NOT read. The server still sends
+  // it and the type still describes it; what was deleted is the panel that
+  // printed all of it onto the statement — see BalanceStatus below.
   const isClean = query.data?.isClean;
 
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)}`;
+  const period = formatForPeriod(filter.applied.from, filter.applied.to);
   const levels = useMemo(
     () => [...new Set(rows.map((r) => r.level))].sort((a, b) => a - b),
     [rows],
@@ -171,7 +172,10 @@ export function TrialBalancePage() {
     params.set(isMainRow(row) ? "parentId" : "accountId", row.accountId);
     params.set("from", filter.applied.from);
     params.set("to", filter.applied.to);
-    navigate(`/accounting/general-ledger?${params.toString()}`);
+    // The ledger's home is /reports/financial/general-ledger. Linking to the
+    // retired /accounting path still WORKS (app/router.tsx redirects it) but it
+    // costs a navigation and drops out of /reports for a frame.
+    navigate(`/reports/financial/general-ledger?${params.toString()}`);
   };
 
   const exportCsv = () => {
@@ -288,6 +292,7 @@ export function TrialBalancePage() {
         isEmpty={rows.length === 0}
         onRetry={() => query.refetch()}
       >
+        {totals && <BalanceStatus totals={totals} isClean={isClean} />}
         <PrintDocument
           title={t("accounting.trialBalance.title")}
           subtitle={period}
@@ -295,14 +300,12 @@ export function TrialBalancePage() {
           className="print-landscape print-long-report print-single-total"
         >
           <div className="surface p-4">
-            {viewRestricted && (
-              <p className="mb-3 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs font-bold leading-5 text-blue-900">
-                {t("accounting.trialBalance.filteredTotalsNotice", {
-                  shown: flat.length,
-                  total: rows.length,
-                })}
-              </p>
-            )}
+            {/* The filtered-view notice that used to sit here was deleted, not
+                moved: it explained that the footer totals stay full-scope while
+                the rows are filtered — which the footer already says itself, by
+                switching its own label to `fullScopeTotal`. A paragraph
+                restating the label it sits under is the clutter the owner
+                banned, and it printed onto every filtered sheet. */}
             {flat.length === 0 && rows.length > 0 && (
               <p className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-center text-sm font-bold text-slate-600">
                 {t("accounting.trialBalance.noFilterMatch")}
@@ -489,7 +492,6 @@ export function TrialBalancePage() {
                 </article>
               ))}
             </div>
-            {totals && <BalanceStatus totals={totals} isClean={isClean} diagnostics={diagnostics} />}
           </div>
         </PrintDocument>
       </ReportState>
@@ -501,15 +503,25 @@ export function TrialBalancePage() {
 // Period/Closing can each be off separately; a closing-only check can miss
 // an opening-side imbalance that happens to cancel out). All values come
 // straight from the server response — none of this is recomputed here.
-function BalanceStatus({
-  totals,
-  isClean,
-  diagnostics,
-}: {
-  totals: TrialBalanceTotalsForStatus;
-  isClean?: boolean;
-  diagnostics?: TrialBalanceDiagnostics;
-}) {
+//
+// IT SITS OUTSIDE THE PRINTED DOCUMENT NOW, AND IT IS ONLY CHIPS.
+//   These chips used to render INSIDE <PrintDocument>, and beneath them sat
+//   <DiagnosticsPanel>: a rose panel itemising eleven diagnostic buckets —
+//   every orphan account, every unbalanced journal, every level mismatch —
+//   with a closing note and a gross-movement footnote. All of it printed. A
+//   trial balance handed to an auditor came off the printer with a page of
+//   internal data-quality findings attached to it.
+//
+//   The panel is deleted, and the signal it carried is not lost: `isClean` is
+//   the same server flag those buckets are derived from, so the "not clean"
+//   chip still fires on exactly the runs the panel used to open on. The
+//   itemised findings belong to whoever repairs the ledger, not to the sheet
+//   that states its balances — and the server still returns `diagnostics` for
+//   a tool that wants to read them.
+//
+//   The chips are `no-print` because whether THIS RUN ties is a fact about the
+//   run, not a line of the statement.
+function BalanceStatus({ totals, isClean }: { totals: TrialBalanceTotalsForStatus; isClean?: boolean }) {
   const t = useT();
   // `key` is a stable, language-independent React key — the visible `scope`
   // text changes with the active language, so it must not double as the key.
@@ -520,30 +532,27 @@ function BalanceStatus({
   ];
 
   return (
-    <div className="mt-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {chips.map((c) => (
-          <span
-            key={c.key}
-            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold ${
-              c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
-            }`}
-          >
-            {t(
-              c.ok
-                ? "accounting.trialBalance.balanceStatus.balanced"
-                : "accounting.trialBalance.balanceStatus.unbalanced",
-              { scope: c.scope },
-            )}
-          </span>
-        ))}
-        {isClean === false && (
-          <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
-            {t("accounting.trialBalance.balanceStatus.notClean")}
-          </span>
-        )}
-      </div>
-      {isClean === false && diagnostics && <DiagnosticsPanel diagnostics={diagnostics} />}
+    <div className="no-print mb-4 flex flex-wrap items-center gap-2">
+      {chips.map((c) => (
+        <span
+          key={c.key}
+          className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold ${
+            c.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
+          }`}
+        >
+          {t(
+            c.ok
+              ? "accounting.trialBalance.balanceStatus.balanced"
+              : "accounting.trialBalance.balanceStatus.unbalanced",
+            { scope: c.scope },
+          )}
+        </span>
+      ))}
+      {isClean === false && (
+        <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+          {t("accounting.trialBalance.balanceStatus.notClean")}
+        </span>
+      )}
     </div>
   );
 }
@@ -552,181 +561,3 @@ type TrialBalanceTotalsForStatus = {
   isPeriodBalanced: boolean;
   isClosingBalanced: boolean;
 };
-
-// Tier A.2 corrective gate — this used to be a single sentence ("راجع سجل
-// التشخيص") pointing at nothing; there was no log, no page, nothing to
-// actually review. Every diagnostic bucket the server computes is now
-// itemized here, with its real rows/counts, so "غير Clean" is always
-// immediately actionable instead of a dead end.
-function DiagnosticsPanel({ diagnostics: d }: { diagnostics: TrialBalanceDiagnostics }) {
-  const t = useT();
-  const sections: Array<{ key: string; label: string; count: number; render: () => ReactNode }> = [
-    {
-      key: "nullOpen",
-      label: t("accounting.trialBalance.diagnostics.nullAccountOpening"),
-      count: d.nullAccountOpening.count,
-      render: () => (
-        <p>
-          {t("accounting.trialBalance.diagnostics.lineCount")} {d.nullAccountOpening.count} —{" "}
-          {t("accounting.trialBalance.diagnostics.debit")} <Num value={d.nullAccountOpening.debit} /> —{" "}
-          {t("accounting.trialBalance.diagnostics.credit")} <Num value={d.nullAccountOpening.credit} />
-        </p>
-      ),
-    },
-    {
-      key: "nullPeriod",
-      label: t("accounting.trialBalance.diagnostics.nullAccountPeriod"),
-      count: d.nullAccountPeriod.count,
-      render: () => (
-        <p>
-          {t("accounting.trialBalance.diagnostics.lineCount")} {d.nullAccountPeriod.count} —{" "}
-          {t("accounting.trialBalance.diagnostics.debit")} <Num value={d.nullAccountPeriod.debit} /> —{" "}
-          {t("accounting.trialBalance.diagnostics.credit")} <Num value={d.nullAccountPeriod.credit} />
-        </p>
-      ),
-    },
-    {
-      key: "danglingOpen",
-      label: t("accounting.trialBalance.diagnostics.danglingAccountOpening"),
-      count: d.danglingAccountOpening.count,
-      render: () => (
-        <p>
-          {t("accounting.trialBalance.diagnostics.lineCount")} {d.danglingAccountOpening.count} —{" "}
-          {t("accounting.trialBalance.diagnostics.debit")} <Num value={d.danglingAccountOpening.debit} /> —{" "}
-          {t("accounting.trialBalance.diagnostics.credit")} <Num value={d.danglingAccountOpening.credit} />
-        </p>
-      ),
-    },
-    {
-      key: "danglingPeriod",
-      label: t("accounting.trialBalance.diagnostics.danglingAccountPeriod"),
-      count: d.danglingAccountPeriod.count,
-      render: () => (
-        <p>
-          {t("accounting.trialBalance.diagnostics.lineCount")} {d.danglingAccountPeriod.count} —{" "}
-          {t("accounting.trialBalance.diagnostics.debit")} <Num value={d.danglingAccountPeriod.debit} /> —{" "}
-          {t("accounting.trialBalance.diagnostics.credit")} <Num value={d.danglingAccountPeriod.credit} />
-        </p>
-      ),
-    },
-    {
-      key: "futureOpen",
-      label: t("accounting.trialBalance.diagnostics.futureDatedOpening"),
-      count: d.futureDatedOpeningJournals.count,
-      render: () => (
-        <p>
-          {t("accounting.trialBalance.diagnostics.journalCount")} {d.futureDatedOpeningJournals.count} —{" "}
-          {t("accounting.trialBalance.diagnostics.debit")} <Num value={d.futureDatedOpeningJournals.debit} /> —{" "}
-          {t("accounting.trialBalance.diagnostics.credit")} <Num value={d.futureDatedOpeningJournals.credit} />
-        </p>
-      ),
-    },
-    {
-      key: "orphans",
-      label: t("accounting.trialBalance.diagnostics.orphanAccounts"),
-      count: d.orphanAccounts.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.orphanAccounts.map((a) => (
-            <li key={a.code}>{a.code} — {a.nameAr} (parent_id={a.parentId})</li>
-          ))}
-        </ul>
-      ),
-    },
-    {
-      key: "nonLeaf",
-      label: t("accounting.trialBalance.diagnostics.nonLeafPosting"),
-      count: d.nonLeafPostingActivity.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.nonLeafPostingActivity.map((a) => (
-            <li key={a.code}>
-              {a.code} — {a.nameAr} — {t("accounting.trialBalance.diagnostics.opening")}{" "}
-              <Num value={a.openDebit} />/<Num value={a.openCredit} /> —{" "}
-              {t("accounting.trialBalance.diagnostics.period")} <Num value={a.periodDebit} />/
-              <Num value={a.periodCredit} />
-            </li>
-          ))}
-        </ul>
-      ),
-    },
-    {
-      key: "cycles",
-      label: t("accounting.trialBalance.diagnostics.cycleAccounts"),
-      count: d.cycleAccounts.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.cycleAccounts.map((a) => (
-            <li key={a.code}>{a.code} — {a.nameAr}</li>
-          ))}
-        </ul>
-      ),
-    },
-    {
-      key: "levels",
-      label: t("accounting.trialBalance.diagnostics.levelMismatches"),
-      count: d.levelMismatches.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.levelMismatches.map((a) => (
-            <li key={a.code}>
-              {a.code} — {a.nameAr} ({t("accounting.trialBalance.diagnostics.storedLevel")}={a.storedLevel},{" "}
-              {t("accounting.trialBalance.diagnostics.computedLevel")}={a.computedLevel})
-            </li>
-          ))}
-        </ul>
-      ),
-    },
-    {
-      key: "unbalanced",
-      label: t("accounting.trialBalance.diagnostics.unbalancedJournals"),
-      count: d.unbalancedJournals.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.unbalancedJournals.map((j) => (
-            <li key={j.id}>
-              {j.journalNumber} ({formatDate(j.journalDate)}) — {t("accounting.trialBalance.diagnostics.debit")}{" "}
-              <Num value={j.totalDebit} /> — {t("accounting.trialBalance.diagnostics.credit")}{" "}
-              <Num value={j.totalCredit} />
-            </li>
-          ))}
-        </ul>
-      ),
-    },
-    {
-      key: "headerLine",
-      label: t("accounting.trialBalance.diagnostics.headerLineMismatches"),
-      count: d.headerLineMismatches.length,
-      render: () => (
-        <ul className="list-disc pe-4">
-          {d.headerLineMismatches.map((j) => (
-            <li key={j.id}>
-              {j.journalNumber} ({formatDate(j.journalDate)}) — {t("accounting.trialBalance.diagnostics.header")}{" "}
-              <Num value={j.headerDebit} />/<Num value={j.headerCredit} /> —{" "}
-              {t("accounting.trialBalance.diagnostics.lines")} <Num value={j.lineDebit} />/
-              <Num value={j.lineCredit} />
-            </li>
-          ))}
-        </ul>
-      ),
-    },
-  ];
-  const active = sections.filter((s) => s.count > 0);
-  if (active.length === 0) return null;
-  return (
-    <div className="mt-3 space-y-3 rounded-xl border border-rose-200 bg-rose-50/60 p-4 text-xs text-slate-700">
-      {active.map((s) => (
-        <div key={s.key}>
-          <p className="mb-1 font-extrabold text-rose-700">{s.label} ({s.count})</p>
-          {s.render()}
-        </div>
-      ))}
-      <p className="border-t border-rose-200 pt-2 text-slate-500">{d.note}</p>
-      <p className="text-slate-400">
-        {t("accounting.trialBalance.diagnostics.grossNote")} {t("accounting.common.debit")}{" "}
-        <Num value={d.grossHistoricalMovement.debit} /> — {t("accounting.common.credit")}{" "}
-        <Num value={d.grossHistoricalMovement.credit} />
-      </p>
-    </div>
-  );
-}

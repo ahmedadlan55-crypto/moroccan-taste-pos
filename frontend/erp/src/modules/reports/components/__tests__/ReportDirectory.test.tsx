@@ -1,43 +1,33 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { Boxes, ReceiptText } from "lucide-react";
-import { ReportDirectory } from "../ReportDirectory";
+import { ReportDirectory, type ReportDirectoryGroup } from "../ReportDirectory";
 
-const groups = [
+const groups: ReportDirectoryGroup[] = [
   {
     id: "stock",
     title: "الرقابة على المخزون",
-    description: "الأرصدة والحركات",
     icon: Boxes,
     items: [
-      { id: "balance", title: "رصيد المخزون", description: "الكميات الحالية", to: "/reports/inventory/stock-balance", icon: Boxes },
-      { id: "movement", title: "حركة المخزون", description: "الوارد والمنصرف", to: "/reports/inventory/movements", icon: ReceiptText },
+      { id: "balance", title: "رصيد المخزون", to: "/reports/inventory/stock-balance", icon: Boxes },
+      { id: "movement", title: "حركة المخزون", to: "/reports/inventory/movements", icon: ReceiptText },
     ],
   },
   {
     id: "finance",
     title: "الرقابة المحاسبية",
-    description: "المصالحة",
     icon: ReceiptText,
     items: [
-      { id: "trial", title: "ميزان المراجعة", description: "الأرصدة والحركة", to: "/accounting/trial-balance", icon: ReceiptText },
+      { id: "trial", title: "ميزان المراجعة", to: "/reports/financial/trial-balance", icon: ReceiptText },
     ],
   },
 ];
 
-function renderDirectory() {
+function renderDirectory(value: ReportDirectoryGroup[] = groups) {
   render(
     <MemoryRouter>
-      <ReportDirectory
-        groups={groups}
-        searchLabel="البحث في التقارير"
-        searchPlaceholder="ابحث…"
-        openLabel="فتح التقرير"
-        countLabel={(count) => `${count} تقرير`}
-        emptyLabel="لا توجد نتائج"
-        searchable
-      />
+      <ReportDirectory groups={value} openLabel="فتح التقرير" emptyLabel="لا توجد تقارير متاحة" />
     </MemoryRouter>,
   );
 }
@@ -52,20 +42,19 @@ describe("ReportDirectory", () => {
     expect(document.querySelector("a a")).toBeNull();
   });
 
-  it("filters by report title or purpose without leaving empty families", () => {
+  it("is a name and a link — no note, no badge, no search box", () => {
     renderDirectory();
-    fireEvent.change(screen.getByRole("searchbox", { name: "البحث في التقارير" }), { target: { value: "المراجعة" } });
-    expect(document.querySelectorAll("[data-report-group]")).toHaveLength(1);
-    expect(screen.getByText("ميزان المراجعة")).toBeInTheDocument();
-    expect(screen.queryByText("رصيد المخزون")).not.toBeInTheDocument();
-  });
-
-  it("shows an empty result and keeps controls touch-sized", () => {
-    renderDirectory();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "غير موجود" } });
-    expect(screen.getByText("لا توجد نتائج")).toBeInTheDocument();
-    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "رصيد" } });
+    // The owner banned explanatory copy in the catalogue: a row carries the
+    // report's name and the link that opens it, and nothing else.
+    expect(screen.queryByRole("searchbox")).toBeNull();
     const row = document.querySelector('[data-report-item="balance"]') as HTMLElement;
     expect(within(row).getByRole("link", { name: /فتح التقرير/ })).toHaveClass("min-h-11");
+    expect(row.textContent).toBe("رصيد المخزونفتح التقرير");
+  });
+
+  it("shows the empty state rather than an empty grid", () => {
+    renderDirectory([{ id: "stock", title: "الرقابة على المخزون", icon: Boxes, items: [] }]);
+    expect(screen.getByText("لا توجد تقارير متاحة")).toBeInTheDocument();
+    expect(screen.queryByTestId("report-directory-grid")).toBeNull();
   });
 });

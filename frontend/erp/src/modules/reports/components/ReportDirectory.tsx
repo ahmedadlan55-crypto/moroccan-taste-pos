@@ -1,5 +1,5 @@
-import { useMemo, useState, type ComponentType } from "react";
-import { Eye, Search } from "lucide-react";
+import { type ComponentType } from "react";
+import { Eye } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/shared/lib";
 
@@ -16,31 +16,24 @@ export interface ReportDirectoryAction {
 export interface ReportDirectoryItem {
   id: string;
   title: string;
-  description?: string;
   to: string;
   icon: ComponentType<{ className?: string }>;
   tone?: ReportDirectoryTone;
   eyebrow?: string;
-  badge?: string;
   actions?: ReportDirectoryAction[];
 }
 
 export interface ReportDirectoryGroup {
   id: string;
   title: string;
-  description?: string;
   icon: ComponentType<{ className?: string }>;
   items: ReportDirectoryItem[];
 }
 
 export interface ReportDirectoryProps {
   groups: ReportDirectoryGroup[];
-  searchLabel: string;
-  searchPlaceholder: string;
   openLabel: string;
-  countLabel: (count: number) => string;
   emptyLabel: string;
-  searchable?: boolean;
   className?: string;
 }
 
@@ -53,12 +46,13 @@ const TONES: Record<ReportDirectoryTone, { icon: string; hover: string }> = {
   lime: { icon: "bg-lime-600 text-white shadow-sm", hover: "hover:border-lime-200 hover:bg-lime-50/40" },
 };
 
-function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase().normalize("NFKD");
-}
-
 /**
  * A shared, route-first reports library.
+ *
+ * A row is an icon, a name and the link that opens it — nothing else. There is
+ * no note under the name, no badge beside it and no search box above the
+ * grid: a catalogue of a dozen named reports is read, not queried, and every
+ * word that is not a report's name is clutter between the reader and it.
  *
  * The directory intentionally contains only real destinations. It does not
  * manufacture a "summary" or "detail" action when the destination cannot
@@ -67,48 +61,14 @@ function normalize(value: string): string {
  */
 export function ReportDirectory({
   groups,
-  searchLabel,
-  searchPlaceholder,
   openLabel,
-  countLabel,
   emptyLabel,
-  searchable = false,
   className,
 }: ReportDirectoryProps) {
-  const [query, setQuery] = useState("");
-  const needle = normalize(query);
-  const visibleGroups = useMemo(
-    () => groups
-      .map((group) => ({
-        ...group,
-        items: needle
-          ? group.items.filter((item) => normalize(`${item.title} ${item.description ?? ""} ${item.eyebrow ?? ""}`).includes(needle))
-          : group.items,
-      }))
-      .filter((group) => group.items.length > 0),
-    [groups, needle],
-  );
-  const visibleTotal = visibleGroups.reduce((sum, group) => sum + group.items.length, 0);
+  const visibleGroups = groups.filter((group) => group.items.length > 0);
 
   return (
     <section className={cn("space-y-4", className)} data-testid="report-directory">
-      {searchable && <div className="surface flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
-        <label className="relative block min-w-0 flex-1 sm:max-w-xl">
-          <span className="sr-only">{searchLabel}</span>
-          <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={searchPlaceholder}
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white ps-10 pe-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-          />
-        </label>
-        <span className="shrink-0 self-start rounded-full bg-slate-100 px-3 py-1.5 text-xs font-extrabold text-slate-600 sm:self-auto">
-          {countLabel(visibleTotal)}
-        </span>
-      </div>}
-
       {visibleGroups.length === 0 ? (
         <div className="surface px-5 py-12 text-center text-sm font-bold text-slate-500">{emptyLabel}</div>
       ) : (

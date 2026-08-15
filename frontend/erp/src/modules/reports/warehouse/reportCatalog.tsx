@@ -15,7 +15,6 @@ import {
   ScanSearch,
   ShieldCheck,
   ShoppingCart,
-  Tags,
   Truck,
   UserRoundSearch,
   Warehouse,
@@ -86,18 +85,15 @@ export const INVENTORY_INTELLIGENCE_REPORTS: IntelligenceReportLink[] = [
 ];
 
 export const PURCHASING_INTELLIGENCE_REPORTS: IntelligenceReportLink[] = [
-  { id: "purchase-detail", labelKey: "warehouseIntelligence.reports.purchaseDetail.label", descriptionKey: "warehouseIntelligence.reports.purchaseDetail.description", to: "/reports/purchasing#purchase-ledger", icon: FileSearch, family: "procurement", maturity: "authoritative", basis: "postedReceipt" },
-  { id: "by-supplier", labelKey: "warehouseIntelligence.reports.bySupplier.label", descriptionKey: "warehouseIntelligence.reports.bySupplier.description", to: "/reports/purchasing#supplier-analysis", icon: UserRoundSearch, family: "procurement", maturity: "authoritative", basis: "postedReceipt" },
-  { id: "by-item", labelKey: "warehouseIntelligence.reports.byItem.label", descriptionKey: "warehouseIntelligence.reports.byItem.description", to: "/reports/purchasing#purchase-ledger", icon: Tags, family: "procurement", maturity: "authoritative", basis: "postedReceipt" },
-  { id: "open-orders", labelKey: "warehouseIntelligence.reports.openOrders.label", descriptionKey: "warehouseIntelligence.reports.openOrders.description", to: "/reports/purchasing?report=open-orders#specialized-report", icon: ShoppingCart, family: "procurement", maturity: "authoritative", basis: "p2pDocument" },
-  { id: "purchase-analysis", labelKey: "warehouseIntelligence.reports.purchaseAnalysis.label", descriptionKey: "warehouseIntelligence.reports.purchaseAnalysis.description", to: "/reports/purchasing?report=purchase-analysis#specialized-report", icon: UserRoundSearch, family: "procurement", maturity: "conditional", basis: "supplierLedger" },
-  { id: "receiving-variance", labelKey: "warehouseIntelligence.reports.receivingVariance.label", descriptionKey: "warehouseIntelligence.reports.receivingVariance.description", to: "/reports/purchasing?report=receiving-variance#specialized-report", icon: Truck, family: "reconciliation", maturity: "conditional", basis: "p2pDocument", standard: "internalControl" },
-  { id: "three-way-match", labelKey: "warehouseIntelligence.reports.threeWayMatch.label", descriptionKey: "warehouseIntelligence.reports.threeWayMatch.description", to: "/reports/purchasing?report=three-way-match#specialized-report", icon: FileCheck2, family: "reconciliation", maturity: "conditional", basis: "p2pDocument", standard: "internalControl" },
-  { id: "price-variance", labelKey: "warehouseIntelligence.reports.priceVariance.label", descriptionKey: "warehouseIntelligence.reports.priceVariance.description", to: "/reports/purchasing?report=price-variance#specialized-report", icon: BadgeDollarSign, family: "productionCost", maturity: "conditional", basis: "p2pDocument" },
-  { id: "tax", labelKey: "warehouseIntelligence.reports.inputTax.label", descriptionKey: "warehouseIntelligence.reports.inputTax.description", to: "/reports/purchasing?report=tax#specialized-report", icon: ReceiptText, family: "reconciliation", maturity: "conditional", basis: "supplierLedger", standard: "zatca" },
-  { id: "ap-aging", labelKey: "warehouseIntelligence.reports.apAging.label", descriptionKey: "warehouseIntelligence.reports.apAging.description", to: "/reports/purchasing?report=ap-aging#specialized-report", icon: CalendarClock, family: "procurement", maturity: "conditional", basis: "supplierLedger" },
-  { id: "supplier-statement", labelKey: "warehouseIntelligence.reports.supplierStatement.label", descriptionKey: "warehouseIntelligence.reports.supplierStatement.description", to: "/reports/purchasing?report=supplier-statement#specialized-report", icon: FileSearch, family: "procurement", maturity: "conditional", basis: "supplierLedger", requiresSupplier: true },
-  { id: "purchase-data-quality", labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label", descriptionKey: "warehouseIntelligence.reports.purchaseDataQuality.description", to: "/reports/purchasing?report=data-quality#specialized-report", icon: ScanSearch, family: "reconciliation", maturity: "operational", basis: "p2pDocument", standard: "internalControl" },
+  { id: "open-orders", labelKey: "warehouseIntelligence.reports.openOrders.label", descriptionKey: "warehouseIntelligence.reports.openOrders.description", to: "/reports/purchasing/open-orders", icon: ShoppingCart, family: "procurement", maturity: "authoritative", basis: "p2pDocument" },
+  { id: "purchase-analysis", labelKey: "warehouseIntelligence.reports.purchaseAnalysis.label", descriptionKey: "warehouseIntelligence.reports.purchaseAnalysis.description", to: "/reports/purchasing/purchase-analysis", icon: UserRoundSearch, family: "procurement", maturity: "conditional", basis: "supplierLedger" },
+  { id: "receiving-variance", labelKey: "warehouseIntelligence.reports.receivingVariance.label", descriptionKey: "warehouseIntelligence.reports.receivingVariance.description", to: "/reports/purchasing/receiving-variance", icon: Truck, family: "reconciliation", maturity: "conditional", basis: "p2pDocument", standard: "internalControl" },
+  { id: "three-way-match", labelKey: "warehouseIntelligence.reports.threeWayMatch.label", descriptionKey: "warehouseIntelligence.reports.threeWayMatch.description", to: "/reports/purchasing/three-way-match", icon: FileCheck2, family: "reconciliation", maturity: "conditional", basis: "p2pDocument", standard: "internalControl" },
+  { id: "price-variance", labelKey: "warehouseIntelligence.reports.priceVariance.label", descriptionKey: "warehouseIntelligence.reports.priceVariance.description", to: "/reports/purchasing/price-variance", icon: BadgeDollarSign, family: "productionCost", maturity: "conditional", basis: "p2pDocument" },
+  { id: "ap-aging", labelKey: "warehouseIntelligence.reports.apAging.label", descriptionKey: "warehouseIntelligence.reports.apAging.description", to: "/reports/purchasing/ap-aging", icon: CalendarClock, family: "procurement", maturity: "conditional", basis: "supplierLedger" },
+  { id: "supplier-statement", labelKey: "warehouseIntelligence.reports.supplierStatement.label", descriptionKey: "warehouseIntelligence.reports.supplierStatement.description", to: "/reports/purchasing/supplier-statement", icon: FileSearch, family: "procurement", maturity: "conditional", basis: "supplierLedger", requiresSupplier: true },
+  { id: "tax", labelKey: "warehouseIntelligence.reports.inputTax.label", descriptionKey: "warehouseIntelligence.reports.inputTax.description", to: "/reports/purchasing/tax", icon: ReceiptText, family: "reconciliation", maturity: "conditional", basis: "supplierLedger", standard: "zatca" },
+  { id: "purchase-data-quality", labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label", descriptionKey: "warehouseIntelligence.reports.purchaseDataQuality.description", to: "/reports/purchasing/data-quality", icon: ScanSearch, family: "reconciliation", maturity: "operational", basis: "p2pDocument", standard: "internalControl" },
 ];
 
 export interface ReadinessRequirement {

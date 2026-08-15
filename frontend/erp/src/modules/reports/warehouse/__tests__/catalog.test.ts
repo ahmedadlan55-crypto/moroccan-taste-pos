@@ -12,7 +12,11 @@ describe("warehouse report governance catalog", () => {
   it("classifies every published report with a family, basis and maturity", () => {
     const familyIds = new Set(REPORT_FAMILIES.map((family) => family.id));
     const reports = [...INVENTORY_INTELLIGENCE_REPORTS, ...PURCHASING_INTELLIGENCE_REPORTS];
-    expect(reports.length).toBeGreaterThanOrEqual(24);
+    // 13 inventory + 9 purchasing. The purchasing list dropped three rows that
+    // were not reports: `by-item` duplicated `purchase-detail`'s destination,
+    // `by-supplier` pointed at a #supplier-analysis anchor that never existed,
+    // and `purchase-detail` was an anchor into the workspace's purchase ledger.
+    expect(reports.length).toBeGreaterThanOrEqual(22);
     expect(new Set(reports.map((report) => report.id)).size).toBe(reports.length);
     for (const report of reports) {
       expect(familyIds.has(report.family)).toBe(true);

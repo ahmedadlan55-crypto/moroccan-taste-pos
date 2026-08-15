@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download } from "lucide-react";
-import { Button, DatePicker, Select } from "@/shared/ui";
-import { formatDate } from "@/shared/lib";
+import { Button, DatePicker, PrintDocument, Select } from "@/shared/ui";
+import { formatForPeriod } from "@/shared/lib";
 import { useT } from "@/i18n";
 import {
   useProfitability,
@@ -18,8 +18,6 @@ import {
   ReportHeader,
   FilterCard,
   FilterField,
-  PrintArea,
-  PrintBanner,
   ReportState,
   useAppliedFilter,
   printReport,
@@ -99,7 +97,10 @@ export function ProfitabilityPage() {
   );
 
   const dimLabel = profitabilityDimLabel(t, filter.applied.dimension);
-  const period = `${formatDate(filter.applied.from)} — ${formatDate(filter.applied.to)} · ${t("accounting.profitability.periodBy", { dimension: dimLabel })}`;
+  // WHEN and BY WHAT are two different facts about the run — PrintDocument
+  // gives them two slots (`subtitle`, `meta`) instead of one joined string.
+  const period = formatForPeriod(filter.applied.from, filter.applied.to);
+  const groupedBy = t("accounting.profitability.periodBy", { dimension: dimLabel });
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
@@ -165,9 +166,8 @@ export function ProfitabilityPage() {
         emptyBody={t("accounting.profitability.empty")}
       >
         {data && (
-          <PrintArea>
+          <PrintDocument title={t("accounting.profitability.title")} subtitle={period} meta={groupedBy}>
             <div className="surface overflow-x-auto p-4">
-              <PrintBanner title={t("accounting.profitability.title")} period={period} />
               <table className="w-full min-w-[42rem] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
@@ -215,7 +215,7 @@ export function ProfitabilityPage() {
                 </tfoot>
               </table>
             </div>
-          </PrintArea>
+          </PrintDocument>
         )}
       </ReportState>
     </div>

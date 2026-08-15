@@ -58,3 +58,6 @@ export * from "./explain-number";
 
 // ── the one printed-report house style (every module) ──
 export * from "./print-document";
+// The house money cell — promoted out of the accounting module, which still
+// re-exports it so no existing call site moved.
+export * from "./num";

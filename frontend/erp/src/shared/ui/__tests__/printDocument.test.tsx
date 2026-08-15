@@ -12,14 +12,25 @@
 // SOURCE of every screen that calls window.print() and fails if any of them
 // prints without a document wrapper. A rendering test cannot see a screen
 // nobody wrote a test for.
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import fs from "node:fs";
 import path from "node:path";
+import type { ReactNode } from "react";
+
+vi.mock("@/shared/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/shared/api")>();
+  return { ...actual, apiClient: { ...actual.apiClient, get: vi.fn() } };
+});
+
+import { apiClient } from "@/shared/api";
 import { I18nProvider } from "@/i18n";
+import { companyIdentityQueryKey, type SettingsMap } from "@/shared/hooks/useInvoiceIdentity";
 import { PrintDocument } from "../print-document";
 
 const SRC = path.resolve(__dirname, "../../..");
+const get = apiClient.get as Mock;
 
 function renderDoc(props: Partial<React.ComponentProps<typeof PrintDocument>> = {}) {
   return render(
@@ -31,7 +42,26 @@ function renderDoc(props: Partial<React.ComponentProps<typeof PrintDocument>> = 
   );
 }
 
-afterEach(cleanup);
+/** Renders inside a QueryClient, so the identity read is actually live. */
+function renderWithClient(ui: ReactNode, seed?: SettingsMap) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (seed) {
+    // Seeded as the FLAT settings map the public GET /settings really returns,
+    // under the letterhead key. If the hook changes source or key, this stops
+    // finding the data — which is the point.
+    qc.setQueryData(companyIdentityQueryKey(), seed);
+  }
+  return render(
+    <QueryClientProvider client={qc}>
+      <I18nProvider>{ui}</I18nProvider>
+    </QueryClientProvider>,
+  );
+}
+
+afterEach(() => {
+  cleanup();
+  get.mockReset();
+});
 
 describe("the printed document's head", () => {
   it("names the report", () => {
@@ -63,6 +93,109 @@ describe("the printed document's head", () => {
     // stylesheet keys off — rather than a computed style that would be a lie.
     expect(head.className).toContain("print-only");
     expect(head.closest(".print-document"), "the head sits outside the print area").not.toBeNull();
+  });
+});
+
+/* ── who issued the sheet ───────────────────────────────────────────────────
+ * A printed statement that does not name the entity it belongs to is not an
+ * accounting document — it is a screenshot of some numbers. The letterhead is
+ * stamped ONCE here so every report gains it together, which also means every
+ * one of them inherits this component's failure behaviour: it must degrade to
+ * "no letterhead", never to "no report".
+ */
+describe("the issuer on the sheet", () => {
+  // The FLAT settings map, because that is what the unguarded GET /settings
+  // actually returns. There is no separate trading name in it — the public
+  // settings table has CompanyName and nothing else that names the entity.
+  const IDENTITY: SettingsMap = {
+    CompanyName: "شركة المذاق المغربي للتجارة",
+    TaxNumber: "310122393500003",
+    CrNumber: "1010101010",
+  };
+
+  it("prints the entity's legal name and VAT number in the masthead", () => {
+    renderWithClient(
+      <PrintDocument title="ميزان المراجعة">
+        <p>body</p>
+      </PrintDocument>,
+      IDENTITY,
+    );
+    const head = screen.getByTestId("print-masthead").textContent ?? "";
+    expect(head).toContain("شركة المذاق المغربي للتجارة");
+    expect(head).toContain("310122393500003");
+    expect(head, "the number needs a label or it reads as an account code").toContain("الرقم الضريبي");
+  });
+
+  it("stamps the identity ONCE — not once per section of the head", () => {
+    renderWithClient(
+      <PrintDocument title="ميزان المراجعة" subtitle="2026-07-01 — 2026-07-31" meta="الأرصدة المرحّلة">
+        <p>body</p>
+      </PrintDocument>,
+      IDENTITY,
+    );
+    expect(screen.getAllByTestId("print-identity")).toHaveLength(1);
+  });
+
+  it("keeps the whole existing head contract while carrying the letterhead", () => {
+    renderWithClient(
+      <PrintDocument title="ميزان المراجعة" subtitle="2026-07-01 — 2026-07-31" printedAt="2026-07-29T09:00:00.000Z">
+        <p>body</p>
+      </PrintDocument>,
+      IDENTITY,
+    );
+    const head = screen.getByTestId("print-masthead").textContent ?? "";
+    expect(head).toContain("ميزان المراجعة");
+    expect(head).toContain("2026-07-01");
+    expect(head).toContain("طُبع في");
+  });
+
+  it("prints the name alone when no VAT number is configured", () => {
+    // The name is the issuer; a missing tax number must not suppress the
+    // letterhead. (There is no trading-name fallback to test: the public
+    // settings map exposes only CompanyName.)
+    renderWithClient(
+      <PrintDocument title="تقرير">
+        <p>body</p>
+      </PrintDocument>,
+      { CompanyName: "المذاق المغربي" },
+    );
+    const line = screen.getByTestId("print-identity").textContent ?? "";
+    expect(line).toContain("المذاق المغربي");
+    expect(line, "an empty VAT label is worse than none").not.toContain("الرقم الضريبي");
+  });
+
+  it("prints NO identity line at all when the identity is blank, rather than an empty rule", () => {
+    renderWithClient(
+      <PrintDocument title="تقرير">
+        <p>body</p>
+      </PrintDocument>,
+      { CompanyName: "", TaxNumber: "" },
+    );
+    expect(screen.queryByTestId("print-identity")).toBeNull();
+    expect(screen.getByTestId("print-masthead").textContent).toContain("تقرير");
+  });
+
+  it("still prints the report when the identity read FAILS — the letterhead is not a gate", async () => {
+    get.mockRejectedValue(new Error("403"));
+    renderWithClient(
+      <PrintDocument title="ميزان المراجعة" subtitle="2026-07-01 — 2026-07-31">
+        <p>body</p>
+      </PrintDocument>,
+    );
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    expect(screen.queryByTestId("print-identity")).toBeNull();
+    const head = screen.getByTestId("print-masthead").textContent ?? "";
+    expect(head).toContain("ميزان المراجعة");
+    expect(head).toContain("2026-07-01");
+  });
+
+  it("renders with NO QueryClient in the tree at all — a page test must not crash on it", () => {
+    // Every screen that wraps itself in PrintDocument has unit tests that render
+    // it without a provider. `useQueryClient()` throws there; reading the context
+    // directly does not. This is the assertion that keeps that choice honest.
+    expect(() => renderDoc()).not.toThrow();
+    expect(screen.queryByTestId("print-identity")).toBeNull();
+    expect(get, "no provider means no request, not a request without a cache").not.toHaveBeenCalled();
   });
 });
 

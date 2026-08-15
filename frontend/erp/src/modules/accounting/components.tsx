@@ -8,60 +8,12 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { useT } from "@/i18n";
 
-// English-digit, 2-decimal grouping — matches the legacy report formatting and
-// the app-wide numbering policy (English numerals inside RTL layout).
-const NUM = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-export function fmt(value: number | null | undefined): string {
-  const parsed = value == null ? 0 : Number(value);
-  return Number.isFinite(parsed) ? NUM.format(parsed) : "—";
-}
-
-/** A signed amount cell: LTR + tabular, negatives parenthesised, zero → dash. */
-export function Num({
-  value,
-  dash = true,
-  strong = false,
-  signed = false,
-}: {
-  value: number | null | undefined;
-  dash?: boolean;
-  strong?: boolean;
-  signed?: boolean;
-}) {
-  const parsed = value == null ? 0 : Number(value);
-  if (!Number.isFinite(parsed)) {
-    return (
-      <span
-        className="font-bold tabular-nums text-rose-700"
-        data-invalid-financial-value="true"
-        title="Invalid financial value"
-      >
-        !
-      </span>
-    );
-  }
-  const n = parsed;
-  if (dash && Math.abs(n) < 0.005) {
-    return <span className="tabular-nums text-slate-300">—</span>;
-  }
-  const negative = n < 0;
-  const body = signed && negative ? `(${fmt(Math.abs(n))})` : fmt(n);
-  return (
-    <span
-      dir="ltr"
-      className={[
-        "tabular-nums",
-        strong ? "font-extrabold text-slate-900" : "font-semibold text-slate-700",
-        signed && negative ? "text-rose-600" : "",
-      ].join(" ")}
-    >
-      {body}
-    </span>
-  );
-}
+// `Num` / `fmt` now live in the shared kit (`shared/ui/num.tsx`) — they are the
+// house money cell for the WHOLE product, not an accounting-module detail, and
+// the statement renderer in `shared/reports` needs them too. They are re-exported
+// under their original names so every existing `import { Num, fmt } from
+// "../components"` keeps working unchanged; nothing about their behaviour moved.
+export { Num, fmt, type NumProps } from "@/shared/ui";
 
 // ── Applied-vs-draft filter state (run-on-click, like the legacy loaders) ────
 export function useAppliedFilter<T>(initial: T): {

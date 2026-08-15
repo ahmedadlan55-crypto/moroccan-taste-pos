@@ -3,6 +3,8 @@
  *  namespaces; this shared set is meant to stay stable. */
 export const common = {
   printedAt: "طُبع في: {time}",
+  /** Printed-document letterhead: the issuer's VAT registration number. */
+  vatNumber: "الرقم الضريبي",
   save: "حفظ",
   cancel: "إلغاء",
   confirm: "تأكيد",

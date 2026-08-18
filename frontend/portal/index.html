@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- The portal is Arabic-first: it is used by floor staff, and the retired PWA
+     it replaces was Arabic-only. lang-init.js re-applies the persisted
+     "portal_lang" pre-paint so a returning English user never sees a flash of
+     the wrong direction; I18nProvider owns it after mount. -->
+<html lang="ar" dir="rtl">
+  <head>
+    <script src="%BASE_URL%lang-init.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0E7490" />
+    <meta name="description" content="بوابة الموظف — المذاق المغربي" />
+    <title>المذاق المغربي | بوابة الموظف</title>
+    <!-- Cairo is self-hosted (src/fonts.css) — the SPA's strict CSP blocks
+         fonts.googleapis.com. -->
+    <!-- PWA: base-relative so the same build works in dev at / and in
+         production at /employee/. SW registration lives in src/lib/pwa.ts —
+         the CSP is script-src 'self', so an inline registration would be
+         blocked in production. -->
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="%BASE_URL%icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="بوابة الموظف" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

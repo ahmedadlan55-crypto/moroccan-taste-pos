@@ -227,7 +227,16 @@ router.post('/login', async (req, res) => {
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       warehouseId: user.default_warehouse_id || '',
       employeeId: user.employee_id || '',
-      mustChangePassword: !!user.must_change_password
+      mustChangePassword: !!user.must_change_password,
+      // The caller's OWN portal capabilities. Not new authority and not another
+      // user's data — the same two flags the gate above just applied, echoed
+      // back so a client can render honestly instead of guessing. The employee
+      // portal uses custodyPortal to decide whether to SHOW the custody tab at
+      // all; without it the tab would render and then 403 on first open.
+      // `SELECT *` above may predate the columns (see the boot migration in
+      // server.js), so both coerce through !! rather than assuming presence.
+      employeePortal: !!user.employee_portal,
+      custodyPortal: !!user.custody_portal
     });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });

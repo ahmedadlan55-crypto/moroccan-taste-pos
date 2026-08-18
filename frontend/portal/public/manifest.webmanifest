@@ -1,0 +1,27 @@
+{
+  "name": "بوابة الموظف — المذاق المغربي",
+  "short_name": "بوابة الموظف",
+  "description": "البصمة والساعات والإجازات والراتب والعهدة",
+  "dir": "rtl",
+  "lang": "ar",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "./",
+  "scope": "./",
+  "theme_color": "#0E7490",
+  "background_color": "#F2F5F9",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

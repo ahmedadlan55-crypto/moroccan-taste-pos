@@ -305,27 +305,17 @@ function sendIconFile(folder) {
   };
 }
 
-// ── Final cutover (FC-W3): the legacy /employee PWA is RETIRED — its writes
-// live in the unified app (/app/people/self-service). Installed clients still
-// hold its service worker, so /employee/sw.js now serves a TOMBSTONE: it
-// sweeps the employee caches (mt-emp-*), unregisters itself, and reloads its
-// windows — which then hit the /employee → /app redirect below. Cache filters
-// are PREFIX-scoped because the Cache API is origin-global: an unqualified
-// sweep here would nuke the POS offline caches too.
-app.get('/employee/sw.js', function (req, res) {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Service-Worker-Allowed', '/employee/');
-  res.send(
-    "self.addEventListener('install',function(){self.skipWaiting();});\n" +
-    "self.addEventListener('activate',function(e){e.waitUntil((async function(){\n" +
-    "  var keys=await caches.keys();\n" +
-    "  await Promise.all(keys.filter(function(k){return k.indexOf('mt-emp-')===0;}).map(function(k){return caches.delete(k);}));\n" +
-    "  await self.registration.unregister();\n" +
-    "  var cs=await self.clients.matchAll({type:'window'});\n" +
-    "  cs.forEach(function(c){ c.navigate(c.url); });\n" +
-    "})());});\n");
-});
+// ── /employee/sw.js — no handler here, ON PURPOSE ──────────────────────────
+// Between the FC-W3 cutover and the portal's return this path served a
+// TOMBSTONE service worker that swept the mt-emp-* caches and unregistered
+// itself, because /employee had become a bare redirect with no app behind it.
+//
+// The portal is an app again (see the SPA mount below), and it ships a REAL
+// service worker at this exact URL. An express handler here would shadow the
+// static file and permanently unregister the SW of a live app — so there is
+// deliberately nothing here. The tombstone's one lasting job, sweeping the
+// retired PWA's mt-emp-* caches off devices that still carry them, moved into
+// the new SW's activate handler (frontend/portal/public/sw.js).
 
 // NOTE: the legacy /pos PWA asset handlers are GONE — /pos now serves the React
 // cashier (see the SPA mount below). Its sw.js lives at the SAME URL the legacy
@@ -400,6 +390,68 @@ if (_pwaFs.existsSync(path.join(_posDist, 'index.html'))) {
   console.log('[pos] React cashier SPA mounted at /pos');
 } else {
   console.warn('[pos] bundle not found — run: npm --prefix frontend/pos run build');
+}
+
+// ── بوابة الموظف — the employee self-service PWA, served at /employee ────────
+// RESTORED. The original PWA that owned this path was deleted in the FC-W3
+// cutover (e97ebfbf) on the reasoning that its write flows had moved into the
+// back-office. They had — but the INSTALL had not: a cook lost an icon on their
+// phone and gained a desktop admin console, and two of its screens (ساعاتي,
+// ملفي/الرواتب) were never rebuilt anywhere, leaving /api/hr/my-hours-summary,
+// /my-payslips and /my-salary-projection live and unreachable for a year.
+//
+// Same path on purpose: an installed icon whose start_url is /employee/ opens
+// straight into it, and the new service worker replaces the old registration at
+// the identical URL /employee/sw.js (see the note where the tombstone used to
+// be, above express.static).
+app.use('/employee', function (req, res, next) {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
+    // 'self' only — the clock screen therefore does NOT reverse-geocode through
+    // Nominatim the way the original app did. Coordinates are what the geofence
+    // checks; the address was decoration, and a blocked request in the clock
+    // path is worse than no address.
+    "connect-src 'self'",
+    "form-action 'self'"
+  ].join('; '));
+  next();
+});
+var _portalDist = path.join(__dirname, 'frontend', 'portal', 'dist');
+if (_pwaFs.existsSync(path.join(_portalDist, 'index.html'))) {
+  app.use('/employee', express.static(_portalDist, {
+    setHeaders: function(res, filePath) {
+      // sw.js + manifests must NEVER cache: the SW update check and the
+      // precache manifest are the app's only update channels.
+      if (/(sw\.js|asset-manifest\.json|manifest(\.en)?\.webmanifest)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/\.html$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
+  app.get(/^\/employee(?:\/.*)?$/, function(req, res, next) {
+    if (/\.[a-zA-Z0-9]+$/.test(req.path)) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.sendFile(path.join(_portalDist, 'index.html'));
+  });
+  console.log('[employee] React employee portal mounted at /employee');
+} else {
+  // Fall back to the back-office self-service screen rather than a 404: an
+  // employee tapping an installed icon after a bad deploy lands somewhere that
+  // works, not on the catch-all.
+  console.warn('[employee] bundle not found — run: npm --prefix frontend/portal run build');
+  app.get(['/employee', '/employee/*'], function (req, res) {
+    res.redirect(302, '/app/people/self-service');
+  });
 }
 
 // Standalone Order-to-Cash (sales) SPA retired (Closure Sprint v2) — its features
@@ -868,14 +920,19 @@ app.all('/api/*', notFoundHandler);
 // Centralized error handler (MUST be last middleware)
 app.use(errorHandler);
 
-// ── Final cutover (FC-W3): every legacy shell is DELETED ─────────────────────
-// /employee + /custody → their write flows live in the unified app (stream F:
-// SelfServicePage attendance/leave/approvals, CustodyPage full cycle). The
-// /employee tombstone SW (registered earlier, before express.static) unhooks
-// installed PWAs; these redirects then land everyone on the React screens.
-// /custody never had a service worker — a plain redirect suffices.
-app.get(['/employee', '/employee/*'], function (req, res) { res.redirect(302, '/app/people/self-service'); });
-app.get(['/custody', '/custody/*'],   function (req, res) { res.redirect(302, '/app/people/custody'); });
+// ── /employee is an APP again — mounted far above, next to /pos ──────────────
+// It is deliberately NOT redirected here: the SPA mount registers earlier and
+// owns the path. A redirect at this position would be dead code today and a
+// trap the day someone reorders the file.
+//
+// /custody folds into it. The standalone custody portal was one screen for a
+// handful of holders, all of whom are employees carrying the employee portal —
+// so it is a TAB there (frontend/portal/src/pages/CustodyPage.tsx), and its old
+// URL lands on the app that now contains it. It never had a service worker, so
+// a plain redirect is enough. (An admin managing OTHER people's custody still
+// uses the back-office at /app/people/custody — a different job, different
+// screen.)
+app.get(['/custody', '/custody/*'], function (req, res) { res.redirect(302, '/employee/'); });
 // /legacy (the FC-P4 rollback shell) is gone with the shell it served.
 app.get(['/legacy', '/legacy/*'], function (req, res) { res.redirect(302, '/app/'); });
 

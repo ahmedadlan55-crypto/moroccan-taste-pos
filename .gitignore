@@ -31,3 +31,5 @@ e2e/o2c/.token
 
 # Sales Analytics — background export artifacts (runtime output, never committed)
 uploads/exports/
+frontend/portal/dist/
+frontend/portal/node_modules/

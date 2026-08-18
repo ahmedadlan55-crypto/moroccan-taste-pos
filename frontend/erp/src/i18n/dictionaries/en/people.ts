@@ -703,7 +703,8 @@ export const people = {
   },
 
   selfService: {
-    title: "Self-service",
+    title: "Employee Portal",
+    openApp: "Open the phone app",
     subtitle: "Your employee profile, clock in/out, and your leave requests.",
     stat: {
       status: "Status",

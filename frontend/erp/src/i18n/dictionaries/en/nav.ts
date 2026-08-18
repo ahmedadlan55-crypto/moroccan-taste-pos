@@ -96,7 +96,7 @@ export const nav = {
     "pe-org-tree": "Org Structure",
     "pe-custody": "Custody & Documents",
     "pe-custody-officers": "Custody Officers",
-    "pe-self-service": "Self Service",
+    "pe-self-service": "Employee Portal",
     // workflow
     "wf-new": "New Transaction",
     "wf-inbox": "Inbox",

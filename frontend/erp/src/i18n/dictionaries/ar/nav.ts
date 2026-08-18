@@ -103,7 +103,7 @@ export const nav = {
     "pe-org-tree": "الهيكل الإداري",
     "pe-custody": "العهد والمستندات",
     "pe-custody-officers": "مسؤولو العهدة",
-    "pe-self-service": "الخدمة الذاتية",
+    "pe-self-service": "بوابة الموظف",
     // workflow
     "wf-new": "إنشاء معاملة",
     "wf-inbox": "صندوق الوارد",

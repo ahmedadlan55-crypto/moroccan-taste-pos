@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Smartphone } from "lucide-react";
 import { Button, Card, DetailStat, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate, formatNumber } from "@/shared/lib";
@@ -67,6 +67,22 @@ export function SelfServicePage() {
         eyebrow={t("people.eyebrow")}
         title={t("people.selfService.title")}
         subtitle={t("people.selfService.subtitle")}
+        // The installable app. This page is the DESK copy of the portal — a
+        // manager at a screen should not open a phone app to request leave, and
+        // an employee on the floor should not open an admin console to clock in.
+        // Both exist on purpose; this link is the only thing that said so.
+        //
+        // A plain <a>, not a router link: /employee is a separate bundle on the
+        // same origin, so a client-side navigation would 404 inside this SPA.
+        action={
+          <a
+            href="/employee/"
+            className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Smartphone className="h-4 w-4 text-teal-700" aria-hidden="true" />
+            {t("people.selfService.openApp")}
+          </a>
+        }
       />
 
       {/* حضور/انصراف — the legacy PWA clock, now a first-class card here. */}

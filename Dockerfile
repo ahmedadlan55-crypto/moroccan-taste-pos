@@ -9,10 +9,15 @@ RUN npm install --production
 #    here — each bundle is built fresh in the next steps).
 COPY . .
 
-# Final cutover (FC-W3) — every legacy shell is deleted from the repo. The image
-# builds exactly TWO React bundles: the unified Back-Office (/app) and the React
-# cashier, which now OWNS /pos (/pos-v2 is a 301 to it). Rollback is a release
+# The image builds THREE React bundles: the cashier (/pos), the unified
+# Back-Office (/app), and the employee portal (/employee). Rollback is a release
 # rollback, not a flag.
+#
+# EVERY bundle needs a line here. server.js mounts each SPA only if its
+# dist/index.html exists — so a missing build step is not a crash, it is a
+# SILENT downgrade: the route falls back and the app is simply absent in
+# production while every local check stays green. That is exactly what happened
+# to the portal on its first deploy.
 
 # 3) Build the cashier React SPA (served at /pos; base /pos/).
 RUN npm run build:pos \
@@ -24,6 +29,12 @@ RUN npm run build:pos \
 #    has no runtime effect until the flag is enabled.
 RUN npm run build:erp \
  && rm -rf frontend/erp/node_modules
+
+# 5) Build بوابة الموظف — the employee self-service PWA (served at /employee;
+#    base /employee/). Its service worker and manifest come from public/, so the
+#    installable app is whatever this step emits.
+RUN npm run build:portal \
+ && rm -rf frontend/portal/node_modules
 
 EXPOSE 3000
 

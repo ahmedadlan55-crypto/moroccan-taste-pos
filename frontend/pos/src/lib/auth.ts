@@ -44,6 +44,31 @@ export function isPosRole(role: string | null | undefined): boolean {
   return POS_ROLES.includes(String(role ?? "").toLowerCase() as (typeof POS_ROLES)[number]);
 }
 
+/**
+ * Roles whose home is بوابة الموظف (/employee) rather than the back office.
+ *
+ * `custody` belongs here because the standalone custody portal is now a TAB in
+ * the employee portal — its own app was retired and folded in.
+ */
+const PORTAL_ROLES = ["employee", "custody"] as const;
+
+/**
+ * Which app a role that the till refuses should be sent to instead.
+ *
+ * The role gate is correct to refuse — but refusing is only half an answer.
+ * Before this, a cook who typed their number into the cashier screen got
+ * "contact your administrator" and one link, to the back office: an app they
+ * cannot use either. Now the refusal names the door that fits.
+ *
+ * Returns null for a role the till ADMITS (nothing to redirect) so the caller
+ * cannot accidentally render this for someone who is already in the right app.
+ */
+export function homeAppForRole(role: string | null | undefined): "portal" | "office" | null {
+  const r = String(role ?? "").toLowerCase();
+  if (isPosRole(r)) return null;
+  return (PORTAL_ROLES as readonly string[]).includes(r) ? "portal" : "office";
+}
+
 function base64UrlDecode(part: string): string {
   const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
   const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);

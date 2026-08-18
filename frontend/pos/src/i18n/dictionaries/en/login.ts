@@ -24,6 +24,17 @@ export const login = {
     roleNotAllowed: "This account is not authorized to access the till. Contact your administrator.",
     networkError: "Could not reach the server. Please try again.",
   },
+  // Where a refused account should actually go. The role gate used to be a
+  // dead end: one message and a single link to the back office, which is the
+  // wrong door for a cook or a custody holder.
+  wrongApp: {
+    portalTitle: "Your app is the Employee Portal",
+    portalBody: "Clock in, hours, leave, payslips and custody are all there.",
+    portalCta: "Open the Employee Portal",
+    officeTitle: "Your app is the back office",
+    officeBody: "This account works in the main system, not the till.",
+    officeCta: "Open the main system",
+  },
   // Forced first-login password change, IN the cashier app. It used to hop to
   // /app/change-password — a cross-portal navigation that had to be removed
   // when the cashier was isolated from the back office.

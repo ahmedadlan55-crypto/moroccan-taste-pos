@@ -24,6 +24,16 @@ export const login = {
     roleNotAllowed: "هذا الحساب لا يملك صلاحية الدخول إلى الكاشير. تواصل مع الإدارة.",
     networkError: "تعذّر الاتصال بالخادم. حاول مجددًا.",
   },
+  // إلى أين يذهب الحساب المرفوض فعلًا. كان حارس الدور طريقًا مسدودًا: رسالة
+  // واحدة ورابط وحيد إلى المكتب الخلفي، وهو الباب الخطأ لطبّاخ أو حامل عهدة.
+  wrongApp: {
+    portalTitle: "تطبيقك هو بوابة الموظف",
+    portalBody: "البصمة والساعات والإجازات والراتب والعهدة كلها هناك.",
+    portalCta: "افتح بوابة الموظف",
+    officeTitle: "تطبيقك هو النظام الرئيسي",
+    officeBody: "هذا الحساب يعمل في النظام الرئيسي لا على الكاشير.",
+    officeCta: "افتح النظام الرئيسي",
+  },
   // Forced first-login password change, IN the cashier app. It used to hop to
   // /app/change-password — a cross-portal navigation that had to be removed
   // when the cashier was isolated from the back office.

@@ -11,8 +11,8 @@
  * — the server is still the real boundary, this is just better UX.
  */
 import { useState, type FormEvent } from "react";
-import { ChefHat, Languages, LogIn } from "lucide-react";
-import { decodeUser, isPosRole, setToken } from "@/lib/auth";
+import { ArrowLeft, ChefHat, Languages, LogIn } from "lucide-react";
+import { decodeUser, homeAppForRole, isPosRole, setToken } from "@/lib/auth";
 import { useLang, useSetLang, useT } from "@/i18n";
 import { Button, ErrorBanner } from "./ui";
 import { PosChangePassword } from "./PosChangePassword";
@@ -55,6 +55,44 @@ function LoginLanguageToggle() {
   );
 }
 
+/**
+ * The door a refused account should actually walk through.
+ *
+ * The till admits admin / manager / cashier and nothing else — that gate is
+ * right and stays. What was wrong is what happened next: the screen said
+ * "contact your administrator" and offered a single link to the back office.
+ * For a cook or a custody holder that is the wrong app too, so the refusal was
+ * a dead end that could only be resolved by asking someone.
+ *
+ * Now the role names the destination: an employee or custody role is sent to
+ * بوابة الموظف, every other non-till role to the main system.
+ *
+ * A plain <a>, not a router push: these are three separate applications on one
+ * origin, and /employee is a different bundle entirely.
+ */
+function WrongAppCard({ app }: { app: "portal" | "office" }) {
+  const t = useT();
+  const portal = app === "portal";
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-xs font-extrabold text-slate-700">
+        {t(portal ? "login.wrongApp.portalTitle" : "login.wrongApp.officeTitle")}
+      </p>
+      <p className="mt-1 text-[11px] font-bold text-slate-500">
+        {t(portal ? "login.wrongApp.portalBody" : "login.wrongApp.officeBody")}
+      </p>
+      <a
+        href={portal ? "/employee/" : "/app/"}
+        className="mt-2 inline-flex items-center gap-1.5 text-xs font-extrabold text-teal-700 hover:text-teal-800"
+      >
+        {/* rtl:rotate-180 — "forward" points the other way in an RTL layout. */}
+        <ArrowLeft className="h-3.5 w-3.5 rtl:rotate-180" aria-hidden />
+        {t(portal ? "login.wrongApp.portalCta" : "login.wrongApp.officeCta")}
+      </a>
+    </div>
+  );
+}
+
 export function PosLogin() {
   const t = useT();
   const [username, setUsername] = useState("");
@@ -65,12 +103,17 @@ export function PosLogin() {
   const [busy, setBusy] = useState(false);
   // A forced-change account is signed in but NOT yet allowed into the till.
   const [mustChangePassword, setMustChangePassword] = useState(false);
+  // Set when the role gate refuses: which app this account DOES belong to.
+  const [wrongApp, setWrongApp] = useState<"portal" | "office" | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!username || !password) return;
     setBusy(true);
     setError(null);
+    // Clear the previous suggestion — a retry with different credentials must
+    // not leave the last account's door on screen.
+    setWrongApp(null);
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -101,6 +144,9 @@ export function PosLogin() {
       const role = decoded?.role ?? data.role ?? "";
       if (!isPosRole(role)) {
         setError(t("login.errors.roleNotAllowed"));
+        // Refusing is correct; stranding the person is not. Record which app the
+        // role actually belongs to so the card can offer that door.
+        setWrongApp(homeAppForRole(role));
         return;
       }
 
@@ -188,6 +234,8 @@ export function PosLogin() {
         ) : null}
 
         {error ? <ErrorBanner message={error} /> : null}
+
+        {wrongApp ? <WrongAppCard app={wrongApp} /> : null}
 
         <Button type="submit" variant="saffron" size="lg" loading={busy} disabled={!username || !password}>
           <LogIn className="h-4 w-4" aria-hidden />

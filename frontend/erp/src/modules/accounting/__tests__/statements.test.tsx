@@ -44,6 +44,134 @@ function statementOrder(): string[] {
   );
 }
 
+/**
+ * The plain statement fixture, shared by both describes.
+ *
+ * Hoisted so the comparison tests can assert what the page does WITHOUT a
+ * comparison against the very same data it renders with one — otherwise
+ * "no second column" could pass simply because the fixture differed.
+ */
+const PNL_BASE = {
+  revenue: [{ id: "r1", code: "4101", name: "مبيعات", balance: 1000, level: 3 }],
+  totalRevenue: 1000,
+  cogs: [{ id: "c1", code: "5101", name: "تكلفة المبيعات", balance: 400, level: 3 }],
+  totalCOGS: 400,
+  grossProfit: 600,
+  opex: [{ id: "o1", code: "5201", name: "رواتب", balance: 150, level: 3 }],
+  totalOpex: 150,
+  gAndA: [], totalGAndA: 0,
+  operatingIncome: 450,
+  otherIncome: [], totalOtherInc: 0,
+  otherExpense: [], totalOtherExp: 0,
+  netIncome: 450,
+};
+
+// ── The comparative column ─────────────────────────────────────────────────
+// The page carried a standing note: "/reports/income accepts startDate/endDate
+// and nothing else… When the endpoint gains a comparative, this is a `groups`
+// array and a second column." It has, and this is what proves it.
+//
+// What matters is not that a second column appears. It is that NOTHING on the
+// page computes a prior figure — every one is the server's, produced by the
+// same aggregate as the current column. The only arithmetic here is Δ, and it
+// must refuse to subtract from an absent figure.
+describe("IncomeStatementPage — the comparison column", () => {
+  const WITH_COMPARE = {
+    revenue: [{ id: "r1", code: "4101", name: "مبيعات", balance: 1000, level: 3, prior: 400 }],
+    totalRevenue: 1000,
+    cogs: [], totalCOGS: 0,
+    grossProfit: 1000,
+    opex: [], totalOpex: 0,
+    gAndA: [], totalGAndA: 0,
+    operatingIncome: 1000,
+    otherIncome: [], totalOtherInc: 0,
+    otherExpense: [], totalOtherExp: 0,
+    netIncome: 1000,
+    comparison: {
+      from: "2025-01-01", to: "2025-12-31",
+      totalRevenue: 400, totalCOGS: 0, totalOpex: 0, totalGAndA: 0,
+      totalOtherInc: 0, totalOtherExp: 0,
+      grossProfit: 400, operatingIncome: 400, netIncome: 400,
+    },
+  };
+
+  it("renders no comparison column when the server sent none", async () => {
+    get.mockResolvedValue({ ...PNL_BASE });
+    wrap(<IncomeStatementPage />);
+    await screen.findByText("مبيعات");
+    // A single money column. A second one here would mean the page invented it.
+    expect(document.querySelectorAll("thead tr").length).toBe(1);
+  });
+
+  it("shows the server's prior figure and a Δ it computed from the two", async () => {
+    get.mockResolvedValue(WITH_COMPARE);
+    wrap(<IncomeStatementPage />);
+    await screen.findByText("مبيعات");
+
+    // Two-tier header: one row naming the periods, one naming the columns.
+    expect(document.querySelectorAll("thead tr").length).toBe(2);
+
+    const row = document.querySelector('[data-statement-row="revenue:r1"]');
+    const cells = [...(row?.querySelectorAll("td") ?? [])].map((c) => c.textContent ?? "");
+    const joined = cells.join(" | ");
+    // current 1,000 · prior 400 · Δ 600 — the Δ is the ONLY figure the page made.
+    expect(joined).toContain("1,000");
+    expect(joined).toContain("400");
+    expect(joined).toContain("600");
+  });
+
+  it("prints a zero SUBTOTAL as 0.00, not a dash — so Δ reads honestly", async () => {
+    // Caught by running the page, not by a test. A subtotal row read
+    //     4,581.25  |  —  |  4,581.25
+    // The prior was a real, server-computed ZERO, but zero-as-dash made it look
+    // ABSENT — so the Δ beside it appeared to be a difference taken against
+    // nothing at all.
+    //
+    // The spec's rule resolves it: a dash for zero on a DETAIL line, "0.00" on a
+    // SUBTOTAL, because a subtotal of zero is a measured fact and must say so.
+    get.mockResolvedValue({
+      ...WITH_COMPARE,
+      comparison: { ...WITH_COMPARE.comparison, totalRevenue: 0 },
+      revenue: [{ id: "r1", code: "4101", name: "مبيعات", balance: 1000, level: 3, prior: 0 }],
+    });
+    wrap(<IncomeStatementPage />);
+    await screen.findByText("مبيعات");
+
+    const totalRow = document.querySelector('[data-statement-row="revenue:total"]');
+    const totalCells = [...(totalRow?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+    expect(totalCells).toContain("0.00");
+    expect(totalCells).not.toContain("—");
+
+    // …while a DETAIL line still uses the dash for zero.
+    const detail = document.querySelector('[data-statement-row="revenue:r1"]');
+    const detailCells = [...(detail?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+    expect(detailCells).toContain("—");
+  });
+
+  it("prints nothing for Δ when one side is absent", async () => {
+    // A line the prior period has no figure for. Subtracting from an assumed 0
+    // would render a fabricated -1,000 "decline" from an account that simply
+    // did not exist then.
+    get.mockResolvedValue({
+      ...WITH_COMPARE,
+      revenue: [{ id: "r1", code: "4101", name: "مبيعات", balance: 1000, level: 3, prior: null }],
+    });
+    wrap(<IncomeStatementPage />);
+    await screen.findByText("مبيعات");
+
+    const row = document.querySelector('[data-statement-row="revenue:r1"]');
+    const cells = [...(row?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+
+    // Asserted on the CELL, not the row text. A first version checked that the
+    // row did not contain "-1,000" — but a Δ that subtracts from an assumed
+    // zero renders "1,000", which the row already contained, so the mutant was
+    // invisible. The Δ cell must be EMPTY.
+    expect(cells[cells.length - 1]).toBe("");
+    // …while the amount and prior cells still say what they should.
+    expect(cells.join(" | ")).toContain("1,000");
+  });
+});
+
 describe("IncomeStatementPage renders a statement", () => {
   const PNL = {
     revenue: [{ id: "r1", code: "4101", name: "مبيعات", balance: 1000, level: 3 }],

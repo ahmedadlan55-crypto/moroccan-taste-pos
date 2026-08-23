@@ -544,6 +544,16 @@ export const accounting = {
     // in the order the statement is read.
     lineHeader: "البيان",
     amountHeader: "المبلغ",
+    // عمود المقارنة — الفرق يُحسب في الواجهة من رقمَي الخادم، ولا يُحسب
+    // حين يغيب أحد الطرفين: فرقٌ عن صفر مفترض ليس فرقًا.
+    deltaHeader: "الفرق",
+    compareLabel: "المقارنة",
+    compare: {
+      none: "بلا مقارنة",
+      prevPeriod: "الفترة السابقة",
+      prevYear: "السنة السابقة",
+      custom: "فترة مخصّصة",
+    },
     totalOf: "إجمالي {section}",
     grossProfit: "مجمل الربح",
     operatingIncome: "الربح التشغيلي",

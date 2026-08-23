@@ -195,6 +195,33 @@ export interface IncomeLine {
   name: string;
   balance: number;
   level: number;
+  /**
+   * The same account's figure in the comparison period.
+   *
+   * `null` means one of two things and the difference matters: no comparison was
+   * requested, or this account has no figure in that period. Neither is zero,
+   * and rendering either as 0 would invent a fact.
+   */
+  prior?: number | null;
+}
+
+/**
+ * The comparison period's ladder. Present only when BOTH compareStart and
+ * compareEnd were supplied — a half-specified range is refused server-side
+ * rather than quietly widened to "everything since the books opened".
+ */
+export interface IncomeComparison {
+  from: string;
+  to: string;
+  totalRevenue: number;
+  totalCOGS: number;
+  totalOpex: number;
+  totalGAndA: number;
+  totalOtherInc: number;
+  totalOtherExp: number;
+  grossProfit: number;
+  operatingIncome: number;
+  netIncome: number;
 }
 export interface IncomeStatementResponse {
   error?: string;
@@ -213,6 +240,8 @@ export interface IncomeStatementResponse {
   otherExpense: IncomeLine[];
   totalOtherExp: number;
   netIncome: number;
+  /** null when no comparison was requested — never an empty object. */
+  comparison?: IncomeComparison | null;
   period?: { startDate: string | null; endDate: string | null };
   /**
    * The route's catch block answers HTTP 200 with every figure zeroed and this
@@ -223,14 +252,27 @@ export interface IncomeStatementResponse {
    */
   degraded?: boolean;
 }
-export function useIncomeStatement(range: DateRange | null) {
+/**
+ * `compare` is opt-in and needs BOTH edges. It is part of the query key, so
+ * turning comparison on refetches rather than rendering the previous answer with
+ * an empty second column.
+ */
+export function useIncomeStatement(range: DateRange | null, compare?: DateRange | null) {
+  const comparing = !!(compare && compare.from && compare.to);
   return useQuery({
-    queryKey: ["acc", "income-statement", range?.from, range?.to],
+    queryKey: [
+      "acc", "income-statement", range?.from, range?.to,
+      comparing ? compare!.from : null, comparing ? compare!.to : null,
+    ],
     enabled: !!range,
     queryFn: async () => {
       const data = unwrap(
         await apiClient.get<IncomeStatementResponse>("/erp/reports/income", {
-          params: { startDate: range!.from, endDate: range!.to },
+          params: {
+            startDate: range!.from,
+            endDate: range!.to,
+            ...(comparing ? { compareStart: compare!.from, compareEnd: compare!.to } : {}),
+          },
         }),
       );
       if (data.degraded) throw new Error("تعذّر تحميل قائمة الدخل");

@@ -245,10 +245,41 @@ function _codeCompare(a, b) {
 // balanced, so nothing ever complained. status='archived' rows are now
 // selected, and the zero-movement filter in the JS pass below is what keeps
 // them out of a report they did not move in.
+// ─── LEAVES, PLUS ANY NON-LEAF THAT ACTUALLY HOLDS MONEY ────────────────────
+//
+// A balance sheet listing leaves only is right until something is posted
+// straight onto a parent. Then that money is on the ledger, counted by the
+// trial balance, and INVISIBLE here — the statement quietly stops balancing.
+//
+// It was not hypothetical. On the ledger this was found in:
+//
+//     1120 «البنوك»   folder, posted directly   2,360
+//     1110 «النقدية»  folder, posted directly     885
+//                                              ───────
+//                                                3,245
+//
+// and the statement reported assets 2,240 against liabilities-plus-equity
+// 5,485 — a 3,245 gap, exactly the hidden money. The ledger itself was
+// perfectly balanced (debits 12,965 = credits 12,965); only the report was
+// losing it.
+//
+// Posting to a parent is a data problem — lib/reports/trialBalance.js already
+// reports it as `nonLeafPostingActivity`. But a balance sheet must never
+// silently drop money because of one, and "assets do not equal liabilities plus
+// equity" is the single hardest defect for a reader to diagnose from the page.
+//
+// NO DOUBLE COUNT: the balance map is grouped by `gl_entries.account_id`, so a
+// parent's figure is its OWN direct postings and never a roll-up of its
+// children. Including the parent row adds the 2,360 that was posted to it; the
+// children's own rows are unaffected.
 const LEAF_ACCOUNT_WHERE =
   classify.REPORTABLE_ACCOUNT_SQL('a') + " " +
-  "AND COALESCE(a.is_folder, 0) = 0 " +
-  "AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL)";
+  "AND (" +
+  "  (COALESCE(a.is_folder, 0) = 0 " +
+  "   AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL))" +
+  "  OR EXISTS (SELECT 1 FROM gl_entries _e JOIN gl_journals _j ON _j.id = _e.journal_id" +
+  "              WHERE _e.account_id = a.id AND _j.status = 'posted')" +
+  ")";
 
 // Bucket keys whose group is created with makeGroup(label, /*isContra*/ true)
 // inside the route handler. pushToGroup() SUBTRACTS the magnitude for these

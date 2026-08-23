@@ -160,11 +160,22 @@ async function runScenario(mapPresent) {
       continue;
     }
 
-    // The statements that actually read the ledger — the only ones that matter.
-    // `SHOW COLUMNS FROM gl_entries` names the table but reads no money; the
-    // balance sheet probes for optional dimension columns that way.
+    // The statements that AGGREGATE MONEY from the ledger — the only ones the
+    // remap applies to. Two other shapes name `gl_entries` without summing a
+    // riyal, and neither needs remapping:
+    //
+    //   · `SHOW COLUMNS FROM gl_entries` — the balance sheet probing for
+    //     optional dimension columns.
+    //   · `EXISTS (SELECT 1 FROM gl_entries …)` — the balance sheet asking
+    //     whether an account holds direct postings, so a parent carrying money
+    //     is not dropped from the statement. That is an existence question
+    //     about the RAW account, and remapping it would be wrong, not merely
+    //     unnecessary.
+    //
+    // Filtering on "mentions gl_entries" swept both in and failed. The property
+    // is about summed money, so the filter has to be too.
     const ledgerReads = pool.seen.filter(
-      (s) => /gl_entries/i.test(s) && /^SELECT/i.test(s),
+      (s) => /gl_entries/i.test(s) && /^SELECT/i.test(s) && /SUM\s*\(\s*e\./i.test(s),
     );
     check(`${rep.label} [${tag}]: issues at least one gl_entries read`,
       ledgerReads.length > 0, { statements: pool.seen.length });

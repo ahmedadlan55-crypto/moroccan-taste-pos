@@ -7748,8 +7748,34 @@ async function runMigrations() {
     ];
     let totalFixed = 0;
     for (const [pattern, exclusion, section] of corrections) {
-      let sql = "UPDATE gl_accounts SET report_section = ? WHERE code LIKE ? AND (report_section IS NULL OR report_section <> ?)";
-      const args = [section, pattern, section];
+      // ── NULL-ONLY. This clause used to read:
+      //
+      //     WHERE code LIKE ? AND (report_section IS NULL OR report_section <> ?)
+      //
+      //   — i.e. it overwrote ANY stored value that differed from the prefix
+      //   guess, on EVERY boot. Three consequences, all of them live:
+      //
+      //     1. A CLASSIFICATION COULD NOT BE CORRECTED. Fixing an account by
+      //        hand, by migration, or through the CoA editor held until the next
+      //        restart and was then silently reverted. This was found the hard
+      //        way: migration 0038 corrected 19 accounts, the server restarted,
+      //        and every one of them was back.
+      //
+      //     2. IT WAS ITSELF WRONG. `112%` maps to `receivables`, and account
+      //        1120 is «البنوك» — the BANK. The A/R ageing's new reconciliation
+      //        reported a 2,360 break whose entire balance was that one account,
+      //        classified as money customers owed.
+      //
+      //     3. IT OUTRANKED THE STORED METADATA. Migration 0028 made
+      //        `report_section` explicit account metadata and 0036 rebuilt the
+      //        chart canonically; a code-prefix guess re-asserting itself over
+      //        both is exactly the "quarantine the legacy guesser" rule that
+      //        lib/coa/classify.js was written to enforce.
+      //
+      //   Filling a NULL keeps this pass's value for a fresh install. Refusing
+      //   to overwrite a stored value is what makes any correction durable.
+      let sql = "UPDATE gl_accounts SET report_section = ? WHERE code LIKE ? AND report_section IS NULL";
+      const args = [section, pattern];
       if (exclusion) {
         sql += " AND code NOT LIKE ?";
         args.push(exclusion);
@@ -7780,12 +7806,22 @@ async function runMigrations() {
     let totalRescued = 0;
     for (const [namePatterns, codePattern, section] of nameRescues) {
       for (const namePattern of namePatterns) {
+        // NULL-ONLY, for the same reason as the prefix pass above — and more
+        // so, because this one guesses from the account's NAME. An account
+        // called «مجمع إهلاك» is almost certainly accumulated depreciation; an
+        // account that merely CONTAINS «إهلاك» need not be, and re-asserting
+        // that guess over a stored value on every boot made the guess
+        // permanent and the correction impossible.
+        //
+        // "Runs LAST so it overrides the prefix pass" still holds: for a NULL
+        // section this pass is the last word. It simply no longer overrules a
+        // decision someone recorded.
         const [u] = await db.query(
           "UPDATE gl_accounts SET report_section = ? " +
           "WHERE code LIKE ? " +
           "  AND (name_ar LIKE ? OR name_en LIKE ?) " +
-          "  AND (report_section IS NULL OR report_section <> ?)",
-          [section, codePattern, namePattern, namePattern, section]
+          "  AND report_section IS NULL",
+          [section, codePattern, namePattern, namePattern]
         );
         totalRescued += u.affectedRows || 0;
       }

@@ -112,8 +112,19 @@ function fakePool() {
       seen.push(text);
       if (/^SHOW TABLES LIKE/i.test(text)) return [[]];
       if (/^SHOW COLUMNS/i.test(text)) return [[]];
-      // The snapshot query: gl_accounts LEFT JOIN gl_entries, selecting a.id.
-      if (/FROM gl_accounts a/i.test(text) && /gl_entries/i.test(text)) return [SNAPSHOT_ROWS];
+      // Both of the next two mention `gl_entries`, so they are told apart by
+      // HOW they use it — not by whether the name appears.
+      //
+      //   snapshot     gl_accounts LEFT JOIN gl_entries …  (aggregates money)
+      //   account list gl_accounts … EXISTS (SELECT 1 FROM gl_entries …)
+      //                              (asks only whether the account holds
+      //                               direct postings, so a parent carrying
+      //                               money is not dropped from the statement)
+      //
+      // A first version routed on "mentions gl_entries" and silently handed the
+      // account list the SNAPSHOT rows — which quietly removed the
+      // opened-after-the-comparison-date account the test exists to check.
+      if (/FROM gl_accounts a/i.test(text) && /LEFT JOIN gl_entries/i.test(text)) return [SNAPSHOT_ROWS];
       // The main pass's account list.
       if (/FROM gl_accounts a/i.test(text)) return [ACCOUNTS];
       // The main pass's entry aggregate.

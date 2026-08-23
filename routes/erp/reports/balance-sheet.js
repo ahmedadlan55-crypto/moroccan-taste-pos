@@ -116,6 +116,16 @@ async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBra
   // `.match(/(acc_dep|allowance_doubtful)/)` also matched any future section
   // whose name merely CONTAINED those substrings.
   const sectionTotals = {};
+  // Per-ACCOUNT prior balances, keyed by account id.
+  //
+  // The comment this replaced said the per-account drilldown was "NOT
+  // duplicated — that would double the heavy query for marginal UI value". The
+  // heavy query is the main pass; THIS one already reads every account and
+  // every entry, so the per-account figures were being computed and then thrown
+  // away. Keeping them costs one map and is what a comparison COLUMN needs:
+  // without it the client can only compare grand totals, and the spec's
+  // per-account comparison is unbuildable.
+  const accountBalances = {};
   let totalAssets = 0, totalLiab = 0, totalEq = 0;
   let netIncomeRevenue = 0, netIncomeExpense = 0;
   rows.forEach(r => {
@@ -123,19 +133,36 @@ async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBra
     if (Math.abs(net) < 0.001) return;   // archived-with-no-movement drops out here
     const contra = _isContraAccount(r);
     if (r.type === 'asset') {
-      // NOTE: the arithmetic here is UNCHANGED (`-mag`, mirroring
-      // pushToGroup's `-magnitude` in the main pass). Only the contra TEST
-      // changed. The equity branch below uses `-Math.abs(mag)` and therefore
-      // disagrees in sign with the main pass for drawings — a pre-existing
-      // defect in the compare-column snapshot, deliberately NOT touched here:
-      // it is a money change and belongs to its own reviewed fix.
+      // `-mag`, mirroring pushToGroup's `-magnitude` in the main pass.
       const mag = net;
       totalAssets += (contra ? -mag : mag);
     } else if (r.type === 'liability') {
       totalLiab += -net;
     } else if (r.type === 'equity') {
+      // ── THE SIGN DEFECT THIS BRANCH CARRIED ──────────────────────────────
+      // This read `contra ? -Math.abs(mag) : mag`, and the `Math.abs` was the
+      // whole bug: it forces a contra-equity account NEGATIVE no matter which
+      // way its balance actually runs. The main pass (pushToGroup:701) applies
+      // `isContra ? -magnitude : magnitude` with no abs, and so does the asset
+      // branch three lines above. Two of the three agreed; this one did not.
+      //
+      // The two are identical whenever `mag` is positive, and diverge when it
+      // is negative. Since `mag = -net`, that means a POSITIVE net — drawings
+      // sitting in DEBIT, which is the perfectly ORDINARY case:
+      //
+      //     d=800 c=0  →  net = +800  →  mag = -800
+      //         correct  `contra ? -mag : mag`            →  +800
+      //         defect   `contra ? -Math.abs(mag) : mag`  →  −800
+      //
+      // So the comparison column reported the opposite sign from the column
+      // beside it on a normal drawings balance, and the delta between them was
+      // wrong by twice the balance.
+      //
+      // Documented in-place as "a pre-existing defect… deliberately NOT touched
+      // here: it is a money change and belongs to its own reviewed fix." This
+      // is that fix: one sign rule, applied by all three sites.
       const mag = -net;
-      totalEq += (contra ? -Math.abs(mag) : mag);
+      totalEq += (contra ? -mag : mag);
     } else if (r.type === 'revenue') {
       netIncomeRevenue += (Number(r.c) || 0) - (Number(r.d) || 0);
     } else if (r.type === 'expense') {
@@ -144,12 +171,26 @@ async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBra
     if (r.report_section) {
       sectionTotals[r.report_section] = (sectionTotals[r.report_section] || 0) + (r.type === 'asset' ? net : -net);
     }
+    // The RAW net for this account — debit minus credit, unsigned by any
+    // presentation rule.
+    //
+    // Deliberately NOT signed here. This snapshot decides contra from the
+    // ACCOUNT's own `is_contra`; the main pass decides it from the GROUP the
+    // account classifies into (`pushToGroup` reads `group.isContra`). Those two
+    // sources disagree — accumulated depreciation showed −2,000 in the current
+    // column and +2,000 in the prior one, which is exactly the "two columns on
+    // two bases" failure a comparison must never have.
+    //
+    // So the prior is signed later, by the SAME transformation that produced
+    // the row's current balance (`__mul`, recorded per row in the main pass).
+    // Agreement is then structural, not a coincidence maintained by hand.
+    accountBalances[r.id] = net;
   });
   const netIncome = netIncomeRevenue - netIncomeExpense;
   totalEq += netIncome;  // Period income goes to retained earnings until close
   return {
     asOfDate, totalAssets, totalLiabilities: totalLiab, totEq: totalEq,
-    netIncome, sectionTotals,
+    netIncome, sectionTotals, accountBalances,
     isBalanced: Math.abs(totalAssets - (totalLiab + totalEq)) < 0.01
   };
 }
@@ -739,10 +780,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
           const targetGroup = groups[assetBucket[0]][assetBucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
+          flatItem.__mul = (net === 0 ? 1 : signed / net);
           if (assetBucket[0] === 'nonCurrentAssets') { nonCurrentAssets.push(flatItem); totNCA += signed; }
           else                                   { currentAssets.push(flatItem);    totCA  += signed; }
         } else {
           flatItem.balance = magnitude;
+          flatItem.__mul = (net === 0 ? 1 : magnitude / net);
           unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
           if (a.code && a.code.startsWith('12')) { nonCurrentAssets.push(flatItem); totNCA += magnitude; }
           else                                    { currentAssets.push(flatItem);    totCA  += magnitude; }
@@ -754,10 +797,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
           const targetGroup = groups[liabilityBucket[0]][liabilityBucket[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
+          flatItem.__mul = (net === 0 ? 1 : signed / net);
           if (liabilityBucket[0] === 'nonCurrentLiab') { nonCurrentLiab.push(flatItem); totNCL += signed; }
           else                                 { currentLiab.push(flatItem);    totCL  += signed; }
         } else {
           flatItem.balance = magnitude;
+          flatItem.__mul = (net === 0 ? 1 : magnitude / net);
           unclassified.push({ id: a.id, code: a.code, nameAr: a.name_ar, type: a.type, balance: magnitude });
           if (a.code && a.code.startsWith('22')) { nonCurrentLiab.push(flatItem); totNCL += magnitude; }
           else                                    { currentLiab.push(flatItem);    totCL  += magnitude; }
@@ -771,10 +816,12 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
           const targetGroup = groups[cls2[0]][cls2[1]];
           const signed = pushToGroup(targetGroup, a, magnitude);
           flatItem.balance = signed;
+          flatItem.__mul = (net === 0 ? 1 : signed / net);
           equityItems.push(flatItem);
           totEq += signed;
         } else {
           flatItem.balance = magnitude;
+          flatItem.__mul = (net === 0 ? 1 : magnitude / net);
           equityItems.push(flatItem);
           totEq += magnitude;
         }
@@ -817,6 +864,77 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     if (compareDate) {
       try {
         priorSnapshot = await _bsSnapshotTotals(compareDate, brandId, branchId, hasBrandId, hasBranchId);
+
+        // ── Per-account comparison ───────────────────────────────────────────
+        // Attach each account's prior balance to the row it sits on, so the
+        // client can render a real comparison COLUMN rather than a delta chip
+        // on the grand totals.
+        //
+        // BOTH SHAPES, because this response carries the same account twice:
+        // the FLAT arrays (currentAssets, equityItems, …) that the statement
+        // renders from, and the nested `groups` tree used for the grouped view.
+        // `pushToGroup` builds its own object, so they are different objects —
+        // attaching to one alone leaves the other with no prior column, and the
+        // flat arrays are the ones the page actually reads.
+        //
+        // Walked rather than enumerated: the bucket list has grown repeatedly
+        // (Saudi-statutory VAT, GOSI, withholding, EOSB, Zakat…) and a
+        // hand-written list would go stale silently.
+        //
+        // `null`, never 0, for an account absent from the prior snapshot: it
+        // did not exist or had not moved by that date, and that is not the same
+        // as having been worth zero.
+        // `__mul` is the multiplier that took this row's RAW net to the balance
+        // shown in the current column. Applying it to the prior raw net signs
+        // the two columns identically by construction — the contra flip, the
+        // debit/credit orientation, all of it — instead of re-deriving the rule
+        // from a different source and hoping the two agree.
+        const priorOf = (row) => {
+          const net = priorSnapshot.accountBalances[row.id];
+          if (net === undefined) return null;   // absent ≠ zero
+          const mul = (typeof row.__mul === 'number' && Number.isFinite(row.__mul)) ? row.__mul : 1;
+          return net * mul;
+        };
+        const flatLists = [currentAssets, nonCurrentAssets, currentLiab, nonCurrentLiab, equityItems];
+        const mulById = new Map();
+        flatLists.forEach((list) => list.forEach((row) => {
+          if (typeof row.__mul === 'number') mulById.set(row.id, row.__mul);
+          row.prior = priorOf(row);
+        }));
+        // The grouped tree holds DIFFERENT objects for the same accounts, and
+        // they carry no `__mul` — reuse the flat row's, keyed by id.
+        (function attachPriors(node) {
+          if (!node || typeof node !== 'object') return;
+          if (Array.isArray(node.accounts)) {
+            node.accounts.forEach((acc) => {
+              acc.prior = priorOf({ id: acc.id, __mul: mulById.get(acc.id) });
+            });
+          }
+          Object.keys(node).forEach((k) => {
+            if (k !== 'accounts') attachPriors(node[k]);
+          });
+        })(groups);
+        // ── Prior TOTALS are summed from the prior COLUMN ────────────────────
+        // Not taken from the snapshot's own roll-up, which signs contra from
+        // the ACCOUNT's flag while the statement signs it from the GROUP's.
+        // With accumulated depreciation in the fixture those two produced
+        // −2,000 and +2,000 for the same account, so the asset delta came back
+        // −2,800 when the only real change was a +1,200 account.
+        //
+        // Summing the column the reader actually sees makes the footer agree
+        // with the lines above it by construction. A prior-only account that no
+        // longer appears is therefore excluded — correctly: it has no line in
+        // this statement for its figure to belong to.
+        const sumPrior = (lists) => lists.reduce((acc, list) =>
+          acc + list.reduce((s, r) => s + (typeof r.prior === 'number' ? r.prior : 0), 0), 0);
+
+        priorSnapshot.totalAssets      = sumPrior([currentAssets, nonCurrentAssets]);
+        priorSnapshot.totalLiabilities = sumPrior([currentLiab, nonCurrentLiab]);
+        priorSnapshot.totEq            = sumPrior([equityItems]);
+
+        // `__mul` is an internal working value, not part of the contract.
+        flatLists.forEach((list) => list.forEach((row) => { delete row.__mul; }));
+
         change = {
           totalAssets:      _bsDelta(totalAssets,      priorSnapshot.totalAssets),
           totalLiabilities: _bsDelta(totalLiabilities, priorSnapshot.totalLiabilities),

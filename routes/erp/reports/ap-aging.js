@@ -31,6 +31,7 @@
 const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
+const glBoundaries = require('../../../lib/reports/glBoundaries');
 
 const BUCKETS = ['0-30', '31-60', '61-90', '91-120', '120+'];
 
@@ -106,6 +107,10 @@ router.get('/reports/ap-aging', requireCapability('finance.reports.view'), async
     const supplierMap = {};
     const grandBuckets = emptyBuckets();
     let grandTotal = 0;
+    // How many invoices carried no terms and had to be aged from their issue
+    // date. Counted and reported: an ageing computed on a different basis
+    // than the reader assumes is one they will act on wrongly.
+    let agedByIssueDate = 0;
 
     for (const r of rows) {
       const outstanding = round2((Number(r.total_amount) || 0) - (Number(r.allocated) || 0));
@@ -115,6 +120,7 @@ router.get('/reports/ap-aging', requireCapability('finance.reports.view'), async
       // were recorded keeps a termless invoice visible rather than silently
       // ageing at zero.
       const ageFrom = r.due_date || r.issue_date;
+      if (!r.due_date) agedByIssueDate += 1;
       const days = _daysBetween(ageFrom, asOfDate);
       const b = _bucket(days);
 
@@ -141,12 +147,59 @@ router.get('/reports/ap-aging', requireCapability('finance.reports.view'), async
         outstanding,
         daysOverdue: days,
         bucket: b,
+        /** Which date the age was measured from — never left to be inferred. */
+        agedFrom: r.due_date ? 'due_date' : 'issue_date',
       });
       grandBuckets[b] = round2(grandBuckets[b] + outstanding);
       grandTotal = round2(grandTotal + outstanding);
     }
 
     const suppliers = Object.values(supplierMap).sort((a, b) => b.total - a.total);
+
+    // ── The reconciliation the spec asks for ─────────────────────────────────
+    // "إجمالي تقادم الدائنين = رصيد حساب الموردين". Reported, never used to
+    // adjust the ageing: if the subledger and the ledger disagree, two numbers
+    // and a difference is the honest output. Scaling one to match the other
+    // would hide the break this exists to reveal.
+    let reconciliation = null;
+    try {
+      const canon = await glBoundaries.canonicalForEntries(db, 'e', 'coa_map');
+      const books = glBoundaries.inTheBooksSql('j');
+      const [glRows] = await db.query(
+        `SELECT a.code, a.name_ar AS name,
+                ROUND(SUM(e.credit - e.debit), 2) AS bal
+           FROM gl_entries e
+           JOIN gl_journals j ON j.id = e.journal_id
+           ${canon.join}
+           JOIN gl_accounts a ON a.id = ${canon.account}
+          WHERE ${books.sql}
+            AND DATE(j.journal_date) <= ?
+            AND a.report_section = 'payables'
+            AND a.type = 'liability'
+          GROUP BY a.code, a.name_ar
+         HAVING bal <> 0
+          ORDER BY ABS(bal) DESC`,
+        [...books.params, asOfDate]
+      );
+      // Per-account, so a break names the accounts it came from rather than
+            // leaving a bare number to be hunted down. The A/R side of this
+            // reconciliation found the bank account classified as a receivable on
+            // its very first live run; only the breakdown made that visible.
+            const accounts = glRows.map((r) => ({ code: r.code, name: r.name, balance: Number(r.bal) || 0 }));
+            const glBalance = round2(accounts.reduce((sum, a) => sum + a.balance, 0));
+      reconciliation = {
+        agingTotal: grandTotal,
+        glControlBalance: glBalance,
+        difference: round2(grandTotal - glBalance),
+        isReconciled: Math.abs(grandTotal - glBalance) < 1,
+        /** Which accounts the control side is made of — the diagnosis. */
+        accounts,
+        note: 'GL side = posted entries on accounts classified `payables`, credit-positive.',
+      };
+    } catch (e) {
+      console.warn('[ap-aging] reconciliation unavailable:', e.message);
+      reconciliation = null;
+    }
 
     res.json({
       success: true,
@@ -155,6 +208,9 @@ router.get('/reports/ap-aging', requireCapability('finance.reports.view'), async
       // retired subsystem; naming the source makes that impossible to repeat.
       source: 'supplier_invoices',
       agedBy: 'due_date',
+      /** How many invoices had no terms and were aged from their issue date. */
+      rowsAgedByIssueDate: agedByIssueDate,
+      reconciliation,
       suppliers,
       grandTotal,
       grandBuckets,

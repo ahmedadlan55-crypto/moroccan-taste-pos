@@ -39,7 +39,7 @@ const glBoundaries = require('../../../lib/reports/glBoundaries');
 
 router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, compareStart, compareEnd } = req.query;
     // v5.11.18 — leaf accounts only.
     // PACKAGE G — REPORTABLE_ACCOUNT_SQL instead of is_active=1: a revenue
     // account archived in June must still show the sales it made in May.
@@ -65,44 +65,66 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
     // report did neither — so for any period spanning the rebuild it counted
     // the old history AND the transfer, and disagreed with the Trial Balance
     // by construction. Not a rounding difference: a doubled account.
-    const books = glBoundaries.inTheBooksSql('j');
-    let where = books.sql;
-    const params = [...books.params];
-    if (startDate) { where += ' AND DATE(j.journal_date) >= ?'; params.push(startDate); }
-    if (endDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(endDate); }
+    //
     // `canonicalForEntries` degrades to the raw account when the map table is
     // absent — a database that never ran 0036 has nothing to remap. Joining it
     // unconditionally raised "Table … doesn't exist", and this route's outer
     // catch turned that into an empty 200: an income statement reading as "no
     // activity at all". Caught live, not by a test.
     const canon = await glBoundaries.canonicalForEntries(db, 'e', 'coa_map');
-    const [entries] = await db.query(
-      `SELECT ${canon.account} AS account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
-       FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-       ${canon.join}
-       WHERE ${where} GROUP BY ${canon.account}`, params
-    );
-    const balMap = {};
-    entries.forEach(e => { balMap[e.account_id] = (Number(e.c)||0) - (Number(e.d)||0); }); // credit-positive for revenue
+
+    // One aggregate, run once per column. Extracted so the comparison period
+    // CANNOT be computed on a different basis than the period it is compared
+    // against — the failure that makes a comparison column worse than none.
+    async function netByAccount(rangeStart, rangeEnd) {
+      const books = glBoundaries.inTheBooksSql('j');
+      let clause = books.sql;
+      const args = [...books.params];
+      if (rangeStart) { clause += ' AND DATE(j.journal_date) >= ?'; args.push(rangeStart); }
+      if (rangeEnd)   { clause += ' AND DATE(j.journal_date) <= ?'; args.push(rangeEnd); }
+      const [rows] = await db.query(
+        `SELECT ${canon.account} AS account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+         FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
+         ${canon.join}
+         WHERE ${clause} GROUP BY ${canon.account}`, args
+      );
+      const map = {};
+      // credit-positive, so revenue reads naturally and expense reads negative.
+      rows.forEach(r => { map[r.account_id] = (Number(r.c) || 0) - (Number(r.d) || 0); });
+      return map;
+    }
+
+    const balMap = await netByAccount(startDate, endDate);
+
+    // Comparison is OPT-IN and requires BOTH edges. A half-specified range would
+    // silently become an unbounded one — every figure since the books opened,
+    // presented beside a single month as if the two were comparable.
+    const comparing = !!(compareStart && compareEnd);
+    const priorMap = comparing ? await netByAccount(compareStart, compareEnd) : null;
 
     // v5.10.61 — `Math.abs(net)` used to destroy signs, so an account with an
     // abnormal balance (e.g. refunds > sales) appeared positive. The
     // normal-balance calculation below PRESERVES sign so the user can spot
     // anomalies in the report.
     const buckets = {
-      revenue:      { items: [], total: 0 },
-      otherIncome:  { items: [], total: 0 },
-      cogs:         { items: [], total: 0 },
-      opex:         { items: [], total: 0 },
-      gAndA:        { items: [], total: 0 },
-      otherExpense: { items: [], total: 0 },
+      revenue:      { items: [], total: 0, priorTotal: 0 },
+      otherIncome:  { items: [], total: 0, priorTotal: 0 },
+      cogs:         { items: [], total: 0, priorTotal: 0 },
+      opex:         { items: [], total: 0, priorTotal: 0 },
+      gAndA:        { items: [], total: 0, priorTotal: 0 },
+      otherExpense: { items: [], total: 0, priorTotal: 0 },
     };
     const unmapped = [];
 
     accounts.forEach(a => {
       if (a.type !== 'revenue' && a.type !== 'expense') return;
       const net = balMap[a.id] || 0;   // balMap is credit-positive (c - d)
-      const hasMovement = Math.abs(net) >= 0.001;
+      const priorNet = comparing ? (priorMap[a.id] || 0) : 0;
+      // An account that moved in EITHER column belongs in the statement. Judging
+      // only the current period would drop a line that had activity last year
+      // and none this year — and dropping it is exactly the change the reader
+      // opened a comparison to see.
+      const hasMovement = Math.abs(net) >= 0.001 || Math.abs(priorNet) >= 0.001;
       // Archived accounts appear only for the periods they actually moved in.
       if (!classify.isReportable(a, hasMovement)) return;
 
@@ -112,7 +134,16 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       //   debit-normal  (expense): -net makes the amount appear positive.
       const nb = classify.normalBalanceOf(a);
       const bal = (nb.normalBalance === 'credit') ? net : -net;
-      const item = { id: a.id, code: a.code, name: a.name_ar, balance: bal, level: a.level };
+      // The prior column is flipped by the SAME rule — never a raw net beside a
+      // normalised one, which would show an expense as negative in one column
+      // and positive in the next.
+      const priorBal = comparing ? ((nb.normalBalance === 'credit') ? priorNet : -priorNet) : null;
+      const item = {
+        id: a.id, code: a.code, name: a.name_ar, balance: bal, level: a.level,
+        // null, not 0, when no comparison was asked for: an absent figure is
+        // not a zero one, and a UI must be able to tell them apart.
+        prior: priorBal,
+      };
 
       const cls = classify.incomeBucketOf(a);
       if (cls.unmapped || !cls.bucket) {
@@ -121,6 +152,7 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       const target = buckets[cls.bucket] || buckets.opex;   // unknown → safest bucket
       target.items.push(item);
       target.total += bal;
+      if (comparing) target.priorTotal += priorBal;
     });
 
     const totalRevenue  = buckets.revenue.total;
@@ -134,6 +166,32 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
     const operatingIncome = grossProfit - totalOpex - totalGAndA;
     const netIncome = operatingIncome + totalOtherInc - totalOtherExp;
 
+    // The prior column's derived figures come from the SAME three expressions.
+    // Writing them out a second time by hand is how a comparison drifts: the
+    // ladder must be one definition, applied twice.
+    function ladder(rev, cogs, opex, gAndA, otherInc, otherExp) {
+      const gross = rev - cogs;
+      const operating = gross - opex - gAndA;
+      return { gross, operating, net: operating + otherInc - otherExp };
+    }
+    const priorLadder = comparing
+      ? ladder(
+          buckets.revenue.priorTotal, buckets.cogs.priorTotal,
+          buckets.opex.priorTotal, buckets.gAndA.priorTotal,
+          buckets.otherIncome.priorTotal, buckets.otherExpense.priorTotal,
+        )
+      : null;
+
+    // Proven, not assumed: the same ladder over the current period must
+    // reproduce the figures computed above. If it ever does not, the two
+    // definitions have drifted and the comparison column is lying.
+    const selfCheck = ladder(
+      totalRevenue, totalCOGS, totalOpex, totalGAndA, totalOtherInc, totalOtherExp,
+    );
+    if (Math.abs(selfCheck.net - netIncome) > 0.005) {
+      console.error('[erp/reports/income] ladder drift', { selfCheck, netIncome });
+    }
+
     res.json({
       // IFRS sections
       revenue: buckets.revenue.items, totalRevenue,
@@ -145,6 +203,21 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       otherIncome: buckets.otherIncome.items, totalOtherInc,
       otherExpense: buckets.otherExpense.items, totalOtherExp,
       netIncome,
+      // ── Comparison column (opt-in via compareStart + compareEnd) ──────────
+      // `null` throughout when not requested — the client must be able to tell
+      // "no comparison asked for" from "a comparison that came back zero".
+      comparison: comparing ? {
+        from: compareStart, to: compareEnd,
+        totalRevenue:  buckets.revenue.priorTotal,
+        totalCOGS:     buckets.cogs.priorTotal,
+        totalOpex:     buckets.opex.priorTotal,
+        totalGAndA:    buckets.gAndA.priorTotal,
+        totalOtherInc: buckets.otherIncome.priorTotal,
+        totalOtherExp: buckets.otherExpense.priorTotal,
+        grossProfit:     priorLadder.gross,
+        operatingIncome: priorLadder.operating,
+        netIncome:       priorLadder.net,
+      } : null,
       // PACKAGE G — accounts bucketed from a code-prefix guess, not stored data.
       unmapped,
       sectionCatalogGaps: classify.catalogGaps(),

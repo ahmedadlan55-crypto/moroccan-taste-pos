@@ -26,7 +26,7 @@
 //   journals. A page that writes to the ledger does not belong in a reports
 //   catalogue, where every other entry is safe to open and print.
 import { createElement, lazy, Suspense, type ComponentType, type LazyExoticComponent, type ReactElement } from "react";
-import { LoadingState } from "@/shared/ui";
+import { LoadingState, PermissionDenied } from "@/shared/ui";
 import type { Capability } from "@/shared/permissions";
 
 export type FinancialReportId =
@@ -150,13 +150,28 @@ export function isFinancialReportId(id: string): id is FinancialReportId {
  * unmatched /reports/financial/* path should render is the ROUTER's decision,
  * not this module's.
  *
- * It deliberately performs NO capability check. Each report's `cap` is
- * published on the registry entry for the caller to gate on; deciding here
- * would put a second, competing authorization opinion next to the router's.
+ * ─── WHY IT NOW CHECKS THE CAPABILITY ───────────────────────────────────────
+ * This used to state: "It deliberately performs NO capability check… deciding
+ * here would put a second, competing authorization opinion next to the
+ * router's." The reasoning was sound but the arithmetic was not: the router
+ * gates the SECTION on `reports.view`, while each report carries its OWN cap —
+ * trial balance needs `finance.reports.view`, the rest `accounting.reports.view`.
+ * Those are not the same set. Someone holding `reports.view` alone had the
+ * catalogue row hidden from them and the URL still working.
+ *
+ * That was never a data leak — the server gates the data, so the page came back
+ * empty — but an empty statement is the worst possible denial: it reads as "the
+ * company traded nothing", not "you may not see this".
+ *
+ * It is also not a second opinion. The section cap and the report cap are two
+ * different questions, and the second one had no one asking it. The engine's own
+ * viewer has always asked it (GenericReportPage), so this makes the two halves
+ * of /reports behave alike rather than introducing a rule.
  */
-export function renderFinancialReport(id: string): ReactElement | null {
+export function renderFinancialReport(id: string, can: (cap: Capability) => boolean): ReactElement | null {
   const report = FINANCIAL_REPORT_BY_ID[id];
   if (!report) return null;
+  if (!can(report.cap)) return createElement(PermissionDenied);
   return createElement(
     Suspense,
     { fallback: createElement(LoadingState) },

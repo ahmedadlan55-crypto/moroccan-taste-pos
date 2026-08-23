@@ -22,6 +22,7 @@ import { normalizeRoutePath } from "@/shared/lib";
 import { LoadingState } from "@/shared/ui";
 import { NotFound } from "@/app/shell/NotFound";
 import SavedReportsPage from "./pages/SavedReports";
+import { usePermissions } from "@/shared/permissions";
 import { renderFinancialReport } from "./financial/registry";
 
 const SalesAnalyticsHub = lazy(() => import("./sales/SalesAnalyticsHub"));
@@ -54,6 +55,9 @@ function Lazy({ children }: { children: ReactNode }) {
 export default function ReportsModule() {
   const { pathname } = useLocation();
   const key = normalizeRoutePath(pathname);
+  // The per-report capability. The SECTION guard (`reports.view`) is the
+  // router's; this is the report's own, which nothing was asking.
+  const { can } = usePermissions();
 
   // Sales owns its whole subtree: the hub dispatches its centres and views
   // internally (and keeps the retired-segment redirects that make old links work).
@@ -77,7 +81,7 @@ export default function ReportsModule() {
   if (key.startsWith("/reports/financial/")) {
     // The registry answers with the page or with null for an id it does not
     // know; the not-found decision stays here, with the router.
-    return renderFinancialReport(reportIdIn(key, "/reports/financial")) ?? <NotFound />;
+    return renderFinancialReport(reportIdIn(key, "/reports/financial"), can) ?? <NotFound />;
   }
 
   if (key === "/reports/receivables") return <Lazy><ReceivablesReportsDirectory /></Lazy>;

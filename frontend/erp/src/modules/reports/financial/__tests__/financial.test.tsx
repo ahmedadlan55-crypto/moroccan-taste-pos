@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -48,7 +49,7 @@ describe("the financial reports registry", () => {
   it("does NOT expose sales-posting — it writes journals, it is not a report", () => {
     expect(isFinancialReportId("sales-posting")).toBe(false);
     expect(FINANCIAL_REPORT_BY_ID["sales-posting"]).toBeUndefined();
-    expect(renderFinancialReport("sales-posting")).toBeNull();
+    expect(renderFinancialReport("sales-posting", () => true)).toBeNull();
   });
 
   it("keeps the trial balance on its OWN capability rather than flattening the set", () => {
@@ -59,9 +60,27 @@ describe("the financial reports registry", () => {
     expect(others.every((r) => r.cap === "accounting.reports.view")).toBe(true);
   });
 
+  it("refuses a report the caller lacks the capability for, even by direct URL", () => {
+    // The router gates the SECTION on reports.view; each report carries its own
+    // cap. Someone with reports.view alone had the catalogue row hidden and the
+    // URL still working — the page then came back EMPTY, which reads as "the
+    // company traded nothing" rather than "you may not see this".
+    const denyAll = () => false;
+    const el = renderFinancialReport("trial-balance", denyAll);
+    expect(el).not.toBeNull();
+    // Not the report — the denial.
+    expect((el as { type?: unknown }).type).not.toBe(Suspense);
+  });
+
+  it("renders the report when the capability IS held", () => {
+    const el = renderFinancialReport("trial-balance", (c) => c === "finance.reports.view");
+    expect(el).not.toBeNull();
+    expect((el as { type?: unknown }).type).toBe(Suspense);
+  });
+
   it("renders an unknown id as null, leaving the not-found decision to the router", () => {
-    expect(renderFinancialReport("not-a-report")).toBeNull();
-    expect(renderFinancialReport("")).toBeNull();
+    expect(renderFinancialReport("not-a-report", () => true)).toBeNull();
+    expect(renderFinancialReport("", () => true)).toBeNull();
   });
 });
 

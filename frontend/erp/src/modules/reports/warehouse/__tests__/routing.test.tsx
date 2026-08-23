@@ -24,7 +24,14 @@ vi.mock("@/modules/inventory/lib/hooks/useAnalytics", () => ({
     dataQualityIndicators: { estimatedCostItems: 0, missingMinStock: 0 }, slowNoMovement: { count: 0 }, transfers: { inTransit: 0 },
   } }),
 }));
-vi.mock("@/app/providers", () => ({ useCan: (cap: string) => cap === "finance.reports.view" ? permissions.finance : false }));
+// `usePermissions` as well as `useCan`: the reports dispatcher now asks each
+// financial report's OWN capability before rendering it, and a wholesale mock
+// that omits the hook takes the whole module down rather than denying a report.
+const mockCan = (cap: string) => (cap === "finance.reports.view" ? permissions.finance : false);
+vi.mock("@/app/providers", () => ({
+  useCan: (cap: string) => mockCan(cap),
+  usePermissions: () => ({ can: mockCan }),
+}));
 vi.mock("@/modules/reports/warehouse/api", () => ({
   useWarehouseIntelligenceOverview: () => ({ isLoading: false, isError: false, data: {
     kpis: { purchaseSpend: 500, receivedQty: 10, openPoValue: 200, openPoQty: 3, supplierCount: 2, wasteValue: null, wasteQty: 3 },

@@ -95,3 +95,11 @@ UPDATE gl_accounts SET report_section = 'payables'
 
 UPDATE gl_accounts SET report_section = 'accrued'
  WHERE code IN ('2310', '2320') AND report_section IS NULL;
+
+-- ── GR/IR filed as a generic liability ──────────────────────────────────────
+-- `2150 «بضاعة مستلمة لم تُفوتر (GRNI)»` is the account role GRNI resolves to —
+-- the one every goods receipt credits. It carried `other_current_liability`, so
+-- the obligation for goods received-but-not-invoiced was reported in a bucket
+-- that says nothing about what it is. The catalogue has `grni` for exactly this.
+UPDATE gl_accounts SET report_section = 'grni'
+ WHERE code = '2150' AND report_section = 'other_current_liability';

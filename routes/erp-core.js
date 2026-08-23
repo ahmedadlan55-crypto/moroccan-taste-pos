@@ -2331,9 +2331,30 @@ router.post('/purchase-receipts', requireCapability('purchases.create'), async (
             branchId: branchId || null, brandId: brandId || null,
             costCenterId: costCenterId || null,
           });
+          // ── GR/IR, NOT accounts payable ───────────────────────────────────
+          // A goods receipt creates a liability, but not a SUPPLIER-INVOICE
+          // liability: nothing has been invoiced yet. Crediting the A/P control
+          // account here put money into it that no supplier invoice backs, so
+          // the A/P ageing — which reads the supplier-invoice subledger — could
+          // never tie to the ledger. Found by the reconciliation this sprint
+          // added: A/P ageing 0 against a control balance of 400, and the 400
+          // was eight receipt journals at 50 each.
+          //
+          // The correct home is GR/IR («بضاعة مستلمة لم تُفوتر»), which the V2
+          // procurement module has always used (lib/procurement/accounts.js).
+          // Receipt debits inventory and credits GR/IR; the supplier invoice
+          // then clears GR/IR into A/P. Until it arrives, the obligation is
+          // visible and correctly NOT part of the ageing.
+          //
+          // Resolved through the SAME role registry V2 uses, so the two paths
+          // cannot post to different accounts. It throws when the role is
+          // unmapped rather than falling back to A/P: a silent fallback is
+          // exactly how this defect survived, and posting a receipt to A/P is
+          // worse than refusing to post it.
+          const grni = await gl.getGrniAccountCode(conn);
           entries.push({
-            accountCode: gl.CORE_ACCOUNTS.AP.code, debit: 0, credit: total,
-            description: 'Supplier liability — ' + rcpNumber,
+            accountCode: grni, debit: 0, credit: total,
+            description: 'Goods received not invoiced — ' + rcpNumber,
             branchId: branchId || null, brandId: brandId || null,
             costCenterId: costCenterId || null,
             partyType: supplierId ? 'supplier' : null, partyId: supplierId || null,

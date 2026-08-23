@@ -40,6 +40,7 @@ const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
+const glBoundaries = require('../../../lib/reports/glBoundaries');
 
 // Working-capital buckets that roll into Operating as an aggregated line.
 // Assets consume cash when they grow; liabilities provide it.
@@ -57,6 +58,12 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
     const includeZero = showZero === '1' || showZero === 'true';
     if (!from || !to) return res.json({ error: 'from + to required' });
 
+    // 0036 remap, resolved ONCE for every query in this handler. Degrades to a
+    // plain `e.account_id = a.id` when the map table is absent — a database
+    // that never ran that migration has nothing to remap, and joining it
+    // regardless raised "Table … doesn't exist". See lib/reports/glBoundaries.js.
+    const canonAcc = await glBoundaries.canonicalForAccounts(db, 'a', 'e', 'coa_map');
+
     // Build a parameterised entry query that we'll reuse twice — once for
     // opening balances (anything before `from`) and once for the period
     // movement (between `from` and `to`).
@@ -71,12 +78,19 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
                COALESCE(SUM(e.debit), 0)  AS debit,
                COALESCE(SUM(e.credit), 0) AS credit
         FROM gl_accounts a
-        LEFT JOIN gl_entries e ON e.account_id = a.id
+        ${canonAcc.join}
+        LEFT JOIN gl_entries e ON ${canonAcc.entryMatch}
         LEFT JOIN gl_journals j ON j.id = e.journal_id
         WHERE ${classify.REPORTABLE_ACCOUNT_SQL('a')}
           AND COALESCE(a.is_folder, 0) = 0
           AND a.id NOT IN (SELECT DISTINCT parent_id FROM gl_accounts WHERE parent_id IS NOT NULL)
           AND (j.status IS NULL OR j.status = 'posted')
+          -- 0036: the historical line is reached through coa_map above, so the
+          -- mechanical transfer journal must be excluded or the same money is
+          -- counted on both sides of it. Written as a literal, not a bound
+          -- parameter, because the placeholders here are positional and the
+          -- caller owns \`params\` — see lib/reports/glBoundaries.js.
+          AND (j.id IS NULL OR j.id <> 'COA36-TRANSITION')
           AND (j.id IS NULL OR ${asOfClause})`;
       // Optional brand/branch filter on the entry itself (when columns exist).
       if (brandId)  { sql += ' AND (e.brand_id  IS NULL OR e.brand_id = ?)';  params.push(brandId); }
@@ -102,9 +116,11 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
              COALESCE(SUM(e.debit), 0)  AS debit,
              COALESCE(SUM(e.credit), 0) AS credit
       FROM gl_accounts a
-      JOIN gl_entries e ON e.account_id = a.id
+      ${canonAcc.join}
+      JOIN gl_entries e ON ${canonAcc.entryMatch}
       JOIN gl_journals j ON j.id = e.journal_id
       WHERE j.status = 'posted'
+        AND j.id <> 'COA36-TRANSITION'
         AND DATE(j.journal_date) >= ? AND DATE(j.journal_date) <= ?
         AND a.type IN ('revenue','expense')`;
     if (brandId)  { piSql += ' AND (e.brand_id  IS NULL OR e.brand_id = ?)';  piParams.push(brandId); }

@@ -35,6 +35,7 @@ const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
+const glBoundaries = require('../../../lib/reports/glBoundaries');
 
 router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
@@ -53,15 +54,33 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       "ORDER BY " + coaTree.ORDER_BY('a')
     );
 
-    // Get period balances from gl_entries (not gl_accounts.balance)
-    let where = "j.status = 'posted'";
-    const params = [];
+    // Get period balances from gl_entries (not gl_accounts.balance).
+    //
+    // ── THE 0036 REMAP, which this report used to skip ───────────────────────
+    // Migration 0036 rebuilt the chart and left the historical account rows
+    // immutable, recording each one's canonical destination in
+    // coa_0036_account_map and moving the money with one mechanical journal.
+    // The Trial Balance and the General Ledger both group by the DESTINATION
+    // account and exclude that journal (lib/reports/glBoundaries.js). This
+    // report did neither — so for any period spanning the rebuild it counted
+    // the old history AND the transfer, and disagreed with the Trial Balance
+    // by construction. Not a rounding difference: a doubled account.
+    const books = glBoundaries.inTheBooksSql('j');
+    let where = books.sql;
+    const params = [...books.params];
     if (startDate) { where += ' AND DATE(j.journal_date) >= ?'; params.push(startDate); }
     if (endDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(endDate); }
+    // `canonicalForEntries` degrades to the raw account when the map table is
+    // absent — a database that never ran 0036 has nothing to remap. Joining it
+    // unconditionally raised "Table … doesn't exist", and this route's outer
+    // catch turned that into an empty 200: an income statement reading as "no
+    // activity at all". Caught live, not by a test.
+    const canon = await glBoundaries.canonicalForEntries(db, 'e', 'coa_map');
     const [entries] = await db.query(
-      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
+      `SELECT ${canon.account} AS account_id, SUM(e.debit) AS d, SUM(e.credit) AS c
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-       WHERE ${where} GROUP BY e.account_id`, params
+       ${canon.join}
+       WHERE ${where} GROUP BY ${canon.account}`, params
     );
     const balMap = {};
     entries.forEach(e => { balMap[e.account_id] = (Number(e.c)||0) - (Number(e.d)||0); }); // credit-positive for revenue

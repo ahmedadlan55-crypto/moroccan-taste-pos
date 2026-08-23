@@ -28,6 +28,7 @@ const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
+const glBoundaries = require('../../../lib/reports/glBoundaries');
 const { todayYmd } = require('../../../lib/expiryPolicy');
 
 // PACKAGE G — this report no longer decides where an account belongs. It ASKS
@@ -85,17 +86,25 @@ function orderSection(sectionKey, sectionObj) {
 // used for the period-over-period comparison column. Kept lightweight
 // so providing a `compareDate` doesn't double the heavy main query.
 async function _bsSnapshotTotals(asOfDate, brandId, branchId, hasBrandId, hasBranchId) {
-  let where = "j.status = 'posted'";
-  const params = [];
+  // Same 0036 discipline as the main pass, or the comparison column would be
+  // computed on a different basis than the column it is compared against —
+  // which is worse than having no comparison at all. The join moves from
+  // `e.account_id = a.id` to the REMAPPED account, so a historical line lands
+  // on its canonical account here exactly as it does above.
+  const books = glBoundaries.inTheBooksSql('j');
+  let where = books.sql;
+  const params = [...books.params];
   if (asOfDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(asOfDate); }
   if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
   if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
+  const canonAcc = await glBoundaries.canonicalForAccounts(db, 'a', 'e', 'coa_map');
   const [rows] = await db.query(
     `SELECT a.id, a.code, a.type, a.report_section, a.normal_balance, a.is_contra, a.status,
             COALESCE(SUM(CASE WHEN ${where} THEN e.debit  ELSE 0 END), 0) AS d,
             COALESCE(SUM(CASE WHEN ${where} THEN e.credit ELSE 0 END), 0) AS c
        FROM gl_accounts a
-       LEFT JOIN gl_entries e   ON e.account_id = a.id
+       ${canonAcc.join}
+       LEFT JOIN gl_entries e   ON ${canonAcc.entryMatch}
        LEFT JOIN gl_journals j  ON j.id = e.journal_id
       WHERE COALESCE(a.is_folder, 0) = 0 AND ${classify.REPORTABLE_ACCOUNT_SQL('a')}
       GROUP BY a.id`,
@@ -571,16 +580,32 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
     const [dimCols2] = await db.query("SHOW COLUMNS FROM gl_entries LIKE 'branch_id'");
     const hasBranchId = dimCols2.length > 0;
 
-    // Get balances from gl_entries up to asOfDate
-    let where = "j.status = 'posted'";
-    const params = [];
+    // Get balances from gl_entries up to asOfDate.
+    //
+    // ── THE 0036 REMAP, which this report used to skip ───────────────────────
+    // Migration 0036 rebuilt the chart, left the historical account rows
+    // immutable, recorded each one's canonical destination in
+    // coa_0036_account_map, and moved the money with one mechanical journal.
+    // The Trial Balance groups by the DESTINATION account and excludes that
+    // journal (lib/reports/glBoundaries.js); this report did neither. For any
+    // date after the rebuild it therefore counted the old history AND the
+    // transfer — a doubled account, and a Balance Sheet that could not agree
+    // with the Trial Balance no matter how carefully either was read.
+    const books = glBoundaries.inTheBooksSql('j');
+    let where = books.sql;
+    const params = [...books.params];
     if (asOfDate) { where += ' AND DATE(j.journal_date) <= ?'; params.push(asOfDate); }
     if (brandId  && hasBrandId)  { where += ' AND (e.brand_id IS NULL OR e.brand_id = ?)';   params.push(brandId); }
     if (branchId && hasBranchId) { where += ' AND (e.branch_id IS NULL OR e.branch_id = ?)'; params.push(branchId); }
+    // Degrades to the raw account when the 0036 map table is absent — see the
+    // note in lib/reports/glBoundaries.js. Unconditional joining broke this
+    // report on every database that had not run that migration.
+    const canon = await glBoundaries.canonicalForEntries(db, 'e', 'coa_map');
     const [entries] = await db.query(
-      `SELECT e.account_id, SUM(e.debit) AS d, SUM(e.credit) AS c, COUNT(e.id) AS cnt
+      `SELECT ${canon.account} AS account_id, SUM(e.debit) AS d, SUM(e.credit) AS c, COUNT(e.id) AS cnt
        FROM gl_entries e JOIN gl_journals j ON e.journal_id = j.id
-       WHERE ${where} GROUP BY e.account_id`, params
+       ${canon.join}
+       WHERE ${where} GROUP BY ${canon.account}`, params
     );
     const balMap = {};
     entries.forEach(e => { balMap[e.account_id] = { debit: Number(e.d)||0, credit: Number(e.c)||0, count: Number(e.cnt)||0 }; });

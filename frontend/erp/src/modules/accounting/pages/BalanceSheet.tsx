@@ -40,15 +40,18 @@
 //   compact chip ABOVE the printed document, and the sheet that comes out of
 //   the printer is the statement alone.
 import { useState } from "react";
+import { Download } from "lucide-react";
 import { DatePicker, PrintDocument } from "@/shared/ui";
 import { formatAsAt } from "@/shared/lib";
-import { StatementTable, type StatementRowBase } from "@/shared/reports";
+import { StatementTable, statementCsv, type StatementRowBase } from "@/shared/reports";
+import { useUrlFilters, makeCodec, stringParam } from "@/shared/hooks/useUrlFilters";
 import { useT, type TFunction } from "@/i18n";
 import { useBalanceSheet, todayISO, type BsFlatItem, type BalanceSheetResponse } from "../api";
 import {
   Num,
   fmt,
   ReportHeader,
+  exportRowsCsv,
   FilterCard,
   FilterField,
   ReportState,
@@ -59,6 +62,25 @@ import {
 interface BsRowModel extends StatementRowBase {
   code: string;
   amount: number | null;
+  /** The same line at the comparison date. null = no figure, not zero. */
+  prior?: number | null;
+}
+
+/** Δ, computed only where BOTH sides exist — never against an assumed zero. */
+function delta(row: BsRowModel): number | null {
+  if (row.amount == null || row.prior == null) return null;
+  return row.amount - row.prior;
+}
+
+/**
+ * Zero prints `—` on a detail line and `0.00` on a subtotal.
+ *
+ * Same rule as the income statement, for the same reason: a server-computed
+ * ZERO rendered as a dash is indistinguishable from an ABSENT figure, which
+ * makes the Δ beside it look like a difference taken against nothing.
+ */
+function isSubtotal(row: BsRowModel): boolean {
+  return row.kind !== "line";
 }
 
 /** A section heading, its account lines, and the server's total for it. */
@@ -86,13 +108,35 @@ function section(
       labelText: item.name,
       kind: "line",
       amount: item.balance,
+      prior: item.prior ?? null,
     });
   }
-  rows.push({ id: `${id}:total`, depth: 0, code: "", label: totalLabel, kind: "subtotal", amount: total });
+  // NO prior on a section subtotal, deliberately.
+  //
+  // The server publishes a prior for every LINE and a delta for the grand
+  // totals, but nothing for the sections in between. Summing the lines here
+  // would be this page computing a figure — the one thing the file's own rule
+  // forbids ("Nothing here sums a column"). A blank cell says "not published";
+  // a summed one would say "this is the answer", and the two are not the same
+  // claim.
+  rows.push({ id: `${id}:total`, depth: 0, code: "", label: totalLabel, kind: "subtotal", amount: total, prior: null });
 }
 
-function measure(rows: BsRowModel[], id: string, label: string, amount: number): void {
-  rows.push({ id, depth: 0, code: "", label, kind: "total", amount });
+function measure(
+  rows: BsRowModel[], id: string, label: string, amount: number, prior?: number | null,
+): void {
+  rows.push({ id, depth: 0, code: "", label, kind: "total", amount, prior: prior ?? null });
+}
+
+/**
+ * A grand total's prior, recovered from the server's own delta.
+ *
+ * `change.X.abs` is (current − prior), computed server-side, so prior is
+ * current − abs. This rearranges the server's arithmetic; it does not invent
+ * a figure. Returns null when no comparison ran.
+ */
+function priorFromDelta(current: number, d?: { abs: number } | null): number | null {
+  return d && typeof d.abs === "number" ? current - d.abs : null;
 }
 
 function buildRows(t: TFunction, data: BalanceSheetResponse): BsRowModel[] {
@@ -107,24 +151,34 @@ function buildRows(t: TFunction, data: BalanceSheetResponse): BsRowModel[] {
 
   section(rows, "current-assets", currentAssets, totalOf(currentAssets), data.currentAssets, data.totCA);
   section(rows, "non-current-assets", nonCurrentAssets, totalOf(nonCurrentAssets), data.nonCurrentAssets, data.totNCA);
-  measure(rows, "total-assets", t("accounting.balanceSheet.totalAssets"), data.totalAssets);
+  measure(rows, "total-assets", t("accounting.balanceSheet.totalAssets"), data.totalAssets, priorFromDelta(data.totalAssets, data.change?.totalAssets));
 
   section(rows, "current-liab", currentLiab, totalOf(currentLiab), data.currentLiab, data.totCL);
   section(rows, "non-current-liab", nonCurrentLiab, totalOf(nonCurrentLiab), data.nonCurrentLiab, data.totNCL);
-  measure(rows, "total-liabilities", t("accounting.balanceSheet.totalLiabilities"), data.totalLiabilities);
+  measure(rows, "total-liabilities", t("accounting.balanceSheet.totalLiabilities"), data.totalLiabilities, priorFromDelta(data.totalLiabilities, data.change?.totalLiabilities));
 
   section(rows, "equity", equity, totalOf(equity), data.equityItems, data.totEq);
-  measure(rows, "total-equity", t("accounting.balanceSheet.totalEquity"), data.totEq);
+  measure(rows, "total-equity", t("accounting.balanceSheet.totalEquity"), data.totEq, priorFromDelta(data.totEq, data.change?.totEq));
 
   return rows;
 }
 
+/** The report's whole state, in the query string — a copied link reproduces it. */
+const bsCodec = makeCodec({
+  asOf: stringParam(todayISO()),
+  cmpAsOf: stringParam(""),
+});
+
 export function BalanceSheetPage() {
   const t = useT();
-  const filter = useAppliedFilter<{ asOf: string }>({ asOf: todayISO() });
-  const query = useBalanceSheet(filter.applied.asOf);
+  const url = useUrlFilters(bsCodec);
+  const asOf = url.filters.asOf;
+  const compareAsOf = url.filters.cmpAsOf || null;
+  const filter = useAppliedFilter<{ asOf: string }>({ asOf });
+  const query = useBalanceSheet(asOf, compareAsOf);
   const data = query.data;
-  const period = formatAsAt(filter.applied.asOf);
+  const period = formatAsAt(asOf);
+  const comparing = !!(compareAsOf && data?.change);
   // Adds two figures the server computed independently. NOT a client-side
   // rollup of the rows — it is the same right-hand side the server's own
   // `isBalanced` compares total assets against, and the server publishes no
@@ -139,16 +193,92 @@ export function BalanceSheetPage() {
       return next;
     });
 
+  const columns = [
+    {
+      id: "amount",
+      header: t("accounting.balanceSheet.amountHeader"),
+      groupId: comparing ? "current" : undefined,
+      align: "end" as const,
+      render: (row: BsRowModel) =>
+        row.amount == null ? null : (
+          <Num value={row.amount} signed strong={isSubtotal(row)} dash={!isSubtotal(row)} />
+        ),
+      csv: (row: BsRowModel) => row.amount ?? "",
+    },
+    ...(comparing
+      ? [
+          {
+            id: "prior",
+            header: t("accounting.balanceSheet.amountHeader"),
+            groupId: "prior",
+            align: "end" as const,
+            render: (row: BsRowModel) =>
+              row.prior == null ? null : (
+                <Num value={row.prior} signed strong={isSubtotal(row)} dash={!isSubtotal(row)} />
+              ),
+            csv: (row: BsRowModel) => row.prior ?? "",
+          },
+          {
+            id: "delta",
+            header: t("accounting.balanceSheet.deltaHeader"),
+            align: "end" as const,
+            render: (row: BsRowModel) => {
+              const d = delta(row);
+              return d == null ? null : (
+                <Num value={d} signed strong={isSubtotal(row)} dash={!isSubtotal(row)} />
+              );
+            },
+            csv: (row: BsRowModel) => delta(row) ?? "",
+          },
+        ]
+      : []),
+  ];
+
+  function exportCsv() {
+    if (!data) return;
+    const { header, rows: body } = statementCsv(rows, columns, t("accounting.balanceSheet.lineHeader"), {
+      leadHeader: t("accounting.common.account"),
+      renderLeadText: (row) => row.code,
+    });
+    exportRowsCsv(`balance-sheet-${asOf}`, header, body);
+  }
+
   return (
     <div>
       <ReportHeader
         title={t("accounting.balanceSheet.title")}
         subtitle={t("accounting.balanceSheet.subtitle")}
         onPrint={printReport}
+        extraActions={
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={!data}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            {t("table.exportCsv")}
+          </button>
+        }
       />
-      <FilterCard onRun={filter.run} running={query.isFetching}>
+      <FilterCard
+        onRun={() => {
+          filter.run();
+          url.patch({ asOf: filter.draft.asOf });
+        }}
+        running={query.isFetching}
+      >
         <FilterField label={t("accounting.common.asOfDate")}>
-          <DatePicker value={filter.draft.asOf} onChange={(asOf) => filter.patch({ asOf })} />
+          <DatePicker value={filter.draft.asOf} onChange={(next) => filter.patch({ asOf: next })} />
+        </FilterField>
+        {/* A balance sheet compares two POINTS in time, not two ranges — so
+            this is a single date, not a ComparePicker. Clearing it removes
+            the column rather than comparing against nothing. */}
+        <FilterField label={t("accounting.balanceSheet.compareLabel")}>
+          <DatePicker
+            value={url.filters.cmpAsOf}
+            onChange={(next) => url.patch({ cmpAsOf: next || "" })}
+          />
         </FilterField>
       </FilterCard>
 
@@ -187,18 +317,17 @@ export function BalanceSheetPage() {
                   onToggleRow={toggleRow}
                   expandLabel={t("accounting.coa.expand")}
                   collapseLabel={t("accounting.coa.collapse")}
-                  columns={[
-                    {
-                      id: "amount",
-                      header: t("accounting.balanceSheet.amountHeader"),
-                      align: "end",
-                      render: (row) =>
-                        row.amount == null ? null : (
-                          <Num value={row.amount} signed strong={row.kind !== "line"} />
-                        ),
-                      csv: (row) => row.amount ?? "",
-                    },
-                  ]}
+                  columns={columns}
+                  // The two-tier header names each date, so a printed copy
+                  // states which two points in time are being compared.
+                  groups={
+                    comparing
+                      ? [
+                          { id: "current", header: period },
+                          { id: "prior", header: formatAsAt(compareAsOf!) },
+                        ]
+                      : undefined
+                  }
                   totals={{
                     label: t("accounting.balanceSheet.totalLiabEquity"),
                     values: { amount: <Num value={rhs} signed strong /> },

@@ -35,6 +35,22 @@ function wrap(ui: ReactNode) {
   );
 }
 
+/**
+ * Render at a specific URL.
+ *
+ * These pages read their whole state from the query string now, so a test that
+ * mounts at "/" is testing the defaults, not the report. This is how the URL
+ * itself is proven to drive the comparison — nothing is clicked.
+ */
+function wrapAt(ui: ReactNode, url: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <I18nProvider><MemoryRouter initialEntries={[url]}>{ui}</MemoryRouter></I18nProvider>
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => get.mockReset());
 
 /** The row ids in document order — the statement's reading order. */
@@ -260,17 +276,88 @@ describe("IncomeStatementPage renders a statement", () => {
   });
 });
 
-describe("BalanceSheetPage renders a statement", () => {
-  const BS = {
-    currentAssets: [{ id: "a1", code: "1101", name: "الصندوق", balance: 500, level: 3 }],
-    nonCurrentAssets: [],
-    currentLiab: [{ id: "l1", code: "2101", name: "ذمم دائنة", balance: 200, level: 3 }],
-    nonCurrentLiab: [],
-    equityItems: [{ id: "e1", code: "3101", name: "رأس المال", balance: 300, level: 3 }],
-    totCA: 500, totNCA: 0, totCL: 200, totNCL: 0,
-    totalAssets: 500, totalLiabilities: 200, totEq: 300,
-    netIncome: 0, isBalanced: true, asOfDate: "2026-08-14",
+/** The plain balance-sheet fixture, shared by both describes. */
+const BS_BASE = {
+  currentAssets: [{ id: "a1", code: "1101", name: "الصندوق", balance: 500, level: 3 }],
+  nonCurrentAssets: [],
+  currentLiab: [{ id: "l1", code: "2101", name: "ذمم دائنة", balance: 200, level: 3 }],
+  nonCurrentLiab: [],
+  equityItems: [{ id: "e1", code: "3101", name: "رأس المال", balance: 300, level: 3 }],
+  totCA: 500, totNCA: 0, totCL: 200, totNCL: 0,
+  totalAssets: 500, totalLiabilities: 200, totEq: 300,
+  netIncome: 0, isBalanced: true, asOfDate: "2026-08-14",
+};
+
+// ── The balance sheet's comparative column ─────────────────────────────────
+// A balance sheet compares two POINTS in time, so the control is a single date
+// rather than a range picker, and the server answers with a `prior` on every
+// line plus grand-total deltas.
+//
+// The rule the page must not break: it does not sum anything. A SECTION
+// subtotal has no published prior, so its comparison cell is blank — a blank
+// says "not published", where a summed figure would say "this is the answer".
+describe("BalanceSheetPage — the comparison column", () => {
+  const BS_CMP = {
+    ...BS_BASE,
+    currentAssets: [{ id: "a1", code: "1101", name: "الصندوق", balance: 500, level: 3, prior: 200 }],
+    change: {
+      totalAssets: { abs: 300, pct: 150 },
+      totalLiabilities: { abs: 0, pct: 0 },
+      totEq: { abs: 300, pct: 100 },
+      netIncome: { abs: 0, pct: null },
+    },
   };
+
+  it("shows no comparison column when no compare date is in the URL", async () => {
+    get.mockResolvedValue({ ...BS_BASE });
+    wrap(<BalanceSheetPage />);
+    await screen.findByText("الصندوق");
+    expect(document.querySelectorAll("thead tr").length).toBe(1);
+  });
+
+  it("renders the server's prior on a line, and a Δ from the two", async () => {
+    get.mockResolvedValue(BS_CMP);
+    wrapAt(<BalanceSheetPage />, "/?asOf=2026-08-14&cmpAsOf=2025-08-14");
+    await screen.findByText("الصندوق");
+
+    expect(document.querySelectorAll("thead tr").length).toBe(2);
+
+    const line = document.querySelector('[data-statement-row="current-assets:a1"]');
+    const cells = [...(line?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+    expect(cells.join(" | ")).toContain("500");
+    expect(cells.join(" | ")).toContain("200");
+    expect(cells.join(" | ")).toContain("300");   // Δ = 500 − 200
+  });
+
+  it("leaves a SECTION subtotal's comparison blank rather than summing it", async () => {
+    get.mockResolvedValue(BS_CMP);
+    wrapAt(<BalanceSheetPage />, "/?asOf=2026-08-14&cmpAsOf=2025-08-14");
+    await screen.findByText("الصندوق");
+
+    // The server publishes no prior for a section subtotal. Summing the lines
+    // here would be the page computing a figure — the one thing this file's
+    // own rule forbids.
+    const sectionTotal = document.querySelector('[data-statement-row="current-assets:total"]');
+    const cells = [...(sectionTotal?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+    expect(cells[cells.length - 2]).toBe("");   // prior
+    expect(cells[cells.length - 1]).toBe("");   // Δ
+  });
+
+  it("recovers a GRAND total's prior from the server's own delta", async () => {
+    get.mockResolvedValue(BS_CMP);
+    wrapAt(<BalanceSheetPage />, "/?asOf=2026-08-14&cmpAsOf=2025-08-14");
+    await screen.findByText("الصندوق");
+
+    // change.totalAssets.abs = 300, current = 500 ⇒ prior = 200. Rearranging
+    // the server's arithmetic, not inventing a figure.
+    const grand = document.querySelector('[data-statement-row="total-assets"]');
+    const cells = [...(grand?.querySelectorAll("td") ?? [])].map((c) => (c.textContent ?? "").trim());
+    expect(cells.join(" | ")).toContain("200");
+  });
+});
+
+describe("BalanceSheetPage renders a statement", () => {
+  const BS = BS_BASE;
 
   it("runs assets → total assets → liabilities → total liabilities → equity, top to bottom", async () => {
     get.mockResolvedValue(BS);

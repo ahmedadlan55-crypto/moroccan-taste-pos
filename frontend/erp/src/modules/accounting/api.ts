@@ -288,6 +288,15 @@ export interface BsFlatItem {
   name: string;
   balance: number;
   level: number;
+  /**
+   * The same account at the comparison date, signed by the SAME rule that
+   * produced `balance` — the server applies the row's own transformation
+   * rather than re-deriving contra from a different source.
+   *
+   * `null` = no comparison requested, or the account had no figure then.
+   * Neither is zero.
+   */
+  prior?: number | null;
 }
 export interface BalanceSheetResponse {
   error?: string;
@@ -305,16 +314,36 @@ export interface BalanceSheetResponse {
   totEq: number;
   netIncome: number;
   isBalanced: boolean;
+  /**
+   * Period-over-period deltas, present only when `compareDate` was supplied.
+   *
+   * `abs` is (current − prior), computed server-side. The page recovers a prior
+   * TOTAL by rearranging that rather than summing a column itself — the same
+   * discipline that keeps every other figure on this statement the server's.
+   *
+   * Server-side those prior totals are summed from the prior COLUMN, so the
+   * footer cannot disagree with the lines above it.
+   */
+  change?: {
+    totalAssets: { abs: number; pct: number | null };
+    totalLiabilities: { abs: number; pct: number | null };
+    totEq: { abs: number; pct: number | null };
+    netIncome: { abs: number; pct: number | null };
+    sectionTotals?: Record<string, number>;
+  } | null;
   asOfDate: string;
 }
-export function useBalanceSheet(asOfDate: string | null) {
+export function useBalanceSheet(asOfDate: string | null, compareDate?: string | null) {
+  const comparing = !!compareDate;
   return useQuery({
-    queryKey: ["acc", "balance-sheet", asOfDate],
+    // compareDate is part of the key: turning comparison on must refetch, not
+    // re-render the previous answer with an empty second column.
+    queryKey: ["acc", "balance-sheet", asOfDate, comparing ? compareDate : null],
     enabled: !!asOfDate,
     queryFn: async () =>
       unwrap(
         await apiClient.get<BalanceSheetResponse>("/erp/reports/balance-sheet-ifrs", {
-          params: { asOfDate: asOfDate! },
+          params: { asOfDate: asOfDate!, ...(comparing ? { compareDate: compareDate! } : {}) },
         }),
       ),
   });

@@ -548,6 +548,8 @@ export const accounting = {
   },
 
   balanceSheet: {
+    deltaHeader: "Change",
+    compareLabel: "Compare to date",
     title: "Statement of Financial Position",
     subtitle: "Assets = Liabilities + Equity, per IAS 1 — as of a specific date.",
     balanced: "Balanced — total assets {assets} = liabilities and equity {rhs}",

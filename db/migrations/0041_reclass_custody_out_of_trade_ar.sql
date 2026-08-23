@@ -50,7 +50,14 @@ SET @amount = (
      AND e.account_id = @ar_id
 );
 
-SET @jid = 'JV-RECLASS-CUSTODY-0041';
+-- `id` is VARCHAR(50) but `journal_number` is VARCHAR(20). The first version of
+-- this migration used 'JV-RECLASS-CUSTODY-0041' — 23 characters — for BOTH, and
+-- the INSERT failed with "Data too long for column 'journal_number'". The
+-- release chain then did exactly what it is built to do and refused to start the
+-- server on an incomplete schema, so the failure took production down rather
+-- than half-applying a ledger change. Keep the number inside 20.
+SET @jid  = 'JV-RECLASS-CUSTODY-0041';
+SET @jnum = 'JV-RECL-CUST-0041';
 SET @already = (SELECT COUNT(*) FROM gl_journals WHERE id = @jid);
 
 SET @go = IF(@ar_id IS NOT NULL AND @adv_id IS NOT NULL
@@ -58,7 +65,7 @@ SET @go = IF(@ar_id IS NOT NULL AND @adv_id IS NOT NULL
 
 INSERT INTO gl_journals (id, journal_number, journal_date, reference_type, reference_id,
                          description, total_debit, total_credit, status, created_by, posted_by, posted_at)
-SELECT @jid, @jid, CURDATE(), 'Reclass', 'CUSTODY-0041',
+SELECT @jid, @jnum, CURDATE(), 'Reclass', 'CUSTODY-0041',
        'إعادة تصنيف أرصدة العهد من ذمم العملاء إلى سلف الموظفين والعهد',
        @amount, @amount, 'posted', 'migration-0041', 'migration-0041', NOW()
  WHERE @go = 1;

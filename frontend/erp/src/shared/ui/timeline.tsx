@@ -22,10 +22,10 @@ export function AuditTimeline({ entries }: { entries: AuditEntry[] }) {
     return <p className="text-sm font-medium text-slate-400">{t("sharedUi.timeline.empty")}</p>;
   }
   return (
-    <ol className="relative space-y-4 border-r border-slate-200 pr-4">
+    <ol className="relative space-y-4 border-s border-slate-200 ps-4">
       {entries.map((e) => (
         <li key={e.id} className="relative">
-          <span className="absolute -right-[calc(1rem+1px)] top-1 grid h-4 w-4 -translate-x-1/2 place-items-center rounded-full bg-teal-600 text-white">
+          <span className="absolute -start-[calc(1rem+1px)] top-1 grid h-4 w-4 -translate-x-1/2 place-items-center rounded-full bg-teal-600 text-white rtl:translate-x-1/2">
             <Dot className="h-3 w-3" />
           </span>
           <div className="text-sm font-bold text-slate-800">{e.action}</div>

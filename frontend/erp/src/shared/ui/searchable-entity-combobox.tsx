@@ -22,6 +22,7 @@ import { createPortal } from "react-dom";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Search, X, AlertTriangle, Loader2 } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 import { useTx } from "./i18n";
 
 export interface EntityPage<T> {
@@ -74,6 +75,7 @@ interface PopupPos {
 
 export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps<T>) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
   const {
     value,
     onChange,
@@ -286,11 +288,11 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
   return (
     <div ref={boxRef} className="relative">
       <label className="relative block">
-        <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
           ref={inputRef}
           id={id}
-          className="field w-full py-2 pr-10"
+          className="field w-full py-2 ps-10"
           placeholder={placeholder}
           value={q}
           disabled={disabled}
@@ -318,7 +320,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
             id={listId}
             role="listbox"
             ref={listRef}
-            dir="rtl"
+            dir={lang === "ar" ? "rtl" : "ltr"}
             onScroll={onScroll}
             onMouseDown={(e) => {
               if (e.target !== listRef.current) e.preventDefault();
@@ -333,7 +335,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
                 <button
                   type="button"
                   onClick={() => query.refetch()}
-                  className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-200"
+                  className="min-h-11 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
                 >
                   {t("common.retry")}
                 </button>
@@ -362,7 +364,7 @@ export function SearchableEntityCombobox<T>(props: SearchableEntityComboboxProps
                       aria-selected={isActive}
                       style={{ height: ROW_H }}
                       className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-lg px-3 text-right transition",
+                        "flex w-full items-center justify-between gap-2 rounded-lg px-3 text-start transition",
                         isActive ? "bg-teal-50 ring-1 ring-teal-200" : "hover:bg-slate-50",
                       )}
                       onMouseEnter={() => setActive(idx)}

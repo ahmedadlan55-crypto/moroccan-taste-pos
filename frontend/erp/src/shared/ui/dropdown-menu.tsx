@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 
 export interface DropdownMenuItem {
   key: string;
@@ -31,6 +32,7 @@ export function DropdownMenu({
   className,
   "aria-label": ariaLabel,
 }: DropdownMenuProps) {
+  const lang = useOptionalLang() ?? "ar";
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -93,7 +95,7 @@ export function DropdownMenu({
         <div
           role="menu"
           aria-label={ariaLabel}
-          dir="rtl"
+          dir={lang === "ar" ? "rtl" : "ltr"}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -110,7 +112,7 @@ export function DropdownMenu({
           }}
           className={cn(
             "absolute z-popover mt-1 min-w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl ring-1 ring-black/5",
-            align === "end" ? "left-0" : "right-0",
+            align === "end" ? "end-0" : "start-0",
           )}
         >
           {items.map((it, i) => (
@@ -129,7 +131,7 @@ export function DropdownMenu({
               }}
               onMouseEnter={() => !it.disabled && setActive(i)}
               className={cn(
-                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-right text-sm font-semibold transition focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+                "flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm font-semibold transition focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
                 it.tone === "danger"
                   ? "text-rose-600 hover:bg-rose-50"
                   : "text-slate-700 hover:bg-slate-50",
@@ -137,7 +139,7 @@ export function DropdownMenu({
               )}
             >
               {it.icon && <span className="shrink-0 text-slate-400">{it.icon}</span>}
-              <span className="min-w-0 flex-1 truncate">{it.label}</span>
+              <span className="min-w-0 flex-1 break-words">{it.label}</span>
             </button>
           ))}
         </div>

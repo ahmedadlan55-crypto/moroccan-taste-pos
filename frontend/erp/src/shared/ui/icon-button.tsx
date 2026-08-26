@@ -5,7 +5,7 @@ import { cn } from "@/shared/lib";
 // Square icon-only button. `aria-label` is REQUIRED for an accessible name
 // (there is no text content) — enforced via the props type below.
 const iconButtonVariants = cva(
-  "inline-grid place-items-center rounded-xl transition disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+  "inline-grid min-h-11 min-w-11 shrink-0 place-items-center rounded-xl transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
   {
     variants: {
       variant: {
@@ -15,7 +15,8 @@ const iconButtonVariants = cva(
       },
       size: {
         md: "h-11 w-11",
-        sm: "h-9 w-9",
+        // Keep the compact visual rhythm without violating the 44px touch target.
+        sm: "h-11 w-11",
       },
     },
     defaultVariants: { variant: "ghost", size: "md" },

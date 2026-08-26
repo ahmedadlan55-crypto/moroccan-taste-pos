@@ -211,7 +211,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             // Logical utilities are physical here because the root is
             // deliberately LTR for ISO dates. This preserves the global RTL
             // token contract while reserving the trigger's right-side space.
-            "field py-2 ps-3 pe-11 text-start tabular-nums",
+            "field py-2 ps-3 pe-12 text-start tabular-nums",
             invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
             layoutClasses.control,
           )}
@@ -236,7 +236,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
             }
           }}
           className={cn(
-            "absolute end-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 cursor-pointer place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+            "absolute inset-y-0 end-0 grid w-11 cursor-pointer place-items-center rounded-e-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
             disabled && "cursor-not-allowed opacity-60",
           )}
         >

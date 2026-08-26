@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 import { useTx } from "./i18n";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
@@ -45,6 +46,7 @@ const TONE_STYLES: Record<ToastTone, { ring: string; icon: ReactNode }> = {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
   const [toasts, setToasts] = useState<ToastRecord[]>([]);
   const seq = useRef(0);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -113,7 +115,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                     transition={{ type: "spring", damping: 26, stiffness: 320 }}
                     role="status"
                     aria-live={toastRecord.tone === "error" ? "assertive" : "polite"}
-                    dir="rtl"
+                    dir={lang === "ar" ? "rtl" : "ltr"}
                     className={cn(
                       "pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border bg-white p-4 shadow-lift",
                       style.ring,
@@ -132,7 +134,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                       type="button"
                       aria-label={t("sharedUi.toast.close")}
                       onClick={() => dismiss(toastRecord.id)}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                      className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                     >
                       <X className="h-4 w-4" />
                     </button>

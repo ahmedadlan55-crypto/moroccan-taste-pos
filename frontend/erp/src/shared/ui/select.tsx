@@ -27,7 +27,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         ref={ref}
         aria-invalid={invalid || undefined}
         className={cn(
-          "field appearance-none py-2 pl-9",
+          "field appearance-none py-2 pe-10",
           invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
           className,
         )}
@@ -47,7 +47,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           : children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+        className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
         aria-hidden="true"
       />
     </span>

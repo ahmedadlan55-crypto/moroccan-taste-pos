@@ -136,6 +136,13 @@ export function useOptionalT(): TFunction | null {
   return useContext(I18nContext)?.t ?? null;
 }
 
+/** Active language when a provider exists, otherwise null. Shared design-system
+ *  primitives use this instead of `useLang()` because they are also rendered in
+ *  isolation by Storybook/tests. */
+export function useOptionalLang(): Lang | null {
+  return useContext(I18nContext)?.lang ?? null;
+}
+
 export function useLang(): Lang {
   return useI18nContext().lang;
 }

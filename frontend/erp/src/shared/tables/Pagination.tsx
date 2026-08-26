@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn, formatNumber } from "@/shared/lib";
 import { IconButton } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
+import { useOptionalLang } from "@/i18n";
 
 /**
  * The "page N of M" counter. One implementation, because there were ten.
@@ -63,19 +64,22 @@ export function Pagination({
   className,
 }: PaginationProps) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
+  const PreviousIcon = lang === "ar" ? ChevronRight : ChevronLeft;
+  const NextIcon = lang === "ar" ? ChevronLeft : ChevronRight;
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = total != null ? Math.min(page * pageSize, total) : page * pageSize;
 
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-3 py-3 text-xs font-semibold text-slate-500",
+        "flex flex-col items-stretch justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs font-semibold text-slate-500 sm:flex-row sm:flex-wrap sm:items-center",
         className,
       )}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         {total != null ? (
-          <span dir="rtl">
+          <span dir={lang === "ar" ? "rtl" : "ltr"}>
             {t("table.showing")}{" "}
             <span dir="ltr" className="tabular-nums">
               {formatNumber(from)}–{formatNumber(to)}
@@ -94,7 +98,7 @@ export function Pagination({
           <label className="flex items-center gap-1">
             <span className="sr-only">{t("table.rowsPerPage")}</span>
             <select
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+              className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
               value={pageSize}
               onChange={(e) => onPageSizeChange(Number(e.target.value))}
               aria-label={t("table.rowsPerPage")}
@@ -109,7 +113,7 @@ export function Pagination({
         )}
       </div>
 
-      <nav className="flex items-center gap-1" aria-label={t("table.paginationNav")}>
+      <nav className="flex items-center justify-between gap-2 sm:justify-end" aria-label={t("table.paginationNav")}>
         <IconButton
           aria-label={t("table.prevPage")}
           size="sm"
@@ -117,8 +121,7 @@ export function Pagination({
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
         >
-          {/* RTL: "previous" points to the right */}
-          <ChevronRight className="h-4 w-4" />
+          <PreviousIcon className="h-4 w-4" />
         </IconButton>
         <PageCounter page={page} pageCount={pageCount} className="min-w-16" />
         <IconButton
@@ -128,7 +131,7 @@ export function Pagination({
           disabled={page >= pageCount}
           onClick={() => onPageChange(page + 1)}
         >
-          <ChevronLeft className="h-4 w-4" />
+          <NextIcon className="h-4 w-4" />
         </IconButton>
       </nav>
     </div>

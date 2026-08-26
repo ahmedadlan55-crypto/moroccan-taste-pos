@@ -20,8 +20,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         className={cn(
           "field py-2",
           invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
-          leading != null && "pr-10",
-          trailing != null && "pl-10",
+          leading != null && "ps-10",
+          trailing != null && "pe-10",
           className,
         )}
         {...props}
@@ -34,13 +34,13 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <span className="relative block">
         {leading != null && (
-          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+          <span className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-slate-400">
             {leading}
           </span>
         )}
         {control}
         {trailing != null && (
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{trailing}</span>
+          <span className="absolute end-3 top-1/2 -translate-y-1/2 text-slate-400">{trailing}</span>
         )}
       </span>
     );

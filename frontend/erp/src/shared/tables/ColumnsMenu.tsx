@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Columns3 } from "lucide-react";
 import { Checkbox } from "@/shared/ui";
 import { useTx } from "@/shared/ui/i18n";
+import { useOptionalLang } from "@/i18n";
 import type { ColumnDef } from "./types";
 
 export interface ColumnsMenuProps<T> {
@@ -13,6 +14,7 @@ export interface ColumnsMenuProps<T> {
 /** A popover of checkboxes to show/hide hideable columns. */
 export function ColumnsMenu<T>({ columns, hiddenColumns, onToggle }: ColumnsMenuProps<T>) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -40,8 +42,8 @@ export function ColumnsMenu<T>({ columns, hiddenColumns, onToggle }: ColumnsMenu
       </button>
       {open && (
         <div
-          dir="rtl"
-          className="absolute left-0 z-popover mt-1 w-52 rounded-xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5"
+          dir={lang === "ar" ? "rtl" : "ltr"}
+          className="absolute end-0 z-popover mt-1 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-xl ring-1 ring-black/5"
         >
           <div className="px-2 py-1 text-[11px] font-extrabold text-slate-400">{t("table.showColumns")}</div>
           <ul className="max-h-64 space-y-0.5 overflow-y-auto">

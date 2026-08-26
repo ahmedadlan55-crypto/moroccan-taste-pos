@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 import { useTx } from "./i18n";
 
 export interface ComboboxOption<T extends string> {
@@ -41,6 +42,7 @@ export function Combobox<T extends string>({
   "aria-label": ariaLabel,
 }: ComboboxProps<T>) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
@@ -112,7 +114,7 @@ export function Combobox<T extends string>({
         onClick={() => !disabled && setOpen((o) => !o)}
         onKeyDown={onKeyDown}
         className={cn(
-          "field flex items-center justify-between gap-2 py-2 text-right",
+          "field flex items-center justify-between gap-2 py-2 text-start",
           invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
           disabled && "cursor-not-allowed opacity-60",
         )}
@@ -142,17 +144,17 @@ export function Combobox<T extends string>({
       {open && (
         <div
           className="absolute z-popover mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5"
-          dir="rtl"
+          dir={lang === "ar" ? "rtl" : "ltr"}
         >
           <div className="border-b border-slate-100 p-2">
             <label className="relative block">
-              <Search className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={onKeyDown}
-                className="field h-9 w-full py-1 pr-9 text-sm"
+                className="field w-full py-2 ps-10 text-sm"
                 placeholder={t("sharedUi.combobox.searchPlaceholder")}
                 aria-label={t("sharedUi.combobox.searchLabel")}
               />
@@ -174,7 +176,7 @@ export function Combobox<T extends string>({
                     onMouseEnter={() => setActive(i)}
                     onClick={() => pick(o.value)}
                     className={cn(
-                      "flex w-full flex-col rounded-lg px-3 py-2 text-right transition disabled:cursor-not-allowed disabled:opacity-50",
+                      "flex min-h-11 w-full flex-col rounded-lg px-3 py-2 text-start transition disabled:cursor-not-allowed disabled:opacity-50",
                       i === active ? "bg-teal-50 ring-1 ring-teal-200" : "hover:bg-slate-50",
                     )}
                   >

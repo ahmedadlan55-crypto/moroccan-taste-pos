@@ -29,13 +29,13 @@ export function BulkActionBar({ count, onClear, children, itemNoun }: BulkAction
           transition={{ type: "spring", damping: 26, stiffness: 320 }}
           role="region"
           aria-label={t("table.bulkActions")}
-          className="fixed inset-x-0 bottom-4 z-drawer mx-auto flex w-fit max-w-[calc(100vw-2rem)] items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-lift"
+          className="fixed inset-x-4 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-drawer mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-lift lg:bottom-4 lg:w-fit lg:flex-nowrap lg:gap-3 lg:px-4"
         >
           <button
             type="button"
             onClick={onClear}
             aria-label={t("table.clearSelection")}
-            className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
           >
             <X className="h-4 w-4" />
           </button>
@@ -45,7 +45,7 @@ export function BulkActionBar({ count, onClear, children, itemNoun }: BulkAction
             </span>{" "}
             {noun} {t("table.selectedSuffix")}
           </span>
-          <div className="flex items-center gap-2">{children}</div>
+          <div className="ms-auto flex min-w-0 flex-wrap items-center gap-2">{children}</div>
         </motion.div>
       )}
     </AnimatePresence>

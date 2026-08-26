@@ -32,7 +32,7 @@ export function Tooltip({ content, children, side = "top", className }: TooltipP
           role="tooltip"
           id={id}
           className={cn(
-            "pointer-events-none absolute left-1/2 z-popover -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-bold text-white shadow-lg",
+            "pointer-events-none absolute left-1/2 z-popover w-max max-w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 whitespace-normal break-words rounded-lg bg-slate-900 px-3 py-2 text-center text-xs font-bold leading-5 text-white shadow-lg",
             side === "top" ? "bottom-full mb-2" : "top-full mt-2",
             className,
           )}

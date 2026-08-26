@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 import { IconButton } from "./icon-button";
 import { useFocusTrap } from "./overlay";
 import { FullPageFlow } from "./full-page-flow";
@@ -70,6 +71,7 @@ function CompactDialog({
   dismissable = true,
 }: DialogProps) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
   const panelRef = useFocusTrap<HTMLDivElement>({
     active: open,
     onClose,
@@ -104,7 +106,7 @@ function CompactDialog({
               aria-labelledby={title ? titleId : undefined}
               aria-describedby={description ? descId : undefined}
               tabIndex={-1}
-              dir="rtl"
+              dir={lang === "ar" ? "rtl" : "ltr"}
               className={cn(
                 "flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl focus:outline-none sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl",
                 SIZES[size],
@@ -133,7 +135,7 @@ function CompactDialog({
               )}
               {children && <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{children}</div>}
               {footer && (
-                <div className="grid shrink-0 grid-cols-1 gap-2 border-t border-slate-100 bg-white px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex sm:flex-wrap sm:justify-end sm:px-5 [&>button]:w-full sm:[&>button]:w-auto">
+                <div className="grid shrink-0 grid-cols-1 gap-2 border-t border-slate-100 bg-white px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:flex sm:flex-wrap sm:justify-end sm:px-5 [&>a]:w-full [&>button]:w-full sm:[&>a]:w-auto sm:[&>button]:w-auto">
                   {footer}
                 </div>
               )}

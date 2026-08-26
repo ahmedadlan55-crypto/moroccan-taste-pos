@@ -279,11 +279,11 @@ describe("call-site compatibility", () => {
 
       const input = field();
       expect(input.type).toBe("text");
-    expect(input).toHaveClass("h-9", "py-1", "pe-11", "ps-3", "text-start");
+      expect(input).toHaveClass("h-9", "py-1", "pe-12", "ps-3", "text-start");
       expect(input).not.toHaveClass("mt-1", "w-full", "max-w-xs", "lg:w-44", "pe-10", "text-start");
 
       const trigger = toggle();
-      expect(trigger).toHaveClass("end-1.5");
+      expect(trigger).toHaveClass("end-0", "inset-y-0", "w-11");
       expect(root).toHaveAttribute("dir", "ltr");
       expect(root!.querySelectorAll("svg")).toHaveLength(1);
     } finally {

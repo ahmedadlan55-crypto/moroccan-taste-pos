@@ -75,7 +75,7 @@ export function MetricCard({ label, value, note, delta, icon: Icon, tone = "teal
       <button
         type="button"
         onClick={onClick}
-        className="surface w-full p-4 text-right transition hover:-translate-y-1 hover:border-teal-200 hover:shadow-lift"
+        className="surface min-h-11 w-full p-4 text-start transition-colors hover:border-teal-200 hover:shadow-lift"
       >
         {body}
       </button>
@@ -87,7 +87,7 @@ export function MetricCard({ label, value, note, delta, icon: Icon, tone = "teal
     // positioned overlay button; the explain trigger sits ABOVE it (z-10) so
     // both stay independently keyboard-reachable and no <button> nests.
     return (
-      <article className="surface relative p-4 transition hover:-translate-y-1 hover:border-teal-200 hover:shadow-lift">
+      <article className="surface relative p-4 transition-colors hover:border-teal-200 hover:shadow-lift">
         <button type="button" onClick={onClick} aria-label={label} className="absolute inset-0 rounded-2xl" />
         {body}
       </article>

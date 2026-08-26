@@ -3,9 +3,9 @@ import { cn } from "@/shared/lib";
 import type { ColumnAlign } from "./types";
 
 const ALIGN_CLASS: Record<ColumnAlign, string> = {
-  start: "text-right",
+  start: "text-start",
   center: "text-center",
-  end: "text-left",
+  end: "text-end",
 };
 
 /** Horizontal-scroll container + the table element. Keeps wide tables from
@@ -44,7 +44,7 @@ export function Th({
       scope="col"
       className={cn(
         "whitespace-nowrap px-3 py-3 font-semibold text-slate-600",
-        numeric ? "text-left" : ALIGN_CLASS[align],
+        numeric ? "text-end" : ALIGN_CLASS[align],
         className,
       )}
       {...props}
@@ -65,7 +65,7 @@ export function Td({
     <td
       className={cn(
         "px-3 py-3 align-middle leading-6 text-slate-700",
-        numeric ? "text-left tabular-nums" : ALIGN_CLASS[align],
+        numeric ? "text-end tabular-nums" : ALIGN_CLASS[align],
         numeric && "font-semibold",
         className,
       )}

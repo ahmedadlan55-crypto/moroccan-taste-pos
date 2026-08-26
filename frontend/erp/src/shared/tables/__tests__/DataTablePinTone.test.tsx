@@ -148,6 +148,6 @@ describe("DataTable without pinStart/cellTone (control — zero behavior change)
       />,
     );
     const cell = within(getDataRows()[0]).getAllByRole("cell")[0];
-    expect(cell.className).toBe("px-3 py-3.5 align-middle text-slate-700 text-right");
+    expect(cell.className).toBe("px-3 py-3.5 align-middle text-slate-700 text-start");
   });
 });

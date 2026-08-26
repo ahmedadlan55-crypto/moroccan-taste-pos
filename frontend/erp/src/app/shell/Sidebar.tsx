@@ -93,7 +93,7 @@ export function Sidebar() {
         onClick={toggleCollapsed}
         aria-label={collapsed ? t("shell.sidebar.expandRail") : t("shell.sidebar.collapseRail")}
         aria-pressed={collapsed}
-        className="mb-2 mt-1 flex min-h-10 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
+        className="mb-2 mt-1 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-400/30"
       >
         {collapsed ? (
           <RailCollapsed className="h-4 w-4" />

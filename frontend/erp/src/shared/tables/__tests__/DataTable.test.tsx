@@ -283,6 +283,29 @@ describe("DataTable", () => {
     expect(screen.queryByText("row-249")).not.toBeInTheDocument();
   });
 
+  it("materializes every virtualized row before print and restores virtualization after", () => {
+    const many: Row[] = Array.from({ length: 250 }, (_, i) => ({
+      id: String(i),
+      name: `print-row-${i}`,
+      amount: i,
+    }));
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={many}
+        getRowId={(r) => r.id}
+        paginate={false}
+        stackOnMobile={false}
+      />,
+    );
+
+    expect(screen.queryByText("print-row-249")).not.toBeInTheDocument();
+    fireEvent(window, new Event("beforeprint"));
+    expect(screen.getByText("print-row-249")).toBeInTheDocument();
+    fireEvent(window, new Event("afterprint"));
+    expect(screen.queryByText("print-row-249")).not.toBeInTheDocument();
+  });
+
   it("renders the saved-views control when savedViewsModule is set (localStorage fallback)", async () => {
     // Simulate A2's endpoint not being reachable → the control still renders and
     // degrades to localStorage rather than hard-breaking.

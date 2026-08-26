@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 
 export interface TabItem {
   value: string;
@@ -20,6 +21,7 @@ export interface TabsProps {
  * Render the active panel yourself keyed off `value` (headless content model).
  */
 export function Tabs({ items, value, onChange, className, "aria-label": ariaLabel }: TabsProps) {
+  const lang = useOptionalLang() ?? "ar";
   const baseId = useId();
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
 
@@ -51,13 +53,13 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
         className,
       )}
       onKeyDown={(e) => {
-        // RTL-aware: ArrowLeft advances, ArrowRight goes back.
+        // Follow the reading direction: right advances in LTR, left in RTL.
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          move(1);
+          move(lang === "ar" ? 1 : -1);
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          move(-1);
+          move(lang === "ar" ? -1 : 1);
         }
       }}
     >

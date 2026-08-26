@@ -1,8 +1,9 @@
 import { useId, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, type LucideIcon } from "lucide-react";
 import { cn } from "@/shared/lib";
+import { useOptionalLang } from "@/i18n";
 import { useFocusTrap } from "./overlay";
 import { useTx } from "./i18n";
 
@@ -50,6 +51,8 @@ export function FullPageFlow({
   layer = "modal",
 }: FullPageFlowProps) {
   const t = useTx();
+  const lang = useOptionalLang() ?? "ar";
+  const BackIcon = lang === "ar" ? ArrowRight : ArrowLeft;
   const pageRef = useFocusTrap<HTMLDivElement>({
     active: open,
     onClose,
@@ -80,11 +83,11 @@ export function FullPageFlow({
           aria-labelledby={title ? titleId : undefined}
           aria-describedby={description ? descId : undefined}
           tabIndex={-1}
-          dir="rtl"
+          dir={lang === "ar" ? "rtl" : "ltr"}
           data-presentation="full-page"
         >
           <header className="shrink-0 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur sm:px-6 lg:px-8">
-            <div className={cn("mx-auto flex min-w-0 items-center gap-4", width)}>
+            <div className={cn("mx-auto flex min-w-0 items-center gap-3 sm:gap-4", width)}>
               {!hideClose && (
                 <button
                   type="button"
@@ -93,7 +96,7 @@ export function FullPageFlow({
                   className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                   aria-label={t("sharedUi.fullPageFlow.backAria")}
                 >
-                  <ArrowRight className="h-5 w-5" aria-hidden="true" />
+                  <BackIcon className="h-5 w-5" aria-hidden="true" />
                   <span className="hidden sm:inline">{t("sharedUi.fullPageFlow.back")}</span>
                 </button>
               )}
@@ -107,7 +110,7 @@ export function FullPageFlow({
               <div className="min-w-0 flex-1">
                 {eyebrow && <div className="mb-0.5 text-xs font-semibold tracking-wide text-teal-700">{eyebrow}</div>}
                 {title && (
-                  <h1 id={titleId} className="truncate text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">
+                  <h1 id={titleId} className="break-words text-xl font-bold leading-tight tracking-tight text-slate-950 sm:text-2xl">
                     {title}
                   </h1>
                 )}
@@ -128,7 +131,7 @@ export function FullPageFlow({
             <footer className="shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 pb-[max(.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.05)] backdrop-blur sm:px-6 lg:px-8">
               <div
                 className={cn(
-                  "mx-auto grid w-full grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end [&>button]:w-full sm:[&>button]:w-auto",
+                  "mx-auto grid w-full grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end [&>a]:w-full [&>button]:w-full sm:[&>a]:w-auto sm:[&>button]:w-auto",
                   width,
                 )}
               >

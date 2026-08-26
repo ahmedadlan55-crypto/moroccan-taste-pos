@@ -29,13 +29,13 @@ export function MobileNav() {
             end
             className={({ isActive }) =>
               cn(
-                "flex min-h-12 min-w-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[10px] font-extrabold transition",
+                "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-extrabold leading-3 transition",
                 isActive ? "bg-slate-950 text-white" : "text-slate-500 hover:bg-slate-100",
               )
             }
           >
             <Icon className="h-4 w-4" />
-            <span className="max-w-[3.5rem] truncate">{t(item.label)}</span>
+            <span className="max-w-[4.25rem] break-words text-center">{t(item.label)}</span>
           </NavLink>
         );
       })}

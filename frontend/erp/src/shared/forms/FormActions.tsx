@@ -18,7 +18,7 @@ export function FormActions({ children, sticky = false, start, className }: Form
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-white px-1 py-3",
+        "grid grid-cols-1 items-center justify-end gap-2 border-t border-slate-100 bg-white px-1 py-3 sm:flex sm:flex-wrap [&>a]:w-full [&>button]:w-full sm:[&>a]:w-auto sm:[&>button]:w-auto",
         // Full-bleed to the page gutters (main uses px-4 / sm:px-6), so the sticky
         // bar never overshoots the viewport on a phone. Below `lg` the shell's
         // MobileNav dock (fixed, z-40, lg:hidden) floats over the bottom, so the
@@ -29,7 +29,7 @@ export function FormActions({ children, sticky = false, start, className }: Form
         className,
       )}
     >
-      {start && <div className="mr-auto flex items-center gap-2">{start}</div>}
+      {start && <div className="flex min-w-0 items-center gap-2 sm:me-auto">{start}</div>}
       {children}
     </div>
   );

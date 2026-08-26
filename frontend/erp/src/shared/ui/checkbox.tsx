@@ -20,12 +20,12 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
       <label
         htmlFor={inputId}
         className={cn(
-          "inline-flex items-center gap-2 text-sm font-semibold text-slate-700",
+          "inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-slate-700",
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
           className,
         )}
       >
-        <span className="relative inline-grid h-5 w-5 place-items-center">
+        <span className="relative -my-3 -ms-3 inline-grid h-11 w-11 shrink-0 place-items-center">
           <input
             ref={(node) => {
               if (node) node.indeterminate = !!indeterminate;

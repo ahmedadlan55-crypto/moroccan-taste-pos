@@ -32,16 +32,16 @@ export function FilterBar({
   const t = useTx();
   const searchPh = searchPlaceholder ?? t("table.searchPlaceholder");
   return (
-    <div className={cn("flex min-w-0 flex-col gap-3 p-3 xl:flex-row xl:items-center", className)}>
+    <div className={cn("flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-center", className)}>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         {search !== undefined && onSearchChange && (
           <label className="relative w-full min-w-0 flex-1 sm:min-w-48 sm:max-w-xs">
-            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder={searchPh}
-              className="field h-10 w-full py-2 pr-10"
+              className="field w-full py-2 ps-10"
               aria-label={searchPh}
               type="search"
             />
@@ -52,7 +52,7 @@ export function FilterBar({
           <button
             type="button"
             onClick={onClear}
-            className="inline-flex min-h-10 items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+            className="inline-flex min-h-11 items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
           >
             <X className="h-3.5 w-3.5" /> {t("table.clearFilters")}
           </button>
@@ -60,7 +60,7 @@ export function FilterBar({
       </div>
       {actions && (
         <div
-          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center xl:mr-auto xl:w-auto xl:justify-end [&>button]:w-full sm:[&>button]:w-auto"
+          className="grid w-full min-w-0 grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center lg:ms-auto lg:w-auto lg:justify-end [&>button]:w-full sm:[&>button]:w-auto"
           aria-label={t("table.tableActions")}
         >
           {actions}

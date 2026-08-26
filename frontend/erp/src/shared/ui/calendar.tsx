@@ -320,12 +320,12 @@ export function CalendarMonth({
             type="button"
             aria-label={labels.prevMonth}
             onClick={onPrevMonth}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : (
-          <span className="h-8 w-8 shrink-0" aria-hidden="true" />
+          <span className="h-11 w-11 shrink-0" aria-hidden="true" />
         )}
         <span className="truncate text-xs font-extrabold tracking-wide text-slate-700">
           {formatMonthTitle(monthStart)}
@@ -335,12 +335,12 @@ export function CalendarMonth({
             type="button"
             aria-label={labels.nextMonth}
             onClick={onNextMonth}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
           >
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         ) : (
-          <span className="h-8 w-8 shrink-0" aria-hidden="true" />
+          <span className="h-11 w-11 shrink-0" aria-hidden="true" />
         )}
       </div>
 
@@ -402,7 +402,7 @@ export function CalendarMonth({
                     onClick={() => onDayClick(iso)}
                     onMouseEnter={() => onDayHover?.(iso)}
                     className={cn(
-                      "grid h-9 w-9 place-items-center rounded-full text-[13px] font-semibold tabular-nums transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+                      "grid h-11 w-11 place-items-center rounded-full text-[13px] font-semibold tabular-nums transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
                       isEndpoint
                         ? "bg-teal-600 text-white shadow-sm"
                         : blocked

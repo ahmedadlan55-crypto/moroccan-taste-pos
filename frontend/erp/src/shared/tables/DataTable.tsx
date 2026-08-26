@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { ArrowDown, ArrowUp, ChevronsUpDown, Download } from "lucide-react";
 import { cn } from "@/shared/lib";
 import {
@@ -29,9 +30,9 @@ import { SavedViews, type SavedViewState } from "./SavedViews";
 import { downloadRowsCsv } from "./csv";
 
 const ALIGN: Record<"start" | "center" | "end", string> = {
-  start: "text-right",
+  start: "text-start",
   center: "text-center",
-  end: "text-left",
+  end: "text-end",
 };
 
 function compareValues(a: unknown, b: unknown): number {
@@ -348,13 +349,29 @@ export function DataTable<T>(props: DataTableProps<T>) {
   // wraps the whole <table>, so <thead className="sticky top-0"> pins inside it.
   const bodyRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const [printAllRows, setPrintAllRows] = useState(false);
   const virtualActive = virtualize || paged.length > VIRTUAL_ROW_THRESHOLD;
-  const vStart = virtualActive ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
-  const vCount = virtualActive ? Math.ceil(maxBodyHeight / rowHeight) + OVERSCAN * 2 : paged.length;
-  const vEnd = virtualActive ? Math.min(paged.length, vStart + vCount) : paged.length;
-  const windowRows = virtualActive ? paged.slice(vStart, vEnd) : paged;
-  const padTop = virtualActive ? vStart * rowHeight : 0;
-  const padBottom = virtualActive ? Math.max(0, (paged.length - vEnd) * rowHeight) : 0;
+  const virtualRenderActive = virtualActive && !printAllRows;
+  const vStart = virtualRenderActive ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
+  const vCount = virtualRenderActive ? Math.ceil(maxBodyHeight / rowHeight) + OVERSCAN * 2 : paged.length;
+  const vEnd = virtualRenderActive ? Math.min(paged.length, vStart + vCount) : paged.length;
+  const windowRows = virtualRenderActive ? paged.slice(vStart, vEnd) : paged;
+  const padTop = virtualRenderActive ? vStart * rowHeight : 0;
+  const padBottom = virtualRenderActive ? Math.max(0, (paged.length - vEnd) * rowHeight) : 0;
+
+  // Virtualization is a screen optimization, never a print-data filter. Before
+  // the browser snapshots the page for printing, synchronously materialize the
+  // complete current result set; restore the small DOM once printing ends.
+  useEffect(() => {
+    const beforePrint = () => flushSync(() => setPrintAllRows(true));
+    const afterPrint = () => setPrintAllRows(false);
+    window.addEventListener("beforeprint", beforePrint);
+    window.addEventListener("afterprint", afterPrint);
+    return () => {
+      window.removeEventListener("beforeprint", beforePrint);
+      window.removeEventListener("afterprint", afterPrint);
+    };
+  }, []);
 
   const colSpan = visibleColumns.length + (selectable ? 1 : 0) + (rowActions ? 1 : 0);
 
@@ -444,7 +461,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   const bodyRows = (
     <tbody>
-      {virtualActive && padTop > 0 && (
+      {virtualRenderActive && padTop > 0 && (
         <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
           <td colSpan={colSpan} style={{ height: padTop }} />
         </tr>
@@ -461,7 +478,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               onRowClick && "cursor-pointer",
               isSel && "bg-teal-50/50",
             )}
-            style={virtualActive ? { height: rowHeight } : undefined}
+            style={virtualRenderActive ? { height: rowHeight } : undefined}
           >
             {selectable && (
               <td className="w-10 px-3 py-3.5" onClick={(e) => e.stopPropagation()}>
@@ -488,7 +505,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   style={Object.keys(style).length ? style : undefined}
                   className={cn(
                     "px-3 py-3.5 align-middle text-slate-700",
-                    col.numeric ? "text-left font-semibold tabular-nums" : ALIGN[col.align ?? "start"],
+                    col.numeric ? "text-end font-semibold tabular-nums" : ALIGN[col.align ?? "start"],
                     // Pinned cells need an OPAQUE background (rows underneath
                     // scroll behind them) + a subtle end-side separator. A
                     // cellTone background wins over the pin white (cn/twMerge).
@@ -507,14 +524,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
               );
             })}
             {rowActions && (
-              <td className="w-px px-3 py-3.5 text-left" onClick={(e) => e.stopPropagation()}>
+              <td className="w-px px-3 py-3.5 text-end" onClick={(e) => e.stopPropagation()}>
                 {rowActions(row)}
               </td>
             )}
           </tr>
         );
       })}
-      {virtualActive && padBottom > 0 && (
+      {virtualRenderActive && padBottom > 0 && (
         <tr aria-hidden="true" className="print:hidden" data-virtual-spacer="true">
           <td colSpan={colSpan} style={{ height: padBottom }} />
         </tr>
@@ -696,7 +713,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         <button
                           type="button"
                           onClick={() => onRowClick(row)}
-                          className="min-w-0 flex-1 rounded-xl text-right outline-none transition active:bg-slate-50 focus-visible:ring-4 focus-visible:ring-teal-100"
+                          className="min-h-11 min-w-0 flex-1 rounded-xl text-start outline-none transition active:bg-slate-50 focus-visible:ring-4 focus-visible:ring-teal-100"
                           aria-label={typeof mobileTitle?.(row) === "string" ? String(mobileTitle(row)) : tx("table.openRowDetails")}
                         >
                           {mobileContent}

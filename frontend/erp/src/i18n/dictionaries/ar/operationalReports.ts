@@ -87,6 +87,7 @@ export const operationalReports = {
     status: "الحالة",
     payrollRun: "مسيّر الرواتب",
     employmentStatus: "حالة الموظف",
+    invalidRange: "تاريخ البداية يجب ألا يكون بعد تاريخ النهاية.",
   },
 
   total: {

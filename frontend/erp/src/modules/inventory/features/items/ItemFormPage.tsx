@@ -248,8 +248,8 @@ export function ItemFormPage({ mode, itemId }: { mode: "create" | "edit"; itemId
 
   return (
     <div className="grid gap-6 pb-24">
-      <button type="button" onClick={cancel} className="flex w-fit items-center gap-1 text-sm font-bold text-teal-700 hover:underline">
-        <ArrowRight className="h-4 w-4" /> {t("items.detail.back")}
+      <button type="button" onClick={cancel} className="flex min-h-11 w-fit items-center gap-2 rounded-xl px-3 text-sm font-bold text-teal-700 hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100">
+        <ArrowRight className="h-4 w-4 rotate-180 rtl:rotate-0" /> {t("items.detail.back")}
       </button>
 
       <div className="flex flex-wrap items-start justify-between gap-3">

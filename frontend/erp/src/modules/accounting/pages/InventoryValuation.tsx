@@ -212,14 +212,14 @@ export function InventoryValuationPage() {
                 <table className="w-full min-w-[52rem] text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                      <th className="px-3 py-2 text-right">{t("accounting.invValuation.col.warehouse")}</th>
-                      <th className="px-3 py-2 text-right">{t("accounting.invValuation.col.item")}</th>
-                      <th className="px-3 py-2 text-right">{t("accounting.invValuation.col.sku")}</th>
-                      <th className="px-3 py-2 text-right">{t("accounting.invValuation.col.unit")}</th>
-                      <th className="px-3 py-2 text-right">{t("accounting.invValuation.col.type")}</th>
-                      <th className="px-3 py-2 text-left">{t("accounting.invValuation.col.qty")}</th>
-                      <th className="px-3 py-2 text-left">{t("accounting.invValuation.col.unitCost")}</th>
-                      <th className="px-3 py-2 text-left">{t("accounting.invValuation.col.value")}</th>
+                      <th className="px-3 py-2 text-start">{t("accounting.invValuation.col.warehouse")}</th>
+                      <th className="px-3 py-2 text-start">{t("accounting.invValuation.col.item")}</th>
+                      <th className="px-3 py-2 text-start">{t("accounting.invValuation.col.sku")}</th>
+                      <th className="px-3 py-2 text-start">{t("accounting.invValuation.col.unit")}</th>
+                      <th className="px-3 py-2 text-start">{t("accounting.invValuation.col.type")}</th>
+                      <th className="px-3 py-2 text-end">{t("accounting.invValuation.col.qty")}</th>
+                      <th className="px-3 py-2 text-end">{t("accounting.invValuation.col.unitCost")}</th>
+                      <th className="px-3 py-2 text-end">{t("accounting.invValuation.col.value")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -239,19 +239,19 @@ export function InventoryValuationPage() {
                           <td className="px-3 py-2"><code className="text-[11px] text-slate-400">{it.sku}</code></td>
                           <td className="px-3 py-2 text-slate-600">{it.unit || "—"}</td>
                           <td className="px-3 py-2 text-slate-600">{itemTypeLabel(t, it.itemType)}</td>
-                          <td className="px-3 py-2 text-left"><Num value={it.qty} dash={false} /></td>
-                          <td className="px-3 py-2 text-left"><Num value={it.avgCost} dash={false} /></td>
-                          <td className="px-3 py-2 text-left"><Num value={it.value} strong dash={false} /></td>
+                          <td className="px-3 py-2 text-end"><Num value={it.qty} dash={false} /></td>
+                          <td className="px-3 py-2 text-end"><Num value={it.avgCost} dash={false} /></td>
+                          <td className="px-3 py-2 text-end"><Num value={it.value} strong dash={false} /></td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                      <td colSpan={5} className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
-                      <td className="px-3 py-2.5 text-left"><Num value={data.grand.totalQty} strong /></td>
-                      <td className="px-3 py-2.5 text-left" />
-                      <td className="px-3 py-2.5 text-left"><Num value={data.grand.totalValue} strong /></td>
+                      <td colSpan={5} className="px-3 py-2.5 text-start">{t("accounting.common.total")}</td>
+                      <td className="px-3 py-2.5 text-end"><Num value={data.grand.totalQty} strong /></td>
+                      <td className="px-3 py-2.5 text-end" />
+                      <td className="px-3 py-2.5 text-end"><Num value={data.grand.totalValue} strong /></td>
                     </tr>
                   </tfoot>
                 </table>

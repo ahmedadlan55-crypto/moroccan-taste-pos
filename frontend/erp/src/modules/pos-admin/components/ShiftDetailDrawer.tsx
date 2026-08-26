@@ -90,9 +90,9 @@ export function ShiftDetailDrawer({ shift, onClose }: ShiftDetailDrawerProps) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-xs font-extrabold text-slate-500">
-                      <th className="px-3 py-2 text-right">{t("posAdmin.col.method")}</th>
-                      <th className="px-3 py-2 text-right">{t("posAdmin.col.group")}</th>
-                      <th className="px-3 py-2 text-left">{t("posAdmin.col.expected")}</th>
+                      <th className="px-3 py-2 text-start">{t("posAdmin.col.method")}</th>
+                      <th className="px-3 py-2 text-start">{t("posAdmin.col.group")}</th>
+                      <th className="px-3 py-2 text-end">{t("posAdmin.col.expected")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -102,7 +102,7 @@ export function ShiftDetailDrawer({ shift, onClose }: ShiftDetailDrawerProps) {
                         <td className="px-3 py-2.5 text-slate-600">
                           {m.groupType ? pmGroupLabel(t, m.groupType) : "—"}
                         </td>
-                        <td dir="ltr" className="px-3 py-2.5 text-left font-semibold tabular-nums text-slate-800">
+                        <td dir="ltr" className="px-3 py-2.5 text-end font-semibold tabular-nums text-slate-800">
                           {formatCurrency(m.expectedAmount)}
                         </td>
                       </tr>

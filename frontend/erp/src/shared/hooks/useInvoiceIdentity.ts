@@ -6,7 +6,7 @@
 //   balance it is. PrintDocument calls this once, so every report in the system
 //   gains the letterhead together.
 //
-// WHY IT READS `GET /api/settings` AND NOT `/settings/invoice-identity`
+// WHY IT READS THE NARROW PUBLIC BRANDING ENDPOINT
 //   The richer endpoint resolves branch → brand → company → settings, and it is
 //   gated `admin|manager`. An ACCOUNTANT — the role that actually prints
 //   statements — would have 403'd, and every trial balance, ledger and ageing
@@ -16,13 +16,9 @@
 //   trade: it is an access-control change to a live route, made in service of a
 //   reports feature, and nobody asked for it. Reverted.
 //
-//   `GET /api/settings` needs no such change. It carries no guard at all
-//   (routes/settings.js) and server.js additionally exempts GET /settings from
-//   the global gate so the LOGIN page can paint the company name and logo before
-//   anyone has authenticated. It returns the flat settings map, and the four
-//   keys a letterhead needs — CompanyName, TaxNumber, CrNumber, NationalAddress
-//   — are already in it. Verified against the live table: 23 keys, nothing
-//   secret in them.
+//   `/settings/public-branding` returns only CompanyName, TaxNumber, CrNumber
+//   and NationalAddress. It must never inherit arbitrary settings rows: that
+//   table also stores security policies and user metadata.
 //
 //   WHAT THIS COSTS, STATED PLAINLY: this is the COMPANY identity, not the
 //   branch-resolved one. For a financial statement that is the correct issuer
@@ -58,7 +54,7 @@ export interface InvoiceIdentity {
   nationalAddress: string;
 }
 
-/** `GET /api/settings` returns a flat key→value map of the settings table. */
+/** The public branding endpoint returns a four-key flat map. */
 export type SettingsMap = Record<string, string | null | undefined>;
 
 export interface UseInvoiceIdentityOptions {
@@ -113,7 +109,7 @@ export function useInvoiceIdentity(options: UseInvoiceIdentityOptions = {}): Use
   const query = useQuery<SettingsMap>(
     {
       queryKey: companyIdentityQueryKey(),
-      queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings", { signal }),
+      queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings/public-branding", { signal }),
       enabled: enabled && !!ambient,
       // Identity changes when the owner edits it, which is rare.
       // An hour of staleness beats a request behind every printed page.

@@ -2,7 +2,7 @@
 //
 // The things worth pinning are not "does it fetch":
 //
-//   1. THE SOURCE. It reads `GET /api/settings`, which is unguarded, and NOT
+//   1. THE SOURCE. It reads the narrow public-branding endpoint, and NOT
 //      `/settings/invoice-identity`, which requires admin|manager. An earlier
 //      attempt widened that endpoint's guard so an accountant could print a
 //      letterhead — an access-control change to a live route, in service of a
@@ -28,7 +28,7 @@ import { companyIdentityQueryKey, useInvoiceIdentity, type SettingsMap } from ".
 
 const get = apiClient.get as Mock;
 
-/** The shape `GET /api/settings` really returns: a flat key→value map. */
+/** The shape the public branding endpoint returns. */
 function settings(overrides: SettingsMap = {}): SettingsMap {
   return {
     CompanyName: "شركة المذاق المغربي للتجارة",
@@ -55,15 +55,16 @@ afterEach(() => {
   get.mockReset();
 });
 
-describe("the source is the endpoint every role can already read", () => {
-  it("reads GET /settings — never the manager-gated /settings/invoice-identity", async () => {
+describe("the source is the narrow endpoint every role can read", () => {
+  it("reads public branding — never the full or manager-gated settings maps", async () => {
     get.mockResolvedValue(settings());
     const { result } = renderHook(() => useInvoiceIdentity(), { wrapper: withClient(newClient()) });
     await waitFor(() => expect(result.current.entityName).not.toBe(""));
 
     expect(get).toHaveBeenCalled();
     const path = String(get.mock.calls[0][0]);
-    expect(path).toBe("/settings");
+    expect(path).toBe("/settings/public-branding");
+    expect(path).not.toBe("/settings");
     expect(
       path,
       "the manager-gated endpoint 403s the accountant who actually prints statements",

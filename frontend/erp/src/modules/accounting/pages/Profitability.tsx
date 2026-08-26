@@ -172,7 +172,7 @@ export function ProfitabilityPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
                     {COLUMN_KEYS.map((c) => (
-                      <th key={c.key} className={`px-3 py-2 ${c.numeric ? "text-left" : "text-right"}`}>
+                      <th key={c.key} className={`px-3 py-2 ${c.numeric ? "text-end" : "text-start"}`}>
                         <button
                           type="button"
                           onClick={() => toggleSort(c.key)}
@@ -189,20 +189,20 @@ export function ProfitabilityPage() {
                   {rows.map((r, i) => (
                     <tr key={r.id ?? `row-${i}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
                       <td className="px-3 py-2 font-semibold text-slate-800">{r.name}</td>
-                      <td className="px-3 py-2 text-left"><Num value={r.revenue} /></td>
-                      <td className="px-3 py-2 text-left"><Num value={r.expenses} /></td>
-                      <td className="px-3 py-2 text-left"><Num value={r.profit} signed strong /></td>
-                      <td className="px-3 py-2 text-left"><MarginCell row={r} /></td>
+                      <td className="px-3 py-2 text-end"><Num value={r.revenue} /></td>
+                      <td className="px-3 py-2 text-end"><Num value={r.expenses} /></td>
+                      <td className="px-3 py-2 text-end"><Num value={r.profit} signed strong /></td>
+                      <td className="px-3 py-2 text-end"><MarginCell row={r} /></td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                    <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.revenue} strong /></td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.expenses} strong /></td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.profit} signed strong /></td>
-                    <td className="px-3 py-2.5 text-left">
+                    <td className="px-3 py-2.5 text-start">{t("accounting.common.total")}</td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.revenue} strong /></td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.expenses} strong /></td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.profit} signed strong /></td>
+                    <td className="px-3 py-2.5 text-end">
                       {totals.revenue > 0 ? (
                         <span dir="ltr" className="tabular-nums font-extrabold text-slate-900">
                           {fmt((totals.profit / totals.revenue) * 100)}%

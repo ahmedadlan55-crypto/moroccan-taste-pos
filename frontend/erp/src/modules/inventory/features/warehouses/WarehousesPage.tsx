@@ -90,9 +90,9 @@ export function WarehousesPage() {
 
       <div className="surface mb-4 flex flex-wrap items-center gap-3 p-4">
         <label className="relative min-w-56 flex-1">
-          <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
-            className="field pr-10"
+            className="field ps-10"
             placeholder={t("inventoryRest.warehouses.searchPlaceholder")}
             aria-label={t("inventoryRest.warehouses.searchAria")}
             value={query}
@@ -105,7 +105,7 @@ export function WarehousesPage() {
               key={f}
               type="button"
               onClick={() => setActiveFilter(f)}
-              className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${
+              className={`min-h-11 rounded-xl border px-3 text-xs font-extrabold transition ${
                 activeFilter === f ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               }`}
             >
@@ -113,7 +113,7 @@ export function WarehousesPage() {
             </button>
           ))}
         </div>
-        <span className="mr-auto flex items-center gap-2 text-xs font-bold text-slate-400">
+        <span className="ms-auto flex items-center gap-2 text-xs font-bold text-slate-400">
           {isFetching && <Spinner className="h-3.5 w-3.5" />}
           {t("inventoryRest.warehouses.summary", { active: formatNumber(totals.activeCount), total: formatNumber(totals.warehouseCount), value: formatCurrency(totals.totalValue) })}
         </span>
@@ -143,7 +143,7 @@ export function WarehousesPage() {
           {/* Desktop: table */}
           <article className="surface hidden overflow-hidden md:block">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[880px] text-right">
+              <table className="w-full min-w-[880px] text-start">
                 <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                   <tr>
                     <th className="px-5 py-3">{t("inventoryRest.warehouses.col.warehouse")}</th>
@@ -209,7 +209,7 @@ function WarehouseCard({ w, onOpen }: { w: WarehouseAdmin; onOpen: () => void })
   const t = useT();
   const lang = useLang();
   return (
-    <button type="button" onClick={onOpen} className="surface group overflow-hidden text-right transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lift">
+    <button type="button" onClick={onOpen} className="surface group overflow-hidden text-start transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lift">
       <div className="relative h-20 bg-slate-950 p-4 text-white">
         <div className="flex items-start justify-between">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><WarehouseIcon className="h-5 w-5" /></span>

@@ -26,6 +26,13 @@ function throws(fn, pattern) {
   if (!caught) throw new Error('expected function to throw');
   if (pattern && !pattern.test(String(caught.message))) throw caught;
 }
+function responseCapture() {
+  return {
+    statusCode: null, body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return body; },
+  };
+}
 
 console.log('\n═══ Procurement report warehouse scope ═══');
 
@@ -98,6 +105,21 @@ test('report center finance readers and procurement readers are accepted by cont
   eq(reports.REPORT_READ_CAPS, ['finance.reports.view', 'procurement.reports']);
   eq(reports.DATA_QUALITY_READ_CAPS, ['finance.reports.view', 'procurement.data_quality']);
 });
+test('a complete snapshot declares its exact row count and never reports truncation', () => {
+  const res = responseCapture();
+  reports.completeSnapshot(res, [{ id: 1 }, { id: 2 }], { filters: { from: '', to: '' } });
+  eq(res.statusCode, 200);
+  eq(res.body.snapshot, { complete: true, rowCount: 2, rowLimit: reports.REPORT_SNAPSHOT_LIMIT });
+  eq(res.body.pagination, { page: 1, pageSize: 2, total: 2, totalPages: 1, isTruncated: false });
+});
+test('the sentinel row produces 413 instead of a silently truncated report', () => {
+  const res = responseCapture();
+  reports.completeSnapshot(res, new Array(reports.REPORT_SNAPSHOT_LIMIT + 1).fill({ id: 1 }));
+  eq(res.statusCode, 413);
+  eq(res.body.code, 'REPORT_SNAPSHOT_LIMIT');
+  ok(!Object.prototype.hasOwnProperty.call(res.body, 'data'), 'a partial prefix must never be returned');
+  eq(res.body.details.rowLimit, reports.REPORT_SNAPSHOT_LIMIT);
+});
 test('accountant/auditor have finance reports but cashier has neither report grant', () => {
   ok(financeCaps.ROLE_GRANTS.accountant.includes('finance.reports.view'));
   ok(financeCaps.ROLE_GRANTS.auditor.includes('finance.reports.view'));
@@ -129,6 +151,11 @@ test('three-way match filters before grouping', () => {
 test('data quality no longer reads global AP balance or global GL journals', () => {
   ok(!/v_supplier_ap_balance/.test(source));
   ok(/JOIN gl_journals gj[\s\S]+si\.gl_journal_id/.test(source));
+});
+test('specialized report SQL fetches one sentinel row and contains no legacy silent caps', () => {
+  ok(source.includes('LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}'));
+  ok(!/LIMIT (?:36|500|1000|2000)`/.test(source));
+  eq(reports.REPORT_SNAPSHOT_FETCH_LIMIT, reports.REPORT_SNAPSHOT_LIMIT + 1);
 });
 
 console.log(`\nprocurementReportScope: ${passed}/${total} passed, ${failed} failed`);

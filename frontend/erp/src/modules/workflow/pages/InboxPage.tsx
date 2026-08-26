@@ -13,6 +13,7 @@ export function InboxPage() {
   return (
     <TxnListScreen
       icon={Inbox}
+      title={t("nav.items.wf-inbox")}
       description={t("workflow.inbox.description")}
       tableId="wf-inbox"
       peopleColumn={{ id: "from", header: t("workflow.inbox.from"), value: (r) => r.creatorName || r.createdBy || "" }}

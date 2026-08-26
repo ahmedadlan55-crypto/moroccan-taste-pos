@@ -2,7 +2,7 @@
 // the backend returns clean typed data; we coerce numbers and default missing
 // slices so the charts never crash.
 
-export interface ReportWarning { code: string; message: string; level: string; }
+import type { ReportWarning } from "./reports.adapter";
 
 export interface AnalyticsKpis {
   inventoryValueWac: number;

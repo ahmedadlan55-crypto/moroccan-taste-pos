@@ -380,7 +380,7 @@ function CostControlPanel({ data }: { data: ReturnType<typeof useWarehouseIntell
           ["/menu/recipes", "warehouseIntelligence.costControl.links.recipes"],
           ["/production/orders", "warehouseIntelligence.costControl.links.production"],
           ["/accounting/income-statement", "warehouseIntelligence.costControl.links.incomeStatement"],
-        ] as const).map(([to, label]) => <Link key={to} to={to} className="inline-flex min-h-10 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:border-teal-300 hover:text-teal-700">{t(label)}</Link>)}
+        ] as const).map(([to, label]) => <Link key={to} to={to} className="inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 transition hover:border-teal-300 hover:text-teal-700">{t(label)}</Link>)}
       </div>
       {!bridge.includesReturns && bridge.state === "available" && <p className="mt-3 text-[11px] font-bold text-amber-700">{t("warehouseIntelligence.costControl.beforeReturnsNote")}</p>}
     </section>

@@ -83,9 +83,9 @@ export function ScopeAssignmentsSection({ warehouseId }: { warehouseId: string }
       </div>
 
       <label className="relative mt-4 block">
-        <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
-          className="field w-full pr-10"
+          className="field w-full ps-10"
           placeholder={t("inventoryRest.warehouses.scope.searchPlaceholder")}
           aria-label={t("inventoryRest.warehouses.scope.searchAria")}
           value={query}

@@ -110,7 +110,7 @@ export function LotDetailDrawer({ id, onClose }: { id: string | null; onClose: (
                 {trace.data && trace.data.recallImpact.length > 0 && (
                   <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-3 text-xs text-rose-900">
                     <div className="mb-1 font-extrabold">{t("inventoryRest.lots.detail.recallImpactTitle")}</div>
-                    <ul className="list-disc space-y-0.5 pr-5">{trace.data.recallImpact.map((r, i) => <li key={i}>{refLabel(t, r.referenceType)} {r.referenceId || ""} — {formatQty(r.qty)}</li>)}</ul>
+                    <ul className="list-disc space-y-0.5 ps-5">{trace.data.recallImpact.map((r, i) => <li key={i}>{refLabel(t, r.referenceType)} {r.referenceId || ""} — {formatQty(r.qty)}</li>)}</ul>
                   </div>
                 )}
                 <ol className="space-y-2">

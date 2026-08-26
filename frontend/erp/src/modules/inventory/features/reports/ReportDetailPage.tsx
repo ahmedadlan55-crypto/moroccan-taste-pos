@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucide-react";
 import { PageHeader,
   PrintDocument,
 } from "@/shared/ui";
 import { Button, DatePicker } from "@/shared/ui";
 import { LoadingState, EmptyState, ErrorState } from "@/shared/ui";
-import { useT, translateApiError } from "@/i18n";
+import { useLang, useT, translateApiError } from "@/i18n";
 import type { TFunction } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
-import { useReport } from "@/modules/inventory/lib/hooks/useReport";
+import { fetchReportPrintSnapshot, useReport, type ReportFilters } from "@/modules/inventory/lib/hooks/useReport";
+import { localizeReportWarning, type ReportResult } from "@/modules/inventory/lib/adapters/reports.adapter";
 import { downloadReportCsv } from "@/shared/lib";
 import { formatCurrency, formatNumber, formatQty, formatDate, formatDateTime } from "@/shared/lib";
 import { REPORTS, type ColFormat, type ReportColumn } from "@/modules/inventory/lib/reports-config";
@@ -41,30 +43,72 @@ function fmt(v: unknown, format?: ColFormat): string {
   }
 }
 
-function StatusPill({ label }: { label: string }) {
-  // Classify the server-provided (Arabic) status text for tone. These literals
-  // match business DATA, not UI copy — they are never rendered.
-  const bad = /سالب|نافد|منتهٍ|حرج|مرفوض|ملغى/.test(label);
-  const warn = /منخفض|قريب|جزئي|بانتظار/.test(label);
+function StatusPill({ label, status = "" }: { label: string; status?: string }) {
+  const semantic = status.toLowerCase();
+  const bad = /negative|out|expired|critical|rejected|cancelled/.test(semantic)
+    || /سالب|نافد|منتهٍ|حرج|مرفوض|ملغى|negative|out|expired|critical|rejected|cancelled/i.test(label);
+  const warn = /low|soon|partial|pending/.test(semantic)
+    || /منخفض|قريب|جزئي|بانتظار|low|soon|partial|pending/i.test(label);
   const cls = bad ? "bg-rose-50 text-rose-700" : warn ? "bg-amber-50 text-amber-700" : "bg-teal-50 text-teal-700";
   return <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${cls}`}>{label || "—"}</span>;
 }
 
+function rawValueKey(column: ReportColumn, row: Record<string, unknown>, value: unknown) {
+  if (column.key === "typeLabel") return String(row.type ?? value ?? "");
+  if (column.key === "severityLabel") return String(row.severity ?? value ?? "");
+  if (column.key === "status" || column.key === "statusLabel") return String(row.status ?? value ?? "");
+  if (column.key === "reasonLabel") return String(row.reason ?? value ?? "");
+  return String(value ?? "");
+}
+
+export function localizeReportValue(column: ReportColumn, value: unknown, row: Record<string, unknown>, t: TFunction) {
+  if ((column.key === "label" || column.key === "note") && row.metric) {
+    const qualityPath = row.measurementFailed && column.key === "note"
+      ? "inventoryRest.reports.dataQuality.failedNote"
+      : `inventoryRest.reports.dataQuality.${String(row.metric)}.${column.key}`;
+    const qualityLabel = t(qualityPath);
+    if (qualityLabel !== qualityPath) return qualityLabel;
+  }
+  const raw = rawValueKey(column, row, value);
+  const path = `inventoryRest.reports.value.${raw}`;
+  const translated = t(path);
+  return translated === path ? String(value ?? "") : translated;
+}
+
+function ReportValue({ column, value, row, t }: { column: ReportColumn; value: unknown; row: Record<string, unknown>; t: TFunction }) {
+  const raw = rawValueKey(column, row, value);
+  const label = localizeReportValue(column, value, row, t);
+  if (column.format === "status") return <StatusPill label={label} status={raw} />;
+  if (column.format === "currency" || column.format === "qty" || column.format === "number" || column.format === "date" || column.format === "datetime") {
+    return <>{fmt(value, column.format)}</>;
+  }
+  return <>{label || "—"}</>;
+}
+
 export function ReportDetailPage({ reportType: reportTypeOverride }: { reportType?: string } = {}) {
   const t = useT();
+  const lang = useLang();
+  const BackIcon = lang === "ar" ? ArrowRight : ArrowLeft;
   const { reportType: reportTypeParam = "" } = useParams();
   const reportType = reportTypeOverride ?? reportTypeParam;
   const config = REPORTS[reportType];
-  const { scope } = useWarehouseScope();
+  const { scope, accessibleWarehouses } = useWarehouseScope();
   const [params, setParams] = useSearchParams();
+  const [categoryDraft, setCategoryDraft] = useState(() => params.get("category") || "");
+  const [searchDraft, setSearchDraft] = useState(() => params.get("q") || "");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const [printSnapshot, setPrintSnapshot] = useState<ReportResult | null>(null);
+  const [printContext, setPrintContext] = useState<{ filters: ReportFilters; scopeLabel: string } | null>(null);
 
   const page = Math.max(1, Number(params.get("page")) || 1);
   const pageSize = Math.min(200, Math.max(1, Number(params.get("pageSize")) || 25));
   const sort = params.get("sort") || config?.defaultSort?.sort || "";
   const dir = (params.get("dir") as "asc" | "desc") || config?.defaultSort?.dir || "desc";
   const filters = useMemo(() => ({
+    lang,
     from: params.get("from") || undefined,
     to: params.get("to") || undefined,
     category: params.get("category") || undefined,
@@ -73,9 +117,12 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
     q: params.get("q") || undefined,
     window: Number(params.get("window")) || undefined,
     page, pageSize, sort: sort || undefined, dir,
-  }), [params, page, pageSize, sort, dir]);
+  }), [params, page, pageSize, sort, dir, lang]);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useReport(reportType, scope, filters);
+
+  useEffect(() => setCategoryDraft(params.get("category") || ""), [params]);
+  useEffect(() => setSearchDraft(params.get("q") || ""), [params]);
 
   if (!config) {
     return (
@@ -107,6 +154,7 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
     setExporting(true);
     try {
       await downloadReportCsv(reportType, {
+        lang,
         warehouseId: scope && scope !== ALL_WAREHOUSES ? scope : undefined,
         from: filters.from, to: filters.to, category: filters.category, status: filters.status,
         type: filters.type, q: filters.q, window: filters.window, sort: filters.sort, dir,
@@ -118,34 +166,85 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
     }
   }
 
-  const rows = data?.rows ?? [];
-  const totals = data?.totals ?? {};
+  async function onPrint() {
+    if (!data || isFetching || printing) return;
+    setPrintError(null);
+    setPrinting(true);
+    const requestFilters = { ...filters };
+    const requestScope = scope;
+    const requestWarehouse = accessibleWarehouses.find((warehouse) => warehouse.id === requestScope);
+    const requestScopeLabel = requestScope === ALL_WAREHOUSES
+      ? t("inventoryRest.reports.scopeAll")
+      : t("inventoryRest.reports.scopeScoped", { scope: requestWarehouse?.name || requestScope });
+    setPrintContext({ filters: requestFilters, scopeLabel: requestScopeLabel });
+    try {
+      const snapshot = await fetchReportPrintSnapshot(reportType, requestScope, requestFilters);
+      // The browser must see the complete snapshot in the same commit before
+      // it captures the print tree; otherwise React's async state batching can
+      // leave the currently visible server page on paper.
+      flushSync(() => setPrintSnapshot(snapshot));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      window.print();
+    } catch (e) {
+      setPrintError(translateApiError(e, t));
+    } finally {
+      setPrintSnapshot(null);
+      setPrintContext(null);
+      setPrinting(false);
+    }
+  }
+
+  const reportData = printSnapshot ?? data;
+  const rows = reportData?.rows ?? [];
+  const totals = reportData?.totals ?? {};
   const pagination = data?.pagination ?? null;
-  const total = pagination?.total ?? rows.length;
+  const total = printSnapshot ? rows.length : (pagination?.total ?? rows.length);
   const totalPages = pagination?.totalPages ?? 1;
   const fromRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const toRow = Math.min(page * pageSize, total);
-  const scopeLabel = data?.scope?.allWarehousesAccess && scope === ALL_WAREHOUSES ? t("inventoryRest.reports.scopeAll") : t("inventoryRest.reports.scopeScoped", { scope });
+  const scopedWarehouse = accessibleWarehouses.find((warehouse) => warehouse.id === scope);
+  const scopedWarehouseLabel = scopedWarehouse?.name || scope;
+  const scopeLabel = printSnapshot && printContext
+    ? printContext.scopeLabel
+    : reportData?.scope?.allWarehousesAccess && scope === ALL_WAREHOUSES
+      ? t("inventoryRest.reports.scopeAll")
+      : t("inventoryRest.reports.scopeScoped", { scope: scopedWarehouseLabel });
+  const displayedFilters = printSnapshot && printContext ? printContext.filters : filters;
   const hasDateRange = config.filters.includes("dateRange");
   const statusOpts = STATUS_OPTION_VALUES[reportType];
+  const sortableColumns = config.columns.filter((column) => column.sortKey);
+  const printFilterParts = [
+    displayedFilters.from ? `${t("inventoryRest.reports.filterFrom")}: ${formatDate(displayedFilters.from)}` : "",
+    displayedFilters.to ? `${t("inventoryRest.reports.filterTo")}: ${formatDate(displayedFilters.to)}` : "",
+    displayedFilters.category ? `${t("inventoryRest.reports.filterCategory")}: ${displayedFilters.category}` : "",
+    displayedFilters.type ? `${t("inventoryRest.reports.filterType")}: ${displayedFilters.type === "in" ? t("inventoryRest.reports.filterTypeIn") : t("inventoryRest.reports.filterTypeOut")}` : "",
+    displayedFilters.status ? `${t("inventoryRest.reports.filterStatus")}: ${statusFilterLabel(t, displayedFilters.status)}` : "",
+    displayedFilters.window ? `${t("inventoryRest.reports.filterWindow")}: ${t("inventoryRest.reports.filterWindowDays", { days: displayedFilters.window })}` : "",
+    displayedFilters.q ? `${t("inventoryRest.reports.filterSearch")}: ${displayedFilters.q}` : "",
+  ].filter(Boolean);
 
   const actions = (
     <div className="no-print flex flex-wrap items-center gap-2">
       <Button variant="secondary" onClick={onExport} disabled={exporting}>
         <Download className="h-4 w-4" /> {exporting ? t("inventoryRest.reports.exporting") : t("inventoryRest.reports.exportCsv")}
       </Button>
-      <Button variant="secondary" onClick={() => window.print()}>
-        <Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}
+      <Button variant="secondary" onClick={() => void onPrint()} disabled={!data || isFetching || printing}>
+        <Printer className="h-4 w-4" /> {printing ? t("inventoryRest.reports.preparingPrint") : t("inventoryRest.ui.print")}
       </Button>
       <Link to="/reports/inventory" className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">
-        <ArrowRight className="h-4 w-4" /> {t("inventoryRest.reports.reportsLink")}
+        <BackIcon className="h-4 w-4" /> {t("inventoryRest.reports.reportsLink")}
       </Link>
     </div>
   );
 
   return (
     // One head, one hidden-chrome rule, for every printed report.
-    <PrintDocument title={t(config.label)}>
+    <PrintDocument
+      title={t(config.label)}
+      subtitle={t("inventoryRest.reports.scopeSubtitle", { scope: scopeLabel, count: formatNumber(total) })}
+      meta={printFilterParts.length > 0 ? printFilterParts.join(" · ") : undefined}
+      className={config.columns.length >= 7 ? "print-landscape print-long-report" : "print-long-report"}
+    >
       <PageHeader eyebrow={t("inventoryRest.reports.detailEyebrow")} title={t(config.label)} subtitle={t("inventoryRest.reports.scopeSubtitle", { scope: scopeLabel, count: formatNumber(total) })} action={actions} />
 
       {/* Filters */}
@@ -154,16 +253,16 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
           {hasDateRange && (
             <>
               <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterFrom")}
-                <DatePicker className="mt-1 block" value={filters.from ?? ""} onChange={(v) => patch({ from: v })} />
+                <DatePicker className="mt-1 block" value={filters.from ?? ""} max={filters.to} onChange={(v) => patch({ from: v })} />
               </label>
               <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterTo")}
-                <DatePicker className="mt-1 block" value={filters.to ?? ""} onChange={(v) => patch({ to: v })} />
+                <DatePicker className="mt-1 block" value={filters.to ?? ""} min={filters.from} onChange={(v) => patch({ to: v })} />
               </label>
             </>
           )}
           {config.filters.includes("category") && (
             <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterCategory")}
-              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterCategoryPlaceholder")} value={filters.category ?? ""} onChange={(e) => patch({ category: e.target.value })} />
+              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterCategoryPlaceholder")} value={categoryDraft} onChange={(e) => setCategoryDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") patch({ category: categoryDraft, q: searchDraft }); }} />
             </label>
           )}
           {config.filters.includes("type") && (
@@ -190,8 +289,13 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
           )}
           {config.filters.includes("q") && (
             <label className="text-xs font-bold text-slate-500">{t("inventoryRest.reports.filterSearch")}
-              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterSearchPlaceholder")} value={filters.q ?? ""} onChange={(e) => patch({ q: e.target.value })} />
+              <input type="text" className="field mt-1 block" placeholder={t("inventoryRest.reports.filterSearchPlaceholder")} value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") patch({ category: categoryDraft, q: searchDraft }); }} />
             </label>
+          )}
+          {(config.filters.includes("category") || config.filters.includes("q")) && (
+            <Button type="button" onClick={() => patch({ category: categoryDraft, q: searchDraft })}>
+              {t("common.apply")}
+            </Button>
           )}
         </div>
       )}
@@ -201,13 +305,18 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
           <AlertTriangle className="h-4 w-4" /> {exportError}
         </div>
       )}
+      {printError && (
+        <div className="no-print mb-4 flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">
+          <AlertTriangle className="h-4 w-4" /> {printError}
+        </div>
+      )}
 
       {/* Data-quality warnings */}
-      {data?.warnings && data.warnings.length > 0 && (
+      {reportData?.warnings && reportData.warnings.length > 0 && (
         <div className="mb-4 space-y-2">
-          {data.warnings.map((w, i) => (
+          {reportData.warnings.map((w, i) => (
             <div key={i} className="flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> <span>{w.message}</span>
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> <span>{localizeReportWarning(w, t)}</span>
             </div>
           ))}
         </div>
@@ -227,21 +336,62 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
               </div>
             ))}
             <div className="ms-auto self-end text-xs font-medium text-slate-400">
-              {t("inventoryRest.reports.generated", { date: formatDateTime(data.generatedAt) })}{isFetching && !isLoading ? t("inventoryRest.reports.updating") : ""}
+              {t("inventoryRest.reports.generated", { date: formatDateTime(reportData?.generatedAt) })}{isFetching && !isLoading ? t("inventoryRest.reports.updating") : ""}
             </div>
           </div>
 
           {rows.length === 0 ? (
             <EmptyState title={t("inventoryRest.reports.emptyTitle")} body={t("inventoryRest.reports.emptyBody")} />
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              {sortableColumns.length > 0 && (
+                <div className="no-print flex items-center gap-2 border-b border-slate-100 p-3 lg:hidden">
+                  <select
+                    className="field min-w-0 flex-1"
+                    aria-label={t("inventoryRest.reports.sortBy")}
+                    value={sort}
+                    onChange={(event) => patch({ sort: event.target.value, dir }, false)}
+                  >
+                    {sortableColumns.map((column) => <option key={column.key} value={column.sortKey}>{t(column.label)}</option>)}
+                  </select>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={dir === "asc" ? t("inventoryRest.reports.sortAscending") : t("inventoryRest.reports.sortDescending")}
+                    onClick={() => patch({ dir: dir === "asc" ? "desc" : "asc" }, false)}
+                  >
+                    <ArrowUpDown className="h-4 w-4" />
+                    {dir === "asc" ? t("inventoryRest.reports.sortAscending") : t("inventoryRest.reports.sortDescending")}
+                  </Button>
+                </div>
+              )}
+              <div className="grid gap-3 p-3 sm:grid-cols-2 lg:hidden print:hidden">
+                {rows.map((row, rowIndex) => (
+                  <article key={rowIndex} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <h3 className="break-words text-sm font-extrabold text-slate-900">
+                      {config.columns[0] && <ReportValue column={config.columns[0]} value={row[config.columns[0].key]} row={row} t={t} />}
+                    </h3>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 pt-3">
+                      {config.columns.slice(1).map((column) => (
+                        <div key={column.key} className="min-w-0">
+                          <dt className="text-[10px] font-bold text-slate-400">{t(column.label)}</dt>
+                          <dd className="mt-1 break-words text-xs font-extrabold text-slate-700">
+                            <ReportValue column={column} value={row[column.key]} row={row} t={t} />
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </article>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto lg:block print:block">
               <table className="w-full min-w-[640px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-100 text-start text-xs font-bold text-slate-500">
                     {config.columns.map((c) => (
                       <th key={c.key} className="px-4 py-3 text-start">
                         {c.sortKey ? (
-                          <button type="button" onClick={() => toggleSort(c)} className="inline-flex items-center gap-1 hover:text-teal-700">
+                          <button type="button" onClick={() => toggleSort(c)} className="inline-flex min-h-11 w-full items-center gap-1 text-start hover:text-teal-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40">
                             {t(c.label)}
                             <ArrowUpDown className={`h-3 w-3 ${sort === c.sortKey ? "text-teal-600" : "text-slate-300"}`} />
                           </button>
@@ -258,7 +408,7 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
                         const isNeg = (c.format === "currency" || c.format === "qty" || c.format === "number") && Number(v) < 0;
                         return (
                           <td key={c.key} className={`px-4 py-3 ${c.format === "currency" || c.format === "qty" || c.format === "number" ? "tabular-nums" : ""} ${isNeg ? "font-bold text-rose-600" : "text-slate-700"}`}>
-                            {c.format === "status" ? <StatusPill label={String(v ?? "")} /> : fmt(v, c.format)}
+                            <ReportValue column={c} value={v} row={row} t={t} />
                           </td>
                         );
                       })}
@@ -266,7 +416,8 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
 
           {/* Pagination */}

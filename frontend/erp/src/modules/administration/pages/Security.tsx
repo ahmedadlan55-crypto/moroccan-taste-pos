@@ -41,8 +41,8 @@ export default function SecurityPage() {
   });
 
   const settings = useQuery({
-    queryKey: ["settings"],
-    queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings", { signal }),
+    queryKey: ["settings", "all"],
+    queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings/all", { signal }),
   });
 
   const voidApproval = boolFrom(settings.data?.RequireManagerApprovalForVoid);

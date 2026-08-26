@@ -11,7 +11,7 @@
 // EVERY REPORT BELOW IS BACKED BY A REAL ENDPOINT
 //   shift variance    GET /shifts/            (theoretical vs counted, per shift)
 //   user actions      GET /erp/audit-logs     (the audit_logs table)
-//   transaction log   GET /workflow/transactions
+//   transaction log   GET /workflow/reports/transaction-log
 //
 // WHAT IS DELIBERATELY ABSENT
 //   A SIGN-IN / SESSION report ("who logged in, when, from where") is not here
@@ -69,7 +69,7 @@ async function loadShiftVariance(
 ): Promise<ReportResult> {
   const shifts = asRows(
     await apiClient.get<unknown>("/shifts/", {
-      params: { startDate: filters.from, endDate: filters.to, status: filters.status },
+      params: { report: 1, startDate: filters.from, endDate: filters.to, status: filters.status },
       signal,
     }),
   );
@@ -98,7 +98,7 @@ async function loadUserActions(
 ): Promise<ReportResult> {
   const entries = asRows(
     await apiClient.get<unknown>("/erp/audit-logs", {
-      params: { from: filters.from, to: filters.to, limit: 1000 },
+      params: { report: 1, from: filters.from, to: filters.to },
       signal,
     }),
   );
@@ -123,7 +123,7 @@ async function loadTransactionLog(
   signal?: AbortSignal,
 ): Promise<ReportResult> {
   const transactions = asRows(
-    await apiClient.get<unknown>("/workflow/transactions", {
+    await apiClient.get<unknown>("/workflow/reports/transaction-log", {
       params: { startDate: filters.from, endDate: filters.to, status: filters.status },
       signal,
     }),

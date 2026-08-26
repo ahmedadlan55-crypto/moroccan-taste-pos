@@ -76,8 +76,8 @@ export function StocktakesPage() {
       <section className="surface mt-4 flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative flex-1">
-            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input className="field w-full pr-10" placeholder={t("inventoryRest.stocktakes.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("inventoryRest.invtx.list.searchAria")} />
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input className="field w-full ps-10" placeholder={t("inventoryRest.stocktakes.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("inventoryRest.invtx.list.searchAria")} />
           </label>
           <select className="field lg:w-52" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("inventoryRest.stocktakes.warehouseAria")}>
             <option value="">{t("inventoryRest.filter.allWarehouses")}</option>
@@ -87,7 +87,7 @@ export function StocktakesPage() {
         <div className="flex flex-wrap gap-1">
           {statusOptions.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
-              className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{o.label}</button>
+              className={`min-h-11 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{o.label}</button>
           ))}
         </div>
       </section>
@@ -100,8 +100,8 @@ export function StocktakesPage() {
             <div className="surface hidden overflow-hidden md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.number")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.warehouse")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.status")}</th>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.countedTotal")}</th><th className="px-4 py-3 text-right">{t("inventoryRest.stocktakes.col.variance")}</th><th className="px-4 py-3 text-left">{t("inventoryRest.stocktakes.col.varianceValue")}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.stocktakes.col.number")}</th><th className="px-4 py-3 text-start">{t("inventoryRest.stocktakes.col.warehouse")}</th><th className="px-4 py-3 text-start">{t("inventoryRest.stocktakes.col.status")}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.stocktakes.col.countedTotal")}</th><th className="px-4 py-3 text-start">{t("inventoryRest.stocktakes.col.variance")}</th><th className="px-4 py-3 text-end">{t("inventoryRest.stocktakes.col.varianceValue")}</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.rows.map((r) => (
@@ -111,7 +111,7 @@ export function StocktakesPage() {
                       <td className="px-4 py-3"><StatusBadge>{stocktakeStatusToLabel(r.status)}</StatusBadge></td>
                       <td className="px-4 py-3 tabular-nums text-slate-600">{formatNumber(r.countedLines)} / {formatNumber(r.totalLines)}</td>
                       <td className="px-4 py-3 tabular-nums font-bold text-slate-700">{formatNumber(r.varianceLines)}</td>
-                      <td className="px-4 py-3 text-left font-bold tabular-nums text-slate-800">{formatCurrency(r.totalVarianceValue)}</td>
+                      <td className="px-4 py-3 text-end font-bold tabular-nums text-slate-800">{formatCurrency(r.totalVarianceValue)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -119,7 +119,7 @@ export function StocktakesPage() {
             </div>
             <div className="space-y-3 md:hidden">
               {data.rows.map((r) => (
-                <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-right">
+                <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-start">
                   <div className="flex items-center justify-between gap-2"><span className="font-extrabold text-slate-900">{r.number}</span><StatusBadge>{stocktakeStatusToLabel(r.status)}</StatusBadge></div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-500"><span>{r.warehouse.name} · {formatDate(r.date)}</span><span className="font-bold text-slate-800">{formatNumber(r.countedLines)}/{formatNumber(r.totalLines)} · {formatCurrency(r.totalVarianceValue)}</span></div>
                 </button>
@@ -128,7 +128,7 @@ export function StocktakesPage() {
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
                 <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(pg?.total ?? 0) })}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}</select>
+                <select className="field min-h-11 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}</select>
                 {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}
               </div>
               <div className="flex items-center gap-2">

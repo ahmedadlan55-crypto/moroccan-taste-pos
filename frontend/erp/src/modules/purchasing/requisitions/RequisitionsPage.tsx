@@ -438,7 +438,7 @@ function RequisitionDetailDrawer({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
             <KV label={t("purchasing.requisitions.neededDate")} value={data.needed_date ? formatDate(data.needed_date) : "—"} />
             <KV label={t("purchasing.requisitions.requestedBy")} value={data.requested_by || "—"} />
             <KV label={t("purchasing.field.createdBy")} value={data.created_by || "—"} />
@@ -550,10 +550,10 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 function Th({ children, left }: { children: React.ReactNode; left?: boolean }) {
-  return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-left" : "text-right"}`}>{children}</th>;
+  return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-end" : "text-start"}`}>{children}</th>;
 }
 function Td({ children, left, bold }: { children: React.ReactNode; left?: boolean; bold?: boolean }) {
-  return <td className={`px-3 py-2.5 text-slate-700 ${left ? "text-left tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>;
+  return <td className={`px-3 py-2.5 text-slate-700 ${left ? "text-end tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>;
 }
 
 export default RequisitionsPage;

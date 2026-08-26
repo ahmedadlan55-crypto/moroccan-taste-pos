@@ -316,24 +316,24 @@ export function TrialBalancePage() {
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-extrabold text-slate-500">
                   <th rowSpan={2} className="w-28 px-3 py-2 text-start">{t("accounting.coa.col.code")}</th>
-                  <th rowSpan={2} className="px-3 py-2 text-right">{t("accounting.common.account")}</th>
-                  <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
+                  <th rowSpan={2} className="px-3 py-2 text-start">{t("accounting.common.account")}</th>
+                  <th colSpan={2} className="border-s border-slate-100 px-3 py-2 text-center">
                     {t("accounting.trialBalance.openingCol")}
                   </th>
-                  <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
+                  <th colSpan={2} className="border-s border-slate-100 px-3 py-2 text-center">
                     {t("accounting.trialBalance.periodCol")}
                   </th>
-                  <th colSpan={2} className="border-r border-slate-100 px-3 py-2 text-center">
+                  <th colSpan={2} className="border-s border-slate-100 px-3 py-2 text-center">
                     {t("accounting.trialBalance.closingCol")}
                   </th>
                 </tr>
                 <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-400">
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
-                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
-                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
-                  <th className="border-r border-slate-100 px-3 py-1.5 text-left">{t("accounting.common.debit")}</th>
-                  <th className="px-3 py-1.5 text-left">{t("accounting.common.credit")}</th>
+                  <th className="border-s border-slate-100 px-3 py-1.5 text-end">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("accounting.common.credit")}</th>
+                  <th className="border-s border-slate-100 px-3 py-1.5 text-end">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("accounting.common.credit")}</th>
+                  <th className="border-s border-slate-100 px-3 py-1.5 text-end">{t("accounting.common.debit")}</th>
+                  <th className="px-3 py-1.5 text-end">{t("accounting.common.credit")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -358,7 +358,7 @@ export function TrialBalancePage() {
                         {r.hasChildren ? (
                           <button
                             type="button"
-                            className="no-print grid h-7 w-7 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+                            className="no-print grid h-11 w-11 place-items-center rounded-xl text-slate-500 hover:bg-slate-100"
                             aria-label={collapsed.has(r.accountId) ? t("accounting.coa.expand") : t("accounting.coa.collapse")}
                             onClick={() => toggleRow(r.accountId)}
                           >
@@ -369,7 +369,7 @@ export function TrialBalancePage() {
                             )}
                           </button>
                         ) : (
-                          <span className="no-print inline-block h-7 w-7" />
+                          <span className="no-print inline-block h-11 w-11" />
                         )}
                         <button
                           type="button"
@@ -386,7 +386,7 @@ export function TrialBalancePage() {
                         <button
                           type="button"
                           onClick={() => openLedger(r)}
-                          className="no-print inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-[11px] font-bold text-teal-700 hover:bg-teal-50"
+                          className="no-print inline-flex min-h-11 items-center gap-1 rounded-xl px-2 text-[11px] font-bold text-teal-700 hover:bg-teal-50"
                           aria-label={t("accounting.trialBalance.openLedgerFor", { account: rowName(r) })}
                         >
                           <BookOpen className="h-3.5 w-3.5" />
@@ -394,12 +394,12 @@ export function TrialBalancePage() {
                         </button>
                       </span>
                     </td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.openDebit} strong={main} /></td>
-                    <td className="px-3 py-2 text-left"><Num value={r.openCredit} strong={main} /></td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.periodDebit} strong={main} /></td>
-                    <td className="px-3 py-2 text-left"><Num value={r.periodCredit} strong={main} /></td>
-                    <td className="border-r border-slate-100 px-3 py-2 text-left"><Num value={r.closeDebit} strong /></td>
-                    <td className="px-3 py-2 text-left"><Num value={r.closeCredit} strong /></td>
+                    <td className="border-s border-slate-100 px-3 py-2 text-end"><Num value={r.openDebit} strong={main} /></td>
+                    <td className="px-3 py-2 text-end"><Num value={r.openCredit} strong={main} /></td>
+                    <td className="border-s border-slate-100 px-3 py-2 text-end"><Num value={r.periodDebit} strong={main} /></td>
+                    <td className="px-3 py-2 text-end"><Num value={r.periodCredit} strong={main} /></td>
+                    <td className="border-s border-slate-100 px-3 py-2 text-end"><Num value={r.closeDebit} strong /></td>
+                    <td className="px-3 py-2 text-end"><Num value={r.closeCredit} strong /></td>
                   </tr>
                   );
                 })}
@@ -415,17 +415,17 @@ export function TrialBalancePage() {
               {totals && (
                 <tfoot>
                   <tr className="border-t-2 border-slate-300 bg-slate-50 text-sm font-extrabold">
-                    <td colSpan={2} className="px-3 py-2.5 text-right">
+                    <td colSpan={2} className="px-3 py-2.5 text-start">
                       {viewRestricted
                         ? t("accounting.trialBalance.fullScopeTotal")
                         : t("accounting.common.total")}
                     </td>
-                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.openDebit} strong /></td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.openCredit} strong /></td>
-                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.periodDebit} strong /></td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.periodCredit} strong /></td>
-                    <td className="border-r border-slate-100 px-3 py-2.5 text-left"><Num value={totals.closeDebit} strong /></td>
-                    <td className="px-3 py-2.5 text-left"><Num value={totals.closeCredit} strong /></td>
+                    <td className="border-s border-slate-100 px-3 py-2.5 text-end"><Num value={totals.openDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.openCredit} strong /></td>
+                    <td className="border-s border-slate-100 px-3 py-2.5 text-end"><Num value={totals.periodDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.periodCredit} strong /></td>
+                    <td className="border-s border-slate-100 px-3 py-2.5 text-end"><Num value={totals.closeDebit} strong /></td>
+                    <td className="px-3 py-2.5 text-end"><Num value={totals.closeCredit} strong /></td>
                   </tr>
                 </tfoot>
               )}
@@ -463,7 +463,7 @@ export function TrialBalancePage() {
                     {r.hasChildren && (
                       <button
                         type="button"
-                        className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-600"
+                        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-600"
                         aria-label={collapsed.has(r.accountId) ? t("accounting.coa.expand") : t("accounting.coa.collapse")}
                         onClick={() => toggleRow(r.accountId)}
                       >
@@ -474,7 +474,7 @@ export function TrialBalancePage() {
                   <button
                     type="button"
                     onClick={() => openLedger(r)}
-                    className="no-print mb-2 inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-teal-50 px-3 text-xs font-bold text-teal-700"
+                    className="no-print mb-2 inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-teal-50 px-3 text-xs font-bold text-teal-700"
                   >
                     <BookOpen className="h-4 w-4" /> {t("accounting.trialBalance.openLedger")}
                   </button>

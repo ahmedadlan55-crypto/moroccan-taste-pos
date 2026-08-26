@@ -90,7 +90,7 @@ export function Heatmap({
         onClick={cell && onCellClick ? () => onCellClick(cell) : undefined}
         aria-label={`${row.label} × ${col.label}: ${display}`}
         className={cn(
-          "relative grid min-h-9 place-items-center overflow-hidden rounded-md border border-slate-100 px-1 transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+          "relative grid min-h-11 place-items-center overflow-hidden rounded-md border border-slate-100 px-1 transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
           step >= 4 ? "text-white" : "text-slate-700",
           cell && onCellClick ? "cursor-pointer hover:ring-2 hover:ring-teal-200" : "cursor-default",
         )}

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { I18nProvider } from "@/i18n";
 
 // Mock the API client (keep the real ApiError so <ErrorState> instanceof checks
 // work). The factory is hoisted above module scope, so the fixture is inlined.
@@ -53,6 +54,7 @@ vi.mock("@/app/providers", () => ({
 }));
 
 import { apiClient } from "@/shared/api";
+import WorkflowModule from "../index";
 import { InboxPage } from "../pages/InboxPage";
 
 function renderInbox() {
@@ -71,6 +73,7 @@ describe("workflow InboxPage", () => {
 
   it("renders incoming transactions from the mocked apiClient", async () => {
     renderInbox();
+    expect(screen.getByRole("heading", { level: 1, name: "صندوق الوارد" })).toBeInTheDocument();
     // The DataTable renders a desktop table + a mobile card list (both in the DOM
     // under jsdom), so each value can appear more than once — assert ≥ 1.
     expect((await screen.findAllByText("شراء مستلزمات")).length).toBeGreaterThan(0);
@@ -101,5 +104,20 @@ describe("workflow InboxPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /غير مقروءة 1/ }));
     expect(screen.getAllByText("شراء مستلزمات").length).toBeGreaterThan(0);
     expect(screen.queryByText("تعميم إداري")).not.toBeInTheDocument();
+  });
+
+  it("shows the shared not-found state for an unknown workflow route", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <MemoryRouter initialEntries={["/workflow/not-a-screen"]}>
+            <WorkflowModule />
+          </MemoryRouter>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(container.querySelector('[data-state="not-found"]')).toBeInTheDocument();
   });
 });

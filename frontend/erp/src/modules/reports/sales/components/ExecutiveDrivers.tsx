@@ -188,7 +188,7 @@ export function ExecutiveDrivers({
                 aria-pressed={entry.id === option.id}
                 onClick={() => setDimension(entry.id)}
                 className={cn(
-                  "min-h-10 rounded-xl border px-3 text-xs font-extrabold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+                  "min-h-11 rounded-xl border px-3 text-xs font-extrabold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
                   entry.id === option.id
                     ? "border-teal-300 bg-teal-50 text-teal-900"
                     : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:bg-slate-50",
@@ -215,7 +215,7 @@ export function ExecutiveDrivers({
       ) : query.error ? (
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-5">
           <p className="text-sm font-bold text-rose-700">{t("salesReports.command.drivers.failed")}</p>
-          <button type="button" onClick={() => void query.refetch()} className="min-h-10 rounded-xl border border-slate-200 px-3 text-xs font-extrabold text-slate-700">
+          <button type="button" onClick={() => void query.refetch()} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-extrabold text-slate-700">
             {t("salesReports.topbar.lookupRetry")}
           </button>
         </div>

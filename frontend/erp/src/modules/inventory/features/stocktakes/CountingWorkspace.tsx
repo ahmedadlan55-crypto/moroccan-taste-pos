@@ -147,15 +147,15 @@ export function CountingWorkspace() {
 
       <section className="surface mt-4 p-4">
         <label className="relative mb-3 block">
-          <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field w-full pr-10" placeholder={t("inventoryRest.stocktakes.counting.searchPlaceholder")} value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t("inventoryRest.invtx.list.searchAria")} />
+          <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input className="field w-full ps-10" placeholder={t("inventoryRest.stocktakes.counting.searchPlaceholder")} value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t("inventoryRest.invtx.list.searchAria")} />
         </label>
 
         {/* Desktop table */}
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead className="text-xs text-slate-400"><tr>
-              <th className="py-2 text-right">{t("inventoryRest.stocktakes.counting.colItem")}</th>{!d.blindCount && <th>{t("inventoryRest.stocktakes.counting.colTheoretical")}</th>}<th>{t("inventoryRest.stocktakes.counting.colCounted")}</th><th>{t("inventoryRest.stocktakes.counting.colDelta")}</th><th>{t("inventoryRest.stocktakes.counting.colNote")}</th>
+              <th className="py-2 text-start">{t("inventoryRest.stocktakes.counting.colItem")}</th>{!d.blindCount && <th>{t("inventoryRest.stocktakes.counting.colTheoretical")}</th>}<th>{t("inventoryRest.stocktakes.counting.colCounted")}</th><th>{t("inventoryRest.stocktakes.counting.colDelta")}</th><th>{t("inventoryRest.stocktakes.counting.colNote")}</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map((l) => <Row key={l.id} l={l} blind={d.blindCount} value={val(l)} notes={l.item.id in edits ? edits[l.item.id].notes : (l.notes ?? "")} onChange={setEdit} />)}

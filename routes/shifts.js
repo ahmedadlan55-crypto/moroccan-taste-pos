@@ -1943,6 +1943,23 @@ router.get('/', async (req, res) => {
     if (!req.user || !req.user.username) {
       return res.status(401).json({ success: false, code: 'PERMISSION_DENIED', error: 'مطلوب تسجيل الدخول' });
     }
+    const reportMode = String((req.query && req.query.report) || '') === '1';
+    if (reportMode) {
+      let allowed = false;
+      try { allowed = await hasCapability(req.user, 'pos.shifts.view'); } catch (_) { allowed = false; }
+      if (!allowed) {
+        return res.status(403).json({ success: false, code: 'PERMISSION_DENIED', error: 'صلاحية غير كافية لهذا التقرير' });
+      }
+    }
+    const startDate = req.query.startDate || '';
+    const endDate = req.query.endDate || '';
+    const validDate = (value) => !value || /^\d{4}-\d{2}-\d{2}$/.test(String(value));
+    if (!validDate(startDate) || !validDate(endDate)) {
+      return res.status(400).json({ success: false, code: 'INVALID_DATE', error: 'صيغة التاريخ غير صحيحة' });
+    }
+    if (startDate && endDate && startDate > endDate) {
+      return res.status(400).json({ success: false, code: 'INVALID_DATE_RANGE', error: 'تاريخ البداية يجب ألا يكون بعد تاريخ النهاية' });
+    }
     const where = ['1=1'];
     const params = [];
     let join = '';
@@ -1968,8 +1985,18 @@ router.get('/', async (req, res) => {
       }
     }
 
-    const query = 'SELECT shifts.* FROM shifts' + join + ' WHERE ' + where.join(' AND ') + ' ORDER BY shifts.start_time DESC LIMIT 200';
+    const reportMaxRows = 5000;
+    const query = 'SELECT shifts.* FROM shifts' + join + ' WHERE ' + where.join(' AND ') +
+      ' ORDER BY shifts.start_time DESC LIMIT ' + (reportMode ? reportMaxRows + 1 : 200);
     const [rows] = await db.query(query, params);
+    if (reportMode && rows.length > reportMaxRows) {
+      return res.status(413).json({
+        success: false,
+        code: 'REPORT_TOO_LARGE',
+        error: 'التقرير أكبر من حد الطباعة والتصدير، ضيّق الفترة أو المرشّحات',
+        maxRows: reportMaxRows,
+      });
+    }
     // Display names for the whole page — the bulk form of the same one rule
     // (lib/displayName.js): two queries total, not two per row.
     const userMap = await displayName.resolveCashierIdentities(db, rows.map(s => s.username));

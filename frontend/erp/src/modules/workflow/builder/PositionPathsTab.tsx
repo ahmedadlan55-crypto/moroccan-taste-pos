@@ -324,7 +324,7 @@ function PathEditor({
         <LoadingState rows={4} />
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label={t("workflow.paths.keyLabel")} hint={t("workflow.paths.keyHint")}>
               <Input
                 dir="ltr"
@@ -379,7 +379,7 @@ function PathEditor({
                     <X className="h-4 w-4" />
                   </IconButton>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <Field label={t("workflow.paths.stepPositionLabel")}>
                     <Select
                       value={s.positionId ?? ""}
@@ -400,7 +400,7 @@ function PathEditor({
                     />
                   </Field>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {FLAG_DEFS.map((f) => (
                     <Checkbox
                       key={f.key}

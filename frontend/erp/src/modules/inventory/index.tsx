@@ -80,7 +80,7 @@ function LotsExpiry() {
             key={tabId}
             type="button"
             onClick={() => go(tabId)}
-            className={`min-h-10 rounded-xl border px-4 text-sm font-extrabold transition ${
+            className={`min-h-11 rounded-xl border px-4 text-sm font-extrabold transition ${
               tab === tabId ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >

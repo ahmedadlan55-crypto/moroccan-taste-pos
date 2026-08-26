@@ -11,6 +11,7 @@ export function OutboxPage() {
   return (
     <TxnListScreen
       icon={Send}
+      title={t("nav.items.wf-outbox")}
       description={t("workflow.outbox.description")}
       tableId="wf-outbox"
       peopleColumn={{ id: "holder", header: t("workflow.outbox.holder"), value: (r) => r.assigneeName || r.currentAssignee || "" }}

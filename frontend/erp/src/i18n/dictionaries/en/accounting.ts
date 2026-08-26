@@ -987,12 +987,70 @@ export const accounting = {
     },
   },
 
-  // The screen's chrome only. The rest of SalesPosting.tsx is still hardcoded
-  // Arabic — translating it fully is a separate job; these two are what the
-  // bilingual sweep inspects (page heading + subtitle).
   salesPosting: {
     title: "Sales posting",
     subtitle: "Sales do not reach the general ledger until they are posted from here.",
+    blockingSummary: "{count} issues prevent posting",
+    tabs: {
+      pending: "Pending",
+      posted: "Posted batches",
+      problems: "Issues",
+    },
+    filters: {
+      from: "From",
+      to: "To",
+      granularity: "Grouping",
+    },
+    granularity: {
+      daily: "Daily",
+      monthly: "Monthly",
+    },
+    healthOk: "No issues — every sale is in the posting queue and all required accounts are configured.",
+    severity: {
+      critical: "Critical",
+      blocking: "Blocking",
+      warning: "Warning",
+    },
+    pendingEmpty: "There are no pending sales in this range — everything is posted.",
+    postedEmpty: "No batches have been posted yet.",
+    totals: {
+      batches: "Batches",
+      operations: "Transactions",
+      net: "Net",
+      tax: "Tax",
+      gross: "Gross",
+    },
+    operationCount: "{count} transactions",
+    salesReturnsCount: "{sales} sales · {returns} returns",
+    journalDate: "Journal date {date}",
+    post: "Post",
+    notPostable: "Cannot be posted",
+    proposedJournal: "Proposed journal entry",
+    invoicesTitle: "Invoices ({count})",
+    returnLabel: "Return",
+    columns: {
+      account: "Account",
+      debit: "Debit",
+      credit: "Credit",
+      total: "Total",
+    },
+    reversed: "Reversed",
+    reverse: "Reverse",
+    reverseReason: "Reversal reason: {reason}",
+    reverseReasonLabel: "Reversal reason (recorded in the journal entry)",
+    confirmReverse: "Confirm reversal",
+    problems: {
+      unqueuedSales: "{count} sales are missing from the posting queue and will not be posted",
+      batchBlocked: "Batch {bucket} cannot be posted: {details}",
+      missingAccount: "Account {account} is missing from the chart of accounts — no batch can be posted",
+      failedRows: "{count} queue rows failed during an earlier posting attempt",
+      stuckClaims: "{count} queue rows are stuck in the posting state",
+    },
+    warnings: {
+      paymentSplitMissing: "Payment details are missing for {sourceType} source {sourceId}",
+      paymentMismatch: "Payment total {payments} does not match net plus tax {expected} across {count} rows",
+      unknown: "A posting blocker needs review ({code})",
+    },
   },
   invValuation: {
     title: "Inventory Valuation",

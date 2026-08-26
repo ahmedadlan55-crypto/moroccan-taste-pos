@@ -507,10 +507,10 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                   <table className="w-full min-w-[40rem] text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                        <th className="px-2 py-2 text-right">{t("banking.voucherForm.manual.account")}</th>
-                        <th className="px-2 py-2 text-left">{t("banking.voucherForm.manual.debit")}</th>
-                        <th className="px-2 py-2 text-left">{t("banking.voucherForm.manual.credit")}</th>
-                        <th className="px-2 py-2 text-right">{t("banking.voucherForm.statement")}</th>
+                        <th className="px-2 py-2 text-start">{t("banking.voucherForm.manual.account")}</th>
+                        <th className="px-2 py-2 text-end">{t("banking.voucherForm.manual.debit")}</th>
+                        <th className="px-2 py-2 text-end">{t("banking.voucherForm.manual.credit")}</th>
+                        <th className="px-2 py-2 text-start">{t("banking.voucherForm.statement")}</th>
                         <th className="px-2 py-2" />
                       </tr>
                     </thead>
@@ -551,7 +551,7 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                               aria-label={t("banking.voucherForm.manual.rowStatement")}
                             />
                           </td>
-                          <td className="px-2 py-2 w-10 text-left">
+                          <td className="px-2 py-2 w-10 text-end">
                             <IconButton
                               aria-label={t("banking.voucherForm.manual.removeRow")}
                               size="sm"
@@ -565,13 +565,13 @@ function VoucherFormBody({ kind, onClose }: { kind: VoucherKind; onClose: () => 
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-slate-200 bg-white text-xs font-extrabold">
-                        <td className="px-2 py-2.5 text-right">{t("banking.voucherForm.manual.total")}</td>
-                        <td className="px-2 py-2.5 text-left">
+                        <td className="px-2 py-2.5 text-start">{t("banking.voucherForm.manual.total")}</td>
+                        <td className="px-2 py-2.5 text-end">
                           <span dir="ltr" className="tabular-nums text-slate-800">
                             {fmt(totals.dr)}
                           </span>
                         </td>
-                        <td className="px-2 py-2.5 text-left">
+                        <td className="px-2 py-2.5 text-end">
                           <span dir="ltr" className="tabular-nums text-slate-800">
                             {fmt(totals.cr)}
                           </span>

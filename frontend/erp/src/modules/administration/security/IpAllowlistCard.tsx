@@ -100,9 +100,9 @@ export function IpAllowlistCard({ initial, canManage }: { initial: IpAllowlist; 
                     type="button"
                     onClick={() => removeCidr(c)}
                     aria-label={t("administration.security.ip.removeAria", { cidr: c })}
-                    className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                    className="-my-1 grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
                   </button>
                 )}
               </li>

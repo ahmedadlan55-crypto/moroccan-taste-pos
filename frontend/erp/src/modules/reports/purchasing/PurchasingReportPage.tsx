@@ -38,7 +38,7 @@ import {
   todayISO,
 } from "@/shared/lib";
 import { downloadCsv } from "@/shared/lib/downloadCsv";
-import { useT, translateApiError, type TFunction } from "@/i18n";
+import { useLang, useT, translateApiError, type TFunction } from "@/i18n";
 import { usePermissions } from "@/app/providers";
 import { useServerFlags } from "@/app/server-flags";
 import { WarehouseModuleProviders } from "@/modules/inventory/lib/providers";
@@ -141,6 +141,24 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
+interface SnapshotMeta {
+  complete: boolean;
+  rowCount: number;
+  rowLimit: number;
+}
+
+function readSnapshot(envelope: unknown): SnapshotMeta | null {
+  const value = asRecord(asRecord(envelope).snapshot);
+  const rowCount = Number(value.rowCount);
+  const rowLimit = Number(value.rowLimit);
+  if (value.complete !== true || !Number.isInteger(rowCount) || rowCount < 0 || !Number.isInteger(rowLimit) || rowLimit < 1) return null;
+  return { complete: true, rowCount, rowLimit };
+}
+
+function safeFilePart(value: string): string {
+  return value.trim().replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "all";
+}
+
 /**
  * The payload → rows. `data-quality` answers with an object of named checks
  * rather than an array; `shape` says which, so nothing is guessed from the
@@ -175,13 +193,14 @@ function reportIdFromPath(pathname: string): string {
 
 export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
   const t = useT();
+  const lang = useLang();
   const { pathname } = useLocation();
   const params = useParams();
   const id = reportId ?? params.reportId ?? reportIdFromPath(pathname);
   const report = getPurchasingReport(id);
   const { can } = usePermissions();
   const { procurementP2P } = useServerFlags();
-  const { scope } = useWarehouseScope();
+  const { scope, accessibleWarehouses = [] } = useWarehouseScope();
   const [supplier, setSupplier] = useState<SupplierHit | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -239,10 +258,34 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
   }
 
   const rows = toRows(query.data, report);
+  const snapshot = readSnapshot(query.data);
+  const serverSupplier = asRecord(asRecord(query.data).supplier);
+  const supplierIdentityReady = !report.requiresSupplier
+    || (String(serverSupplier.id ?? "") === supplier?.id && String(serverSupplier.name ?? "").trim() !== "");
+  // Both conditions matter: `complete:true` without an exact row count is not
+  // enough, and a supplier statement without an authoritative supplier identity
+  // is not a statement we may print or export.
+  const completeSnapshot = snapshot?.complete === true
+    && snapshot.rowCount === rows.length
+    && supplierIdentityReady;
   const period = report.heading === "asAt"
     ? formatAsAt(filter.applied.asOfDate)
     : formatForPeriod(filter.applied.from, filter.applied.to);
   const title = t(report.labelKey);
+  const selectedWarehouse = accessibleWarehouses.find((warehouse) => warehouse.id === scope);
+  const scopeLabel = scope === ALL_WAREHOUSES
+    ? t("purchasing.reports.allWarehouses")
+    : selectedWarehouse
+      ? `${selectedWarehouse.name}${selectedWarehouse.code ? ` (${selectedWarehouse.code})` : ""}`
+      : scope;
+  const supplierLabel = report.requiresSupplier
+    ? [String(serverSupplier.name ?? supplier?.name ?? ""), String(serverSupplier.id ?? supplier?.id ?? ""), String(serverSupplier.vatNumber ?? supplier?.vatNumber ?? "")]
+      .filter(Boolean).join(" · ")
+    : "";
+  const printMeta = [
+    `${t("purchasing.reports.scopeLabel")}: ${scopeLabel}`,
+    supplierLabel ? `${t("purchasing.reports.supplierIdentity")}: ${supplierLabel}` : "",
+  ].filter(Boolean).join(" · ");
   // A row identity from the declared key(s). Some rows legitimately have none —
   // ap-aging groups unlinked invoices under a synthetic supplier — so the row's
   // position in the server's own ordering is the last resort.
@@ -253,14 +296,19 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
 
   const exportSheet = (visible: Row[]) => {
     setExportError("");
+    if (!completeSnapshot) {
+      setExportError(t("purchasing.reports.snapshotUnverified"));
+      return;
+    }
     const stamp = report.heading === "asAt" ? filter.applied.asOfDate : `${filter.applied.from}_${filter.applied.to}`;
-    const filename = `${report.id}-${stamp}.csv`;
+    const supplierPart = report.requiresSupplier ? `-${safeFilePart(String(serverSupplier.id ?? supplier?.id ?? "supplier"))}` : "";
+    const filename = `${report.id}${supplierPart}-${safeFilePart(scope)}-${stamp}.csv`;
     // `server-csv` — these two endpoints implement ?format=csv, and the supplier
     // statement's file carries the opening-balance row that the JSON keeps in
     // the envelope rather than in `data`. Rebuilding it here would lose it.
     if (report.exportMode === "server-csv") {
       setExporting(true);
-      void downloadCsv(`/procurement/reports/${report.id}`, filename, { ...request, format: "csv" })
+      void downloadCsv(`/procurement/reports/${report.id}`, filename, { ...request, format: "csv", lang })
         .catch((error: unknown) => setExportError(translateApiError(error, t)))
         .finally(() => setExporting(false));
       return;
@@ -280,11 +328,11 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
         subtitle={period}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => exportSheet(rows)} disabled={exporting || !rows.length}>
+            <Button variant="secondary" onClick={() => exportSheet(rows)} disabled={exporting || !rows.length || !completeSnapshot}>
               <Download className="h-4 w-4" />
               {t(exporting ? "warehouseIntelligence.actions.exporting" : "warehouseIntelligence.actions.export")}
             </Button>
-            <Button variant="secondary" onClick={printReport} disabled={!rows.length}>
+            <Button variant="secondary" onClick={printReport} disabled={!rows.length || !completeSnapshot}>
               <Printer className="h-4 w-4" />
               {t("accounting.common.print")}
             </Button>
@@ -349,6 +397,7 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
           emptyTitle={t("warehouseIntelligence.specialized.emptyTitle")}
           emptyBody={t("warehouseIntelligence.specialized.emptyBody")}
         >
+          <SnapshotSummary snapshot={snapshot} complete={completeSnapshot} />
           <ServerTotals report={report} envelope={query.data} />
           <DataTable<Row>
             columns={columns}
@@ -360,10 +409,28 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
             initialSort={report.defaultSort ? { columnId: report.defaultSort.columnKey, dir: report.defaultSort.dir } : null}
             emptyTitle={t("warehouseIntelligence.specialized.emptyTitle")}
           />
-          <PrintSheet report={report} rows={rows} envelope={query.data} title={title} period={period} />
+          {completeSnapshot && (
+            <PrintSheet report={report} rows={rows} envelope={query.data} title={title} period={period} scopeMeta={printMeta} />
+          )}
         </ReportState>
       )}
     </div>
+  );
+}
+
+function SnapshotSummary({ snapshot, complete }: { snapshot: SnapshotMeta | null; complete: boolean }) {
+  const t = useT();
+  if (!complete || !snapshot) {
+    return (
+      <div role="alert" className="no-print mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-900">
+        {t("purchasing.reports.snapshotUnverified")}
+      </div>
+    );
+  }
+  return (
+    <p className="no-print mb-3 text-xs font-semibold text-slate-500" data-testid="purchasing-report-snapshot">
+      {t("purchasing.reports.completeSnapshot", { count: snapshot.rowCount, limit: snapshot.rowLimit })}
+    </p>
   );
 }
 
@@ -394,12 +461,13 @@ function ServerTotals({ report, envelope }: { report: PurchasingReportDef; envel
  * in a real <tfoot>. Separate from the screen table because DataTable paginates
  * — printing it would silently emit one page and call it the report.
  */
-function PrintSheet({ report, rows, envelope, title, period }: {
+function PrintSheet({ report, rows, envelope, title, period, scopeMeta }: {
   report: PurchasingReportDef;
   rows: Row[];
   envelope: unknown;
   title: string;
   period: string;
+  scopeMeta: string;
 }) {
   const t = useT();
   const footer = report.totals?.filter((field) => field.column && readTotal(envelope, field) != null) ?? [];
@@ -408,6 +476,7 @@ function PrintSheet({ report, rows, envelope, title, period }: {
   // The unit is stated ONCE on the sheet, never on each money cell.
   const hasMoney = report.columns.some((column) => column.format === "money" || column.format === "signedMoney");
   const meta = [
+    scopeMeta,
     t("warehouseIntelligence.purchasingReports.rowCount", { count: rows.length }),
     hasMoney ? amountScaleNote({ key: "units", factor: 1 }) : "",
   ].filter(Boolean).join(" · ");

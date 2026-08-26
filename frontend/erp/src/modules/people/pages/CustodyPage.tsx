@@ -221,7 +221,7 @@ function CustodyDetailDrawer({ id, onClose }: { id: string | null; onClose: () =
                     <div className="truncate text-sm font-extrabold text-slate-800">{e.description || "—"}</div>
                     <div className="mt-0.5 text-xs font-medium text-slate-500">{formatDate(e.expenseDate)}</div>
                   </div>
-                  <div className="shrink-0 text-left">
+                  <div className="shrink-0 text-end">
                     <div className="text-sm font-extrabold tabular-nums text-slate-900" dir="ltr">
                       {formatCurrency(e.totalWithVat)}
                     </div>

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "administration.audit",
+    "label_ar": "عرض سجل تدقيق إجراءات المستخدمين",
+    "label_en": "View the user action audit log",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager", "auditor"]
+  },
+  {
+    "id": "workflow.audit.view",
+    "label_ar": "عرض سجل المعاملات الإداري الكامل",
+    "label_en": "View the complete workflow transaction log",
+    "is_sensitive": 1,
+    "roles": ["admin", "manager", "auditor"]
+  },
+  {
+    "id": "pos.shifts.view",
+    "label_ar": "عرض تقارير ورديات نقاط البيع",
+    "label_en": "View point-of-sale shift reports",
+    "is_sensitive": 0,
+    "roles": ["admin", "manager", "cashier"]
+  }
+]

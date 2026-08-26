@@ -166,7 +166,7 @@ export function JournalLineRow({
       </td>
 
       {/* Delete */}
-      <td className="px-2 py-2 w-12 text-left">
+      <td className="px-2 py-2 w-12 text-end">
         {!readOnly && (
           <IconButton aria-label={t("accounting.journal.line.removeLine")} size="sm" onClick={onRemove}>
             <Trash2 className="h-4 w-4 text-rose-600" />

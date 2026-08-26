@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Badge, StatusBadge } from "@/shared/ui";
+import { Badge, PageHeader, StatusBadge } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { formatCurrency, formatDate, formatDateTime } from "@/shared/lib";
 import { useT } from "@/i18n";
@@ -112,7 +112,7 @@ export function ShiftsPage() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm font-medium text-slate-500">{t("posAdmin.shifts.subtitle")}</p>
+      <PageHeader title={t("nav.items.pa-shifts")} subtitle={t("posAdmin.shifts.subtitle")} />
 
       <DataTable
         columns={columns}

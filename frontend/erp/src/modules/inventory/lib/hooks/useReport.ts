@@ -5,6 +5,7 @@ import { toReportResult, toReportCatalog, type ReportResult, type ReportCatalogE
 import { ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 
 export interface ReportFilters {
+  lang?: string;
   from?: string;
   to?: string;
   category?: string;
@@ -18,9 +19,10 @@ export interface ReportFilters {
   dir?: string;
 }
 
-export function useReport(reportType: string, scope: string, filters: ReportFilters) {
+function reportParams(scope: string, filters: ReportFilters) {
   const warehouseId = scope && scope !== ALL_WAREHOUSES ? scope : undefined;
-  const params = {
+  return {
+    lang: filters.lang || undefined,
     warehouseId,
     from: filters.from || undefined,
     to: filters.to || undefined,
@@ -34,6 +36,18 @@ export function useReport(reportType: string, scope: string, filters: ReportFilt
     sort: filters.sort || undefined,
     dir: filters.dir || undefined,
   };
+}
+
+/** Fetches one complete, server-consistent snapshot for browser printing. */
+export function fetchReportPrintSnapshot(reportType: string, scope: string, filters: ReportFilters) {
+  const params = { ...reportParams(scope, filters), page: undefined, pageSize: undefined };
+  return apiClient
+    .get<unknown>(`/inventory/reports/${reportType}/print`, { params })
+    .then(toReportResult);
+}
+
+export function useReport(reportType: string, scope: string, filters: ReportFilters) {
+  const params = reportParams(scope, filters);
   return useQuery<ReportResult>({
     queryKey: queryKeys.report(reportType, scope, filters as Record<string, unknown>),
     enabled: !!reportType,

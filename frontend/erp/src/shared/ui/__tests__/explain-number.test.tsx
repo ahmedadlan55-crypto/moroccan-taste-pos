@@ -28,6 +28,7 @@ describe("ExplainNumber", () => {
 
     const trigger = screen.getByRole("button", { name: "Explain net sales" });
     expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(trigger).toHaveClass("h-11", "w-11");
     fireEvent.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "Net sales" });

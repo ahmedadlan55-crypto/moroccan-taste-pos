@@ -588,7 +588,7 @@ export function ShiftDialog({ open, onClose }: { open: boolean; onClose: () => v
                         onFocus={(e) => e.target.select()}
                         placeholder="0"
                         aria-label={t("shiftDialog.closing.denomCountAriaLabel", { face })}
-                        className="field num mt-1 h-9 w-full px-1 text-center text-sm"
+                        className="field num mt-1 min-h-11 w-full px-1 text-center text-sm"
                         dir="ltr" /* LTR forced: numeric/phone - do not remove, see i18n plan */
                       />
                       <span className="num block pt-0.5 text-[10px] font-bold text-slate-400">

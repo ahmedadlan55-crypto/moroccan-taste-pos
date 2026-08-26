@@ -252,7 +252,7 @@ export function StepsTab() {
       >
         {editing && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label={t("workflow.steps.orderLabel")}>
                 <Input
                   type="number"
@@ -293,7 +293,7 @@ export function StepsTab() {
             </Field>
             <div>
               <div className="mb-2 text-xs font-bold text-slate-600">{t("workflow.steps.permissionsHeading")}</div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {FLAG_DEFS.map((f) => (
                   <Checkbox
                     key={f.key}

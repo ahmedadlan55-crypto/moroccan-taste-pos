@@ -105,7 +105,7 @@ export function RoyaltiesPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-right text-xs font-extrabold text-slate-500">
+                <tr className="border-b border-slate-200 text-start text-xs font-extrabold text-slate-500">
                   <th className="py-2">{t("accounting.royalties.col.brand")}</th>
                   <th className="py-2">{t("accounting.royalties.col.period")}</th>
                   <th className="py-2">{t("accounting.royalties.col.gross")}</th>
@@ -126,7 +126,7 @@ export function RoyaltiesPage() {
                     <td className="py-2 text-slate-600">{royTypeLabel(t, r.royaltyType)}{r.royaltyType === "percentage" || r.royaltyType === "mixed" ? ` ${r.royaltyValue}%` : ""}</td>
                     <td className="py-2 tabular-nums font-extrabold text-slate-800">{fmt(r.royaltyAmount)}</td>
                     <td className="py-2"><StatusBadge dot tone={STATUS_TONE[r.status]}>{royStatusLabel(t, r.status)}</StatusBadge></td>
-                    <td className="py-2 text-left">
+                    <td className="py-2 text-end">
                       {canManage && (
                         <span className="inline-flex items-center gap-1">
                           {r.status === "draft" && (

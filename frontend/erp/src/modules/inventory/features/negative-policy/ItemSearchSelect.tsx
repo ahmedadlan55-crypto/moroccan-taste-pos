@@ -51,11 +51,11 @@ export function ItemSearchSelect({
         {!disabled && (
           <button
             type="button"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white hover:text-rose-600"
+            className="-my-2 grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-white hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
             aria-label={t("inventoryRest.negativePolicy.itemSearch.clearAria")}
             onClick={() => onChange(null)}
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
       </div>
@@ -65,9 +65,9 @@ export function ItemSearchSelect({
   return (
     <div ref={boxRef} className="relative">
       <label className="relative block">
-        <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
-          className="field w-full pr-10"
+          className="field w-full ps-10"
           placeholder={resolvedPlaceholder}
           value={q}
           disabled={disabled}
@@ -98,7 +98,7 @@ export function ItemSearchSelect({
                 type="button"
                 role="option"
                 aria-selected="false"
-                className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-right text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-start text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 onClick={() => {
                   onChange({ id: it.id, name: it.name });
                   setOpen(false);

@@ -15,6 +15,48 @@ const MGR = verifyToken.requireRole('admin', 'manager');
 const { normalizeSettingsWrite } = require('../lib/settingsKeys');
 const invoiceIdentity = require('../lib/invoiceIdentity');
 
+// Anonymous screens only need non-sensitive branding/runtime values. Never
+// return the whole key/value table here: the same table stores user metadata,
+// IP allowlists and session/password policies.
+const PUBLIC_SETTING_KEYS = [
+  'CompanyName', 'name', 'TaxNumber', 'taxNumber', 'CrNumber', 'NationalAddress',
+  'CompanyPhone', 'companyPhone', 'CompanyEmail', 'companyEmail', 'Address', 'address',
+  'Currency', 'currency', 'VATRate', 'vat_rate', 'receiptFooter', 'ReceiptFooter',
+  'logo', 'Logo',
+];
+
+async function readSettings(keys) {
+  const placeholders = keys.map(() => '?').join(',');
+  const [rows] = await db.query(
+    `SELECT setting_key, setting_value FROM settings WHERE setting_key IN (${placeholders})`,
+    keys,
+  );
+  const settings = {};
+  rows.forEach((row) => { settings[row.setting_key] = row.setting_value; });
+  return settings;
+}
+
+router.get('/public-branding', async (_req, res) => {
+  try {
+    const identityKeys = ['CompanyName', 'TaxNumber', 'CrNumber', 'NationalAddress'];
+    res.json(await readSettings(identityKeys));
+  } catch (_) {
+    res.status(500).json({ success: false, code: 'SETTINGS_UNAVAILABLE', error: 'تعذّر تحميل هوية المنشأة.' });
+  }
+});
+
+// Full settings are administration data, never a public branding payload.
+router.get('/all', verifyToken, MGR, async (_req, res) => {
+  try {
+    const [rows] = await db.query('SELECT setting_key, setting_value FROM settings');
+    const settings = {};
+    rows.forEach((row) => { settings[row.setting_key] = row.setting_value; });
+    res.json(settings);
+  } catch (_) {
+    res.status(500).json({ success: false, code: 'SETTINGS_UNAVAILABLE', error: 'تعذّر تحميل الإعدادات.' });
+  }
+});
+
 // GET /api/settings/invoice-identity?branchId=&brandId=
 // The resolved seller block for a scope, WITH the source of every field, so the
 // invoice-settings screen can show where each value comes from and whether it is
@@ -142,15 +184,12 @@ router.put('/invoice-identity-scope', verifyToken, MGR, async (req, res) => {
   }
 });
 
-// Get all settings
+// Public compatibility map for login/POS branding. Deliberately allowlisted.
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT setting_key, setting_value FROM settings');
-    const settings = {};
-    rows.forEach(s => { settings[s.setting_key] = s.setting_value; });
-    res.json(settings);
+    res.json(await readSettings(PUBLIC_SETTING_KEYS));
   } catch (e) {
-    res.json({ error: e.message });
+    res.status(500).json({ success: false, code: 'SETTINGS_UNAVAILABLE', error: 'تعذّر تحميل إعدادات العرض.' });
   }
 });
 

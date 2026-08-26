@@ -261,13 +261,13 @@ function PolicyRowsSection({
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                 <tr>
-                  <th className="px-4 py-3 text-right">{firstCol}</th>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.policy")}</th>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.maxDeficit")}</th>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.requireReason")}</th>
-                  <th className="px-4 py-3 text-right">{t("common.status")}</th>
-                  <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.lastUpdate")}</th>
-                  {canEdit && <th className="px-4 py-3 text-left">{t("inventoryRest.negativePolicy.col.action")}</th>}
+                  <th className="px-4 py-3 text-start">{firstCol}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.policy")}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.maxDeficit")}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.requireReason")}</th>
+                  <th className="px-4 py-3 text-start">{t("common.status")}</th>
+                  <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.lastUpdate")}</th>
+                  {canEdit && <th className="px-4 py-3 text-end">{t("inventoryRest.negativePolicy.col.action")}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -284,7 +284,7 @@ function PolicyRowsSection({
                       {r.updatedBy || "—"} · {formatDateTime(r.updatedAt)}
                     </td>
                     {canEdit && (
-                      <td className="px-4 py-3 text-left">
+                      <td className="px-4 py-3 text-end">
                         <Button variant="ghost" size="sm" onClick={() => onEdit(r)} aria-label={t("inventoryRest.negativePolicy.editAria", { title })}>
                           <Pencil className="h-3.5 w-3.5" /> {t("common.edit")}
                         </Button>

@@ -28,8 +28,8 @@ function stepLabel(t: TFunction, key: string): string {
   return st(t, key);
 }
 function n(v: unknown): number { const x = Number(v); return Number.isFinite(x) ? x : 0; }
-function Th({ children, left }: { children: ReactNode; left?: boolean }) { return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-left" : "text-right"}`}>{children}</th>; }
-function Td({ children, left, bold }: { children: ReactNode; left?: boolean; bold?: boolean }) { return <td className={`px-3 py-2.5 text-sm text-slate-700 ${left ? "text-left tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>; }
+function Th({ children, left }: { children: ReactNode; left?: boolean }) { return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-end" : "text-start"}`}>{children}</th>; }
+function Td({ children, left, bold }: { children: ReactNode; left?: boolean; bold?: boolean }) { return <td className={`px-3 py-2.5 text-sm text-slate-700 ${left ? "text-end tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>; }
 function Table({ head, children }: { head: ReactNode; children: ReactNode }) {
   return <div className="overflow-x-auto"><table className="w-full border-collapse"><thead className="bg-slate-50"><tr>{head}</tr></thead><tbody className="divide-y divide-slate-100">{children}</tbody></table></div>;
 }
@@ -184,7 +184,7 @@ export function InvoiceDetailPage() {
         </div>} />
       <ErrorLine error={action.error} />
       <Section title={t("common.status")}><StatusStepper steps={INV_STEP_KEYS.map((k) => ({ key: k, label: stepLabel(t, k) }))} current={["partially_paid"].includes(status) ? "approved" : status} /></Section>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label={t("purchasing.invoice.total")} value={formatCurrency(n(o.total_amount))} icon={Receipt} tone="teal" />
         <MetricCard label={t("purchasing.invoice.paid")} value={formatCurrency(n(o.paid_amount))} icon={Wallet} tone="blue" />
         <MetricCard label={t("purchasing.invoice.balance")} value={formatCurrency(n(o.balance_amount))} icon={Wallet} tone="violet" />

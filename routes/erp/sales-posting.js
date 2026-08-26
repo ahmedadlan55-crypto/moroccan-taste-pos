@@ -104,14 +104,23 @@ router.get('/batches', requireCapability('finance.reports.view'), async (req, re
     if (req.query.from) { where.push('journal_date >= ?'); args.push(req.query.from); }
     if (req.query.to) { where.push('journal_date <= ?'); args.push(req.query.to); }
     if (req.query.status) { where.push('status = ?'); args.push(String(req.query.status)); }
+    const page = Math.max(1, Math.min(1000000, Number.parseInt(req.query.page, 10) || 1));
+    const pageSize = Math.max(1, Math.min(100, Number.parseInt(req.query.pageSize, 10) || 25));
+    const offset = (page - 1) * pageSize;
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const [[countRow]] = await db.query(
+      `SELECT COUNT(*) AS total FROM sales_posting_batches ${whereSql}`, args);
     const [rows] = await db.query(
       `SELECT b.*, j.journal_number
          FROM sales_posting_batches b
          LEFT JOIN gl_journals j ON j.id = b.journal_id
-        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+        ${whereSql}
         ORDER BY b.journal_date DESC, b.created_at DESC
-        LIMIT 500`, args);
-    res.json({ success: true, batches: rows });
+        LIMIT ? OFFSET ?`, args.concat([pageSize, offset]));
+    const total = Number(countRow.total) || 0;
+    res.json({ success: true, batches: rows, pagination: {
+      page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    } });
   } catch (e) { fail(res, e, 'batches_failed'); }
 });
 
@@ -138,7 +147,7 @@ router.get('/batches/:id', requireCapability('finance.reports.view'), async (req
   } catch (e) { fail(res, e, 'batch_failed'); }
 });
 
-router.post('/batches/:id/reverse', requireCapability('finance.gl.post'), async (req, res) => {
+router.post('/batches/:id/reverse', requireCapability('finance.gl.reverse'), async (req, res) => {
   try {
     const out = await salesPost.reverseBatch(db, {
       batchId: req.params.id,
@@ -174,6 +183,7 @@ router.get('/health', requireCapability('finance.reports.view'), async (req, res
     const { accounts, batches } = await salesPost.preview(db, { granularity: 'daily', filters: {} });
     for (const b of batches.filter((x) => !x.postable)) {
       problems.push({ severity: 'blocking', code: 'BATCH_BLOCKED', bucket: b.label,
+        warnings: b.warnings,
         message: b.warnings.join(' · ') });
     }
 

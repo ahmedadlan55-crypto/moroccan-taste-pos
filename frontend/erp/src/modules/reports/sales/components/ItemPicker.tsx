@@ -129,44 +129,35 @@ export function ItemPicker({
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? listboxId : undefined}
-        aria-label={ariaLabel}
-        onClick={() => setOpen((o) => !o)}
-        className="flex min-h-11 w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-start text-sm font-bold text-slate-700 transition-colors hover:border-teal-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40"
-      >
-        <span className={cn("flex-1 truncate", values.length === 0 && "font-medium text-slate-400")}>
-          {triggerLabel}
-        </span>
-        {values.length > 0 && (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={t("salesReports.itemPicker.clear")}
-            onClick={(e) => {
-              e.stopPropagation();
-              onChange([]);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                onChange([]);
-              }
-            }}
-            className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-          >
-            <X className="h-3.5 w-3.5" />
+      <div className="flex min-h-11 w-full items-stretch overflow-hidden rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-700 transition-colors focus-within:border-teal-300 focus-within:ring-2 focus-within:ring-teal-500/40 hover:border-teal-300">
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-label={ariaLabel}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 text-start focus:outline-none"
+        >
+          <span className={cn("flex-1 truncate", values.length === 0 && "font-medium text-slate-400")}>
+            {triggerLabel}
           </span>
+          <ChevronDown
+            className={cn("h-4 w-4 shrink-0 text-slate-400 transition-transform", open && "rotate-180")}
+            aria-hidden="true"
+          />
+        </button>
+        {values.length > 0 && (
+          <button
+            type="button"
+            aria-label={t("salesReports.itemPicker.clear")}
+            onClick={() => onChange([])}
+            className="grid h-11 w-11 shrink-0 place-items-center border-s border-slate-100 text-slate-400 transition hover:bg-slate-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-500"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
-        <ChevronDown
-          className={cn("h-4 w-4 shrink-0 text-slate-400 transition-transform", open && "rotate-180")}
-          aria-hidden="true"
-        />
-      </button>
+      </div>
 
       {open && (
         <div className="absolute z-30 mt-1 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lift start-0">
@@ -178,7 +169,7 @@ export function ItemPicker({
               onChange={(e) => setRaw(e.target.value)}
               aria-label={t("salesReports.itemPicker.search")}
               placeholder={t("salesReports.itemPicker.search")}
-              className="min-h-10 w-full bg-transparent text-sm font-bold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400"
+              className="min-h-11 w-full bg-transparent text-sm font-bold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400"
               autoFocus
             />
           </div>

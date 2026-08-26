@@ -51,6 +51,9 @@ describe("purchasing report registry", () => {
     expect(aging.filters).not.toContain("period");
     expect(aging.totals?.every((field) => field.from === "grandTotal")).toBe(true);
     expect(PURCHASING_REPORTS["data-quality"].shape).toBe("checks");
+    expect(PURCHASING_REPORTS["data-quality"].capsAny).toEqual([
+      "finance.reports.view", "procurement.data_quality",
+    ]);
     expect(PURCHASING_REPORTS["supplier-statement"].requiresSupplier).toBe(true);
     expect(PURCHASING_REPORTS["supplier-statement"].filters).toContain("supplier");
     // Reports whose endpoint returns no totals must not advertise any.

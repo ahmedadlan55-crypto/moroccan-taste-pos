@@ -52,12 +52,17 @@ describe("navigation manifest integrity", () => {
     const items = NAV_ITEMS.filter((item) => item.id === "rp-inventory" || item.id === "rp-purchasing");
     expect(items).toHaveLength(2);
     for (const item of items) {
-      expect(item.capsAny).toEqual(["finance.reports.view", "procurement.reports"]);
+      expect(item.capsAny).toEqual(item.id === "rp-purchasing"
+        ? ["finance.reports.view", "procurement.reports", "procurement.data_quality"]
+        : ["finance.reports.view", "procurement.reports"]);
       expect(canAccessNavItem(item, (cap) => cap === "procurement.reports")).toBe(true);
       expect(canAccessNavItem(item, (cap) => cap === "finance.reports.view")).toBe(true);
+      expect(canAccessNavItem(item, (cap) => cap === "procurement.data_quality")).toBe(item.id === "rp-purchasing");
       expect(canAccessNavItem(item, () => false)).toBe(false);
       expect(can({ username: "cash", role: "cashier" }, "finance.reports.view")).toBe(false);
       expect(can({ username: "cash", role: "cashier" }, "procurement.reports")).toBe(false);
+      expect(can({ username: "finance", role: "finance" }, "procurement.data_quality")).toBe(true);
+      expect(can({ username: "cash", role: "cashier" }, "procurement.data_quality")).toBe(false);
     }
   });
 });

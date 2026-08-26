@@ -217,7 +217,7 @@ function MovementsTab({ data }: { data: import("@/modules/inventory/lib/adapters
               {m.username ? ` · ${m.username}` : ""}
             </div>
           </div>
-          <div className="text-left">
+          <div className="text-end">
             <div className={`text-sm font-extrabold tabular-nums ${m.type === "in" ? "text-teal-700" : "text-rose-600"}`}>
               {m.type === "in" ? "+" : "−"}
               {formatQty(m.qty)}

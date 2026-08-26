@@ -50,11 +50,11 @@ function BucketSection({ bucket }: { bucket: EquityBucket }) {
           <table className="w-full min-w-[42rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-[11px] font-extrabold text-slate-500">
-                <th className="px-4 py-2 text-right">{t("accounting.common.account")}</th>
-                <th className="px-4 py-2 text-left">{t("accounting.equity.opening")}</th>
-                <th className="px-4 py-2 text-left">{t("accounting.equity.periodDebit")}</th>
-                <th className="px-4 py-2 text-left">{t("accounting.equity.periodCredit")}</th>
-                <th className="px-4 py-2 text-left">{t("accounting.equity.closing")}</th>
+                <th className="px-4 py-2 text-start">{t("accounting.common.account")}</th>
+                <th className="px-4 py-2 text-end">{t("accounting.equity.opening")}</th>
+                <th className="px-4 py-2 text-end">{t("accounting.equity.periodDebit")}</th>
+                <th className="px-4 py-2 text-end">{t("accounting.equity.periodCredit")}</th>
+                <th className="px-4 py-2 text-end">{t("accounting.equity.closing")}</th>
               </tr>
             </thead>
             <tbody>
@@ -64,10 +64,10 @@ function BucketSection({ bucket }: { bucket: EquityBucket }) {
                     <span className="font-semibold text-slate-700">{a.name}</span>{" "}
                     <code className="text-[11px] text-slate-400">{a.code}</code>
                   </td>
-                  <td className="px-4 py-2 text-left"><Num value={a.opening} signed /></td>
-                  <td className="px-4 py-2 text-left"><Num value={a.periodDebit} /></td>
-                  <td className="px-4 py-2 text-left"><Num value={a.periodCredit} /></td>
-                  <td className="px-4 py-2 text-left"><Num value={a.closing} signed strong /></td>
+                  <td className="px-4 py-2 text-end"><Num value={a.opening} signed /></td>
+                  <td className="px-4 py-2 text-end"><Num value={a.periodDebit} /></td>
+                  <td className="px-4 py-2 text-end"><Num value={a.periodCredit} /></td>
+                  <td className="px-4 py-2 text-end"><Num value={a.closing} signed strong /></td>
                 </tr>
               ))}
             </tbody>

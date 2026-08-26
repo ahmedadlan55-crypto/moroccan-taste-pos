@@ -36,7 +36,7 @@ export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700 no-print"><ArrowRight className="h-4 w-4" /> {t("sales.invoices.detail.back")}</button>
+      <button type="button" onClick={onBack} className="no-print mb-3 inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-bold text-slate-500 hover:bg-slate-100 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"><ArrowRight className="h-4 w-4 rotate-180 rtl:rotate-0" /> {t("sales.invoices.detail.back")}</button>
       <PageHeader
         eyebrow={t("sales.invoices.detail.eyebrow", { source: inv.source_type })}
         title={inv.document_number}
@@ -70,7 +70,7 @@ export function InvoiceDetail({ id, onBack }: { id: string; onBack: () => void }
         <CardHeader><CardTitle>{t("sales.lines")}</CardTitle></CardHeader>
         <CardBody>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="w-full min-w-[720px] border-collapse text-right text-sm">
+            <table className="w-full min-w-[720px] border-collapse text-start text-sm">
               <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                 <tr>
                   <th className="px-4 py-3 font-bold">{t("sales.col.desc")}</th>

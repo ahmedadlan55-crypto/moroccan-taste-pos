@@ -31,6 +31,7 @@ describe("RegisterPage — payment methods", () => {
 
     renderWithClient(<RegisterPage />);
 
+    expect(screen.getByRole("heading", { level: 1, name: "طرق الدفع" })).toBeInTheDocument();
     // Launcher renders synchronously.
     expect(screen.getByText("فتح شاشة الكاشير")).toBeInTheDocument();
 

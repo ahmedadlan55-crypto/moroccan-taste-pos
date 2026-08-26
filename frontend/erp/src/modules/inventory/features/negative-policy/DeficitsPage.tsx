@@ -195,9 +195,9 @@ export function DeficitsPage() {
           <section className="surface mt-4 flex flex-col gap-3 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <label className="relative flex-1">
-                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
-                  className="field w-full pr-10"
+                  className="field w-full ps-10"
                   placeholder={t("inventoryRest.negativePolicy.deficits.searchPlaceholder")}
                   defaultValue={q}
                   onChange={(e) => patch({ q: e.target.value })}
@@ -224,7 +224,7 @@ export function DeficitsPage() {
                   key={code}
                   type="button"
                   onClick={() => patch({ status: code })}
-                  className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${
+                  className={`min-h-11 rounded-xl border px-3 text-xs font-extrabold transition ${
                     status === code
                       ? "border-teal-600 bg-teal-600 text-white"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -253,15 +253,15 @@ export function DeficitsPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                       <tr>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.item")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.warehouse")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.originDoc")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.deficit")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.remaining")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.remainingValue")}</th>
-                        <th className="px-4 py-3 text-right">{t("common.status")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.reason")}</th>
-                        <th className="px-4 py-3 text-right">{t("inventoryRest.negativePolicy.col.date")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.item")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.warehouse")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.originDoc")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.deficit")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.remaining")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.remainingValue")}</th>
+                        <th className="px-4 py-3 text-start">{t("common.status")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.reason")}</th>
+                        <th className="px-4 py-3 text-start">{t("inventoryRest.negativePolicy.col.date")}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -321,7 +321,7 @@ export function DeficitsPage() {
                       {t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(filtered.length) })}
                     </span>
                     <select
-                      className="field min-h-9 py-1 text-xs"
+                      className="field min-h-11 py-1 text-xs"
                       value={pageSize}
                       onChange={(e) => patch({ pageSize: e.target.value })}
                       aria-label={t("inventoryRest.negativePolicy.deficits.pageSizeAria")}

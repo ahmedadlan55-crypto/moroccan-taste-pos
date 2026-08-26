@@ -87,6 +87,7 @@ export const operationalReports = {
     status: "Status",
     payrollRun: "Payroll run",
     employmentStatus: "Employment status",
+    invalidRange: "The start date must not be after the end date.",
   },
 
   total: {

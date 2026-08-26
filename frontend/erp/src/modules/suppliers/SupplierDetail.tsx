@@ -16,8 +16,8 @@ import { SupplierForm } from "./SupplierForm";
 
 function s(v: unknown, d = "—"): string { return v == null || v === "" ? d : String(v); }
 function n(v: unknown): number { const x = Number(v); return Number.isFinite(x) ? x : 0; }
-function Th({ children, left }: { children: ReactNode; left?: boolean }) { return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-left" : "text-right"}`}>{children}</th>; }
-function Td({ children, left, bold }: { children: ReactNode; left?: boolean; bold?: boolean }) { return <td className={`px-3 py-2.5 text-sm text-slate-700 ${left ? "text-left tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>; }
+function Th({ children, left }: { children: ReactNode; left?: boolean }) { return <th className={`px-3 py-2 text-[11px] font-extrabold uppercase text-slate-400 ${left ? "text-end" : "text-start"}`}>{children}</th>; }
+function Td({ children, left, bold }: { children: ReactNode; left?: boolean; bold?: boolean }) { return <td className={`px-3 py-2.5 text-sm text-slate-700 ${left ? "text-end tabular-nums" : ""} ${bold ? "font-bold" : ""}`}>{children}</td>; }
 function Table({ head, children }: { head: ReactNode; children: ReactNode }) {
   return <div className="overflow-x-auto"><table className="w-full border-collapse"><thead className="bg-slate-50"><tr>{head}</tr></thead><tbody className="divide-y divide-slate-100">{children}</tbody></table></div>;
 }
@@ -47,7 +47,7 @@ export function SupplierDetail() {
         status={Number(d.is_active) ? "" : "cancelled"}
         actions={<Button variant="secondary" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" /> {t("common.edit")}</Button>}
       />
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label={t("purchasing.suppliers.field.apBalance")} value={formatCurrency(n(d.apBalance))} icon={Wallet} tone="violet" />
         <MetricCard label={t("purchasing.suppliers.detail.invoicedTotal")} value={formatCurrency(n(d.invoicedTotal))} icon={FileText} tone="teal" />
         <MetricCard label={t("purchasing.suppliers.detail.paidTotal")} value={formatCurrency(n(d.paidTotal))} icon={PackageCheck} tone="blue" />
@@ -64,7 +64,7 @@ export function SupplierDetail() {
         ]} />
       </Section>
       <Section title={t("purchasing.suppliers.detail.aging")}>
-        <div className="grid grid-cols-5 gap-2 p-5 text-center">
+        <div className="grid grid-cols-1 gap-2 p-5 text-center sm:grid-cols-2 xl:grid-cols-5">
           {[[t("purchasing.suppliers.detail.agingCurrent"), b.current], ["1-30", b.d30], ["31-60", b.d60], ["61-90", b.d90], ["90+", b.d90plus]].map(([lbl, v]) => (
             <div key={lbl as string} className="rounded-xl border border-slate-100 bg-slate-50 py-3">
               <div className="text-[10px] font-bold text-slate-400">{lbl}</div>

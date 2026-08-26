@@ -136,6 +136,19 @@ const REPL_SELECT =
   'FROM warehouse_stock ws JOIN inv_items ii ON ii.id=ws.item_id LEFT JOIN warehouses w ON w.id=ws.warehouse_id ' +
   'LEFT JOIN warehouse_item_rules wir ON wir.item_id=ii.id AND wir.warehouse_id=ws.warehouse_id';
 
+// A printed/exported report must either contain the complete filtered result
+// or refuse explicitly. Fetch one sentinel row beyond the supported ceiling so
+// 5,001 rows can never masquerade as a complete 5,000-row report.
+const REPORT_SNAPSHOT_LIMIT = 5000;
+function _snapshotTooLarge(res, total) {
+  return res.status(413).json({
+    code: 'REPORT_TOO_LARGE',
+    error: 'تجاوز التقرير الحد الأقصى (' + REPORT_SNAPSHOT_LIMIT + ' صف). ضيّق الفلاتر ثم أعد المحاولة.',
+    total: Number(total) || 0,
+    limit: REPORT_SNAPSHOT_LIMIT,
+  });
+}
+
 router.get('/replenishment', async (req, res) => {
   try {
     const p = C.parseListQuery(req.query, ['name', 'qty', 'recommended'], []);
@@ -149,7 +162,10 @@ router.get('/replenishment', async (req, res) => {
     if (riskFilter) computed = computed.filter((r) => r.stockoutRisk === riskFilter);
     if (statusFilter) computed = computed.filter((r) => r.reorderStatus === statusFilter);
     const total = computed.length;
-    const pageRows = computed.slice(p.offset, p.offset + p.pageSize);
+    const snapshot = String(req.query.snapshot || '') === '1';
+    const snapshotRows = snapshot ? computed.slice(0, REPORT_SNAPSHOT_LIMIT + 1) : null;
+    if (snapshotRows && snapshotRows.length > REPORT_SNAPSHOT_LIMIT) return _snapshotTooLarge(res, total);
+    const pageRows = snapshotRows || computed.slice(p.offset, p.offset + p.pageSize);
     res.json({ data: pageRows, pagination: { page: p.page, pageSize: p.pageSize, total, totalPages: Math.max(1, Math.ceil(total / p.pageSize)) }, lookbackDays: LOOKBACK_DAYS, filters: { warehouseId: p.warehouseId, category: p.category, risk: riskFilter, status: statusFilter, q: p.q } });
   } catch (e) { _catch(res, e); }
 });
@@ -180,7 +196,10 @@ router.get('/replenishment/export', async (req, res) => {
     const [rows] = await db.query(REPL_SELECT + w.sql + ' ORDER BY ii.name', w.params);
     let computed = rows.map(_replRow);
     const riskFilter = ['high', 'medium', 'low', 'unknown'].indexOf(String(req.query.risk || '')) !== -1 ? String(req.query.risk) : '';
+    const statusFilter = ['negative', 'critical', 'reorder', 'watch', 'ok', 'inactive_balance'].indexOf(String(req.query.status || '')) !== -1 ? String(req.query.status) : '';
     if (riskFilter) computed = computed.filter((r) => r.stockoutRisk === riskFilter);
+    if (statusFilter) computed = computed.filter((r) => r.reorderStatus === statusFilter);
+    if (computed.length > REPORT_SNAPSHOT_LIMIT) return _snapshotTooLarge(res, computed.length);
     const headers = ['الصنف', 'SKU', 'المستودع', 'الكمية الحالية', 'حد إعادة الطلب', 'الكمية المقترحة', 'أيام التغطية', 'مخاطر النفاد', 'آخر حركة'];
     const body = computed.map((r) => [r.name, r.sku, r.warehouseName, r.onHand, r.reorderPoint, r.recommendedQty, r.daysOfCover == null ? '—' : r.daysOfCover, r.stockoutRisk, r.lastMovementAt || '']);
     const csv = CSV.toCsv(headers, body);

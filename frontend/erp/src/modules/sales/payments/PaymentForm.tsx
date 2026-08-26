@@ -98,7 +98,7 @@ export function PaymentForm({ open, onClose, onCreated, presetCustomerId }: { op
                   <input dir="ltr" type="number" step="0.01" className="field w-full tabular-nums" value={row.amount || ""} onChange={(e) => setAllocs((a) => a.map((r, j) => j === i ? { ...r, amount: Number(e.target.value) } : r))} />
                 </div>
                 <div className="col-span-1 flex justify-center">
-                  <button type="button" onClick={() => setAllocs((a) => a.filter((_, j) => j !== i))} className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label={t("common.delete")}>
+                  <button type="button" onClick={() => setAllocs((a) => a.filter((_, j) => j !== i))} className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100" aria-label={t("common.delete")}>
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>

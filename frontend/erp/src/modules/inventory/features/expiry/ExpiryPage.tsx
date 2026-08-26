@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, ShieldAlert, CheckCircle2, Printer, Download } from "lucide-react";
 import { PageHeader,
@@ -14,7 +14,7 @@ import { useWarehouses } from "@/modules/inventory/lib/hooks/useWarehouses";
 import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { formatNumber, formatQty } from "@/shared/lib";
 import { expiryClassToLabel } from "@/modules/inventory/lib/status-labels";
-import { useExpiry, useExpirySummary } from "@/modules/inventory/lib/hooks/useExpiry";
+import { fetchExpirySnapshot, useExpiry, useExpirySummary } from "@/modules/inventory/lib/hooks/useExpiry";
 import type { ExpiryRow } from "@/modules/inventory/lib/adapters/expiry.adapter";
 
 function downloadCsv(rows: ExpiryRow[], t: TFunction) {
@@ -42,6 +42,9 @@ export function ExpiryPage() {
   const allWh = useWarehouses();
   const warehouseId = params.get("wh") ?? "";
   const level = params.get("level") ?? "";
+  const [snapshotRows, setSnapshotRows] = useState<ExpiryRow[] | null>(null);
+  const [reportAction, setReportAction] = useState<"print" | "csv" | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
   const levelOptions = [
     { value: "", label: t("inventoryRest.filter.allLevels") },
     { value: "expired", label: t("status.expired") },
@@ -53,7 +56,27 @@ export function ExpiryPage() {
   const list = useExpiry({ warehouseId, level, pageSize: 100 });
   const summary = useExpirySummary({ warehouseId });
   const whOptions = useMemo(() => allWarehousesAccess ? (allWh.data?.warehouses ?? []).map((w) => ({ id: w.id, name: w.name })) : accessibleWarehouses.map((w) => ({ id: w.id, name: w.name })), [allWarehousesAccess, accessibleWarehouses, allWh.data]);
-  const s = summary.data; const rows = list.data?.rows ?? [];
+  const s = summary.data; const rows = snapshotRows ?? list.data?.rows ?? [];
+
+  useEffect(() => {
+    if (reportAction !== "print" || snapshotRows === null) return;
+    const clear = () => { setSnapshotRows(null); setReportAction(null); };
+    window.addEventListener("afterprint", clear, { once: true });
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("afterprint", clear); };
+  }, [reportAction, snapshotRows]);
+
+  async function prepareReport(action: "print" | "csv") {
+    setReportError(null); setReportAction(action);
+    try {
+      const snapshot = await fetchExpirySnapshot({ warehouseId, level });
+      if (action === "csv") { downloadCsv(snapshot.rows, t); setReportAction(null); }
+      else setSnapshotRows(snapshot.rows);
+    } catch {
+      setSnapshotRows(null); setReportAction(null);
+      setReportError(t("inventoryRest.expiry.exportFailed"));
+    }
+  }
 
   return (
     // Every report printed inside the system wears the same head and hides
@@ -62,8 +85,8 @@ export function ExpiryPage() {
     <PrintDocument title={t("inventoryRest.expiry.title")}>
       <PageHeader eyebrow={t("inventoryRest.expiry.eyebrow")} title={t("inventoryRest.expiry.title")} subtitle={t("inventoryRest.expiry.subtitle")}
         action={<div className="no-print flex gap-2">
-          <Button variant="secondary" onClick={() => downloadCsv(rows, t)}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>
-          <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
+          <Button variant="secondary" loading={reportAction === "csv"} disabled={reportAction !== null} onClick={() => void prepareReport("csv")}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>
+          <Button variant="secondary" loading={reportAction === "print"} disabled={reportAction !== null} onClick={() => void prepareReport("print")}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
         </div>} />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -77,6 +100,7 @@ export function ExpiryPage() {
         <select className="field lg:w-56" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("inventoryRest.expiry.warehouseAria")}><option value="">{t("inventoryRest.filter.allWarehouses")}</option>{whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
         <select className="field lg:w-44" value={level} onChange={(e) => patch({ level: e.target.value })} aria-label={t("inventoryRest.expiry.levelAria")}>{levelOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
       </section>
+      {reportError && <p className="no-print mt-2 text-xs font-bold text-rose-600">{reportError}</p>}
 
       <section className="mt-4">
         {list.isLoading ? <LoadingState /> : list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : rows.length === 0 ? (
@@ -86,7 +110,7 @@ export function ExpiryPage() {
             <div className="surface hidden overflow-x-auto md:block">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                  <th className="px-3 py-3 text-right">{t("inventoryRest.expiry.col.item")}</th><th className="px-3 py-3 text-right">{t("inventoryRest.expiry.col.lot")}</th><th className="px-3 py-3 text-right">{t("inventoryRest.expiry.col.warehouse")}</th>
+                  <th className="px-3 py-3 text-start">{t("inventoryRest.expiry.col.item")}</th><th className="px-3 py-3 text-start">{t("inventoryRest.expiry.col.lot")}</th><th className="px-3 py-3 text-start">{t("inventoryRest.expiry.col.warehouse")}</th>
                   <th className="px-3 py-3">{t("inventoryRest.expiry.col.expiryDate")}</th><th className="px-3 py-3">{t("inventoryRest.expiry.col.daysLeft")}</th><th className="px-3 py-3">{t("inventoryRest.expiry.col.qty")}</th><th className="px-3 py-3">{t("inventoryRest.expiry.col.class")}</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">

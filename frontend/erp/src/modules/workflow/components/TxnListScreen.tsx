@@ -21,6 +21,7 @@ import {
 
 interface Props {
   icon: LucideIcon;
+  title: string;
   description: string;
   tableId: string;
   peopleColumn: PeopleColumn;
@@ -40,6 +41,7 @@ interface Props {
  */
 export function TxnListScreen({
   icon,
+  title,
   description,
   tableId,
   peopleColumn,
@@ -111,6 +113,7 @@ export function TxnListScreen({
     <div className="space-y-5">
       <ScreenIntro
         icon={icon}
+        title={title}
         description={description}
         action={
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -124,7 +127,7 @@ export function TxnListScreen({
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" aria-label={t("workflow.list.kpiAria")}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label={t("workflow.list.kpiAria")}>
         {[
           { label: t("workflow.list.kpiTotal"), value: counts.all, Icon: Inbox, tone: "text-slate-700 bg-slate-50" },
           { label: t("workflow.list.kpiActive"), value: counts.active, Icon: CheckCircle2, tone: "text-sky-700 bg-sky-50" },

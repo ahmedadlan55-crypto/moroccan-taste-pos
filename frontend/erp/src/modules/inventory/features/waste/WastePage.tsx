@@ -152,7 +152,7 @@ export function WastePage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-right text-xs font-extrabold text-slate-500">
+                <tr className="border-b border-slate-200 text-start text-xs font-extrabold text-slate-500">
                   <th className="py-2">{t("inventoryRest.waste.col.number")}</th>
                   <th className="py-2">{t("inventoryRest.waste.col.date")}</th>
                   <th className="py-2">{t("inventoryRest.waste.col.warehouse")}</th>
@@ -214,7 +214,7 @@ function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; ex
     <>
       <tr className="border-b border-slate-100">
         <td className="py-2">
-          <button type="button" onClick={onToggle} className="font-bold tabular-nums text-teal-700 hover:underline" dir="ltr">
+          <button type="button" onClick={onToggle} className="inline-flex min-h-11 items-center rounded-xl px-2 font-bold tabular-nums text-teal-700 hover:bg-teal-50 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100" dir="ltr">
             {row.wasteNumber || row.id}
           </button>
         </td>
@@ -223,7 +223,7 @@ function WasteRowView({ row, expanded, onToggle, onDelete }: { row: WasteRow; ex
         <td className="py-2"><StatusBadge dot>{reasonLabel(t, row.reason)}</StatusBadge></td>
         <td className="py-2 tabular-nums font-bold text-slate-700">{fmt(row.totalCost)}</td>
         <td className="py-2 text-slate-500">{row.createdBy}</td>
-        <td className="py-2 text-left">
+        <td className="py-2 text-end">
           {onDelete && (
             <Button size="sm" variant="ghost" onClick={onDelete} aria-label={t("inventoryRest.waste.cancelAria", { number: row.wasteNumber || row.id })}>
               <Trash2 className="h-4 w-4" />
@@ -336,21 +336,21 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
         <div className="rounded-2xl border border-slate-200 p-3">
           <p className="mb-2 text-xs font-extrabold text-slate-600">{t("inventoryRest.waste.dialog.itemsTitle")}</p>
           {lines.map((l, i) => (
-            <div key={l.itemId} className="mb-2 grid grid-cols-12 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
-              <span className="col-span-5 truncate text-sm font-bold text-slate-700">{l.itemName}</span>
+            <div key={l.itemId} className="mb-2 grid grid-cols-1 items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 sm:grid-cols-12">
+              <span className="min-w-0 break-words text-sm font-bold text-slate-700 sm:col-span-5 sm:truncate">{l.itemName}</span>
               <input
                 dir="ltr" type="number" step="0.01" min={0.01}
-                className="field col-span-3 tabular-nums" value={l.quantity || ""}
+                className="field tabular-nums sm:col-span-3" value={l.quantity || ""}
                 aria-label={t("inventoryRest.waste.dialog.qtyAria", { name: l.itemName })}
                 onChange={(e) => {
                   const v = Math.max(0, Number(e.target.value) || 0);
                   setLines((s) => s.map((x, j) => (j === i ? { ...x, quantity: v } : x)));
                 }}
               />
-              <span className="col-span-2 text-xs tabular-nums text-slate-500">{fmt(l.unitCost)} / {l.unit}</span>
+              <span className="text-xs tabular-nums text-slate-500 sm:col-span-2">{fmt(l.unitCost)} / {l.unit}</span>
               <button
                 type="button" aria-label={t("inventoryRest.waste.dialog.removeAria", { name: l.itemName })}
-                className="col-span-2 text-xs font-bold text-rose-600 hover:underline"
+                className="inline-flex min-h-11 items-center justify-center rounded-xl px-3 text-xs font-bold text-rose-600 hover:bg-rose-50 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 sm:col-span-2"
                 onClick={() => setLines((s) => s.filter((_, j) => j !== i))}
               >{t("inventoryRest.waste.dialog.remove")}</button>
             </div>
@@ -368,7 +368,7 @@ function CreateWasteDialog({ onClose, onCreated }: { onClose: () => void; onCrea
                   <li key={r.id}>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between px-3 py-2 text-right text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      className="flex min-h-11 w-full items-center justify-between px-3 py-2 text-start text-sm font-bold text-slate-700 hover:bg-slate-50"
                       onClick={() => {
                         // The item's current cost is a DEFAULT the operator can see,
                         // not silently assume — it prints next to the qty box.

@@ -64,7 +64,7 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700 no-print">
+      <button type="button" onClick={onBack} className="no-print mb-3 inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-bold text-slate-500 hover:bg-slate-100 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100">
         <BackArrow className="h-4 w-4" /> {t("misc.customers.detail.back")}
       </button>
       <PageHeader
@@ -113,7 +113,7 @@ export function CustomerDetail({ id, onBack }: { id: string; onBack: () => void 
                   <tbody className="divide-y divide-slate-100">
                     {d.recentSales.map((inv) => (
                       <tr key={inv.id} className="hover:bg-slate-50/60">
-                        <td className="px-4 py-3"><button type="button" onClick={() => nav(`/sales/invoices?doc=${inv.id}`)} className="font-bold text-teal-700 hover:underline">{inv.document_number}</button></td>
+                        <td className="px-4 py-3"><button type="button" onClick={() => nav(`/sales/invoices?doc=${inv.id}`)} className="inline-flex min-h-11 items-center rounded-xl px-2 font-bold text-teal-700 hover:bg-teal-50 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100">{inv.document_number}</button></td>
                         <td className="px-4 py-3 text-slate-700"><DateCell value={inv.issue_date} /></td>
                         <td className="px-4 py-3 text-slate-700"><Money value={inv.total_amount} /></td>
                         <td className="px-4 py-3 text-slate-700"><Money value={inv.balance_amount} /></td>

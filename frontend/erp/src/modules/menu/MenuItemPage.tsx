@@ -477,14 +477,14 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
                         {bomQ.data.lines.map((l) => (
                           <tr key={l.id}>
                             <td className="py-2 font-medium text-slate-700">{l.itemName}</td>
-                            <td className="py-2 text-left tabular-nums text-slate-500" dir="ltr">{l.quantity} {l.unit}</td>
-                            <td className="py-2 text-left"><MoneyI18n value={l.lineCost} className="font-bold text-slate-700" /></td>
+                            <td className="py-2 text-end tabular-nums text-slate-500" dir="ltr">{l.quantity} {l.unit}</td>
+                            <td className="py-2 text-end"><MoneyI18n value={l.lineCost} className="font-bold text-slate-700" /></td>
                           </tr>
                         ))}
                         <tr className="bg-slate-50 font-extrabold">
                           <td className="py-2 text-slate-500">{t("menu.cost.totalComponents")}</td>
                           <td />
-                          <td className="py-2 text-left"><MoneyI18n value={bomQ.data.totalCost} className="text-teal-700" /></td>
+                          <td className="py-2 text-end"><MoneyI18n value={bomQ.data.totalCost} className="text-teal-700" /></td>
                         </tr>
                       </tbody>
                     </table>

@@ -13,7 +13,9 @@
 //     every toolbar input is off (`columnMenu={false}`, no search, no built-in
 //     export) and `paginate={false}`: what is on screen is exactly what comes
 //     out of the printer. Export and print live in the page header, which is
-//     `.no-print`. The underlying endpoints all carry their own server LIMIT.
+//     `.no-print`. Report loaders must request an all-rows snapshot whose
+//     endpoint rejects an oversized result explicitly; a workspace's ordinary
+//     LIMIT is never accepted as a printable report.
 //
 //   · TOTALS COME FROM THE SERVER OR NOT AT ALL. `ReportTotal[]` is passed
 //     through from what the endpoint already computed. This page never sums a
@@ -228,6 +230,7 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
   const remoteLabel = remote ? (remoteOptions.find((o) => o.value === applied[remote.id])?.label ?? "") : "";
   const title = t(report.labelKey);
   const period = periodLabel(report, applied, remoteLabel, t, now);
+  const invalidDateRange = Boolean(draft.from && draft.to && draft.from > draft.to);
 
   function onExport() {
     exportRowsCsv(
@@ -249,17 +252,17 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
         title={title}
         subtitle={t(report.descriptionKey)}
         action={
-          <div className="no-print flex flex-wrap items-center gap-2">
+          <div className="no-print flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Link
               to={section.path}
-              className="inline-flex min-h-11 items-center rounded-xl px-3 text-sm font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+              className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl px-3 text-sm font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 sm:flex-none"
             >
               {t("operationalReports.backToDirectory")}
             </Link>
-            <Button variant="secondary" onClick={onExport} disabled={rows.length === 0}>
+            <Button className="flex-1 sm:flex-none" variant="secondary" onClick={onExport} disabled={rows.length === 0 || query.isFetching}>
               <Download className="h-4 w-4" /> {t("table.exportCsv")}
             </Button>
-            <Button variant="secondary" onClick={printReport} disabled={rows.length === 0}>
+            <Button className="flex-1 sm:flex-none" variant="secondary" onClick={printReport} disabled={rows.length === 0 || query.isFetching}>
               <Printer className="h-4 w-4" /> {t("operationalReports.print")}
             </Button>
           </div>
@@ -267,18 +270,32 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
       />
 
       {report.filters.length > 0 && (
-        <FilterCard onRun={() => setApplied(draft)} running={query.isFetching} runLabel={t("operationalReports.run")}>
+        <FilterCard
+          onRun={() => {
+            if (!invalidDateRange) setApplied(draft);
+          }}
+          running={query.isFetching}
+          runLabel={t("operationalReports.run")}
+          runDisabled={invalidDateRange}
+        >
           {report.filters.map((filter) => (
             <FilterField key={filter.id} label={t(filter.labelKey)}>
               <FilterControl
                 filter={filter}
                 value={draft[filter.id] ?? ""}
                 onChange={(value) => setDraft((prev) => ({ ...prev, [filter.id]: value }))}
+                min={filter.id === "to" ? draft.from : undefined}
+                max={filter.id === "from" ? draft.to : undefined}
                 remoteOptions={filter.kind === "remote" ? remoteOptions : []}
                 loading={filter.kind === "remote" && optionsQuery.isLoading}
               />
             </FilterField>
           ))}
+          {invalidDateRange && (
+            <p className="col-span-full text-sm font-bold text-rose-700" role="alert">
+              {t("operationalReports.filter.invalidRange")}
+            </p>
+          )}
         </FilterCard>
       )}
 
@@ -337,20 +354,24 @@ function FilterControl({
   onChange,
   remoteOptions,
   loading,
+  min,
+  max,
 }: {
   filter: ReportFilterDef;
   value: string;
   onChange: (value: string) => void;
   remoteOptions: ReadonlyArray<{ value: string; label: string }>;
   loading: boolean;
+  min?: string;
+  max?: string;
 }) {
   const t = useT();
   if (filter.kind === "date") {
-    return <DatePicker className="w-44" value={value} onChange={onChange} />;
+    return <DatePicker className="w-full sm:w-44" value={value} onChange={onChange} min={min} max={max} />;
   }
   if (filter.kind === "month") {
     return (
-      <Select className="w-40" value={value} onChange={(event) => onChange(event.target.value)}>
+      <Select className="w-full sm:w-40" value={value} onChange={(event) => onChange(event.target.value)}>
         {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
           <option key={month} value={String(month)}>
             {t(`${MONTH_KEY}.${month}`)}
@@ -362,7 +383,7 @@ function FilterControl({
   if (filter.kind === "year") {
     const current = new Date().getFullYear();
     return (
-      <Select className="w-32" value={value} onChange={(event) => onChange(event.target.value)}>
+      <Select className="w-full sm:w-32" value={value} onChange={(event) => onChange(event.target.value)}>
         {[current + 1, current, current - 1, current - 2, current - 3].map((year) => (
           <option key={year} value={String(year)}>
             {year}
@@ -374,7 +395,7 @@ function FilterControl({
   if (filter.kind === "remote") {
     return (
       <Select
-        className="w-64"
+        className="w-full sm:w-64"
         value={value}
         disabled={loading || remoteOptions.length === 0}
         onChange={(event) => onChange(event.target.value)}
@@ -388,7 +409,7 @@ function FilterControl({
     );
   }
   return (
-    <Select className="w-44" value={value} onChange={(event) => onChange(event.target.value)}>
+    <Select className="w-full sm:w-44" value={value} onChange={(event) => onChange(event.target.value)}>
       {(filter.options ?? []).map((option) => (
         <option key={option.value} value={option.value}>
           {t(option.labelKey)}

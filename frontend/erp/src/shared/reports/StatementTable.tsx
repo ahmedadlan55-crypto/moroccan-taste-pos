@@ -287,7 +287,7 @@ export function StatementTable<R extends StatementRowBase>({
                     {row.hasChildren && onToggleRow ? (
                       <button
                         type="button"
-                        className="no-print grid h-7 w-7 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+                        className="no-print grid h-11 w-11 place-items-center rounded-xl text-slate-500 hover:bg-slate-100"
                         aria-expanded={!collapsed}
                         aria-label={collapsed ? expandLabel : collapseLabel}
                         onClick={() => onToggleRow(row.id)}
@@ -299,7 +299,7 @@ export function StatementTable<R extends StatementRowBase>({
                         )}
                       </button>
                     ) : (
-                      <span className="no-print inline-block h-7 w-7" />
+                      <span className="no-print inline-block h-11 w-11" />
                     )}
                     <span className={cn(row.kind && row.kind !== "line" ? "font-extrabold" : "font-semibold")}>
                       {row.label}

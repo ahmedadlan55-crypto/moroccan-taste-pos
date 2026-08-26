@@ -115,6 +115,7 @@ export function Combobox<T extends string>({
         onKeyDown={onKeyDown}
         className={cn(
           "field flex items-center justify-between gap-2 py-2 text-start",
+          clearable && selected && !disabled && "pe-20",
           invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
           disabled && "cursor-not-allowed opacity-60",
         )}
@@ -122,24 +123,19 @@ export function Combobox<T extends string>({
         <span className={cn("truncate", selected ? "text-slate-800" : "font-normal text-slate-400")}>
           {selected ? selected.label : (placeholder ?? t("sharedUi.combobox.placeholder"))}
         </span>
-        <span className="flex items-center gap-1">
-          {clearable && selected && !disabled && (
-            <span
-              role="button"
-              tabIndex={-1}
-              aria-label={t("sharedUi.combobox.clear")}
-              className="grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange(null);
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </span>
-          )}
-          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
       </button>
+
+      {clearable && selected && !disabled && (
+        <button
+          type="button"
+          aria-label={t("sharedUi.combobox.clear")}
+          className="absolute end-8 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+          onClick={() => onChange(null)}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
 
       {open && (
         <div

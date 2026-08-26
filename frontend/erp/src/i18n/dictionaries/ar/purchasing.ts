@@ -174,6 +174,11 @@ export const purchasing = {
     errorBody: "أعد المحاولة، وإن استمرت المشكلة تواصل مع المسؤول.",
     emptyTitle: "لا بيانات",
     emptyBody: "لا توجد صفوف لهذا التقرير.",
+    allWarehouses: "كل المستودعات المتاحة",
+    scopeLabel: "نطاق المستودع",
+    supplierIdentity: "هوية المورد",
+    completeSnapshot: "لقطة كاملة: {count} صف من حد آمن {limit}",
+    snapshotUnverified: "لا يمكن إثبات اكتمال نتيجة التقرير؛ الطباعة والتصدير متوقفان حتى يعيد الخادم لقطة كاملة.",
   },
   // ── shared detail-screen building blocks ──────────────────────────────────
   detail: {

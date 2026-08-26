@@ -23,6 +23,14 @@ export function useReplenishment(query: ReplenishmentQuery) {
   });
 }
 
+/** Complete, scope-aware report snapshot. The server returns 413 instead of a
+ * silently truncated report when the filtered result exceeds 5,000 rows. */
+export async function fetchReplenishmentSnapshot(query: Omit<ReplenishmentQuery, "page" | "pageSize">): Promise<ReturnType<typeof toReplenishmentPage>> {
+  const params: Record<string, string | number> = { snapshot: 1 };
+  for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== "") params[k] = v as string | number;
+  return apiClient.get<unknown>(BASE, { params }).then(toReplenishmentPage);
+}
+
 export function useReplenishmentSummary(query: { warehouseId?: string; category?: string }) {
   const { scope } = useWarehouseScope();
   const params: Record<string, string | number> = {};

@@ -86,6 +86,8 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // Mirrors the server seed for roles represented by this UI. Per-user
   // overrides remain authoritative through the access-scope response.
   "procurement.reports": [...ADM, "manager", "finance"],
+  // Mirrors the sensitive backend seed (manager + finance; admin bypasses).
+  "procurement.data_quality": [...ADM, "manager", "finance"],
   "procurement.manage": BACKOFFICE,
   "procurement.approve": MGR,
   // ── Sales / order-to-cash (inverted from the sales ROLE_GRANTS) ──
@@ -185,6 +187,7 @@ export const ROLE_GRANTS: Record<Capability, readonly Role[]> = {
   // reads the books, it does not post to them. Mirrored exactly, because a nav
   // gate that is wider than the server gate offers a button that 403s.
   "finance.gl.post": [...ADM, "manager", "accountant", "finance"],
+  "finance.gl.reverse": [...ADM, "manager", "finance"],
   // Package H — EXACT mirror of db/migrations/finance/capabilities.js ROLE_GRANTS.
   //
   //   finance.gl.view        → manager (FIN_ALL), accountant, finance, auditor

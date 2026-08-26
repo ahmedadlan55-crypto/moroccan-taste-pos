@@ -35,6 +35,27 @@ async function withQuery(fake, fn) {
   finally { db.query = original; }
 }
 
+async function withSnapshotConnection(fake, fn) {
+  const original = db.getConnection;
+  const events = [];
+  const connection = {
+    async query(sql, params) {
+      events.push({ event: 'query', sql, params: [...(params || [])] });
+      return fake(sql, params || []);
+    },
+    async beginTransaction() { events.push({ event: 'begin' }); },
+    async commit() { events.push({ event: 'commit' }); },
+    async rollback() { events.push({ event: 'rollback' }); },
+    release() { events.push({ event: 'release' }); },
+  };
+  db.getConnection = async () => {
+    events.push({ event: 'acquire' });
+    return connection;
+  };
+  try { return await fn(events); }
+  finally { db.getConnection = original; }
+}
+
 (async () => {
   console.log('\n═══ Procurement report accounting semantics ═══');
 
@@ -69,8 +90,12 @@ async function withQuery(fake, fn) {
   await test('supplier AP statement includes only after-invoice returns in opening and period', async () => {
     const calls = [];
     const res = responseCapture();
-    await withQuery(async (sql, params) => {
+    await withSnapshotConnection(async (sql, params) => {
       calls.push({ sql, params: [...params] });
+      if (/^SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/.test(sql)) return [[], []];
+      if (/FROM suppliers WHERE id/.test(sql)) {
+        return [[{ id: 'SUP-1', name: 'Supplier One', name_en: 'Supplier One', vat_number: 'VAT-1' }]];
+      }
       if (/SUM\(si\.total_amount\)/.test(sql)) return [[{ value: 100 }]];
       if (/SUM\(pa\.allocated_amount\)/.test(sql)) return [[{ value: 20 }]];
       if (/SUM\(pret\.total\)/.test(sql)) {
@@ -88,10 +113,20 @@ async function withQuery(fake, fn) {
           : [{ id: 'RET-BEFORE', return_number: 'RET-BEFORE', date: '2026-08-04', total: 900 }]];
       }
       throw new Error(`unexpected query: ${sql}`);
-    }, async () => handler('/supplier-statement')({
+    }, async (events) => {
+      await handler('/supplier-statement')({
       query: { supplierId: 'SUP-1', from: '2026-08-01', to: '2026-08-31' },
       warehouseScope: { all: true },
-    }, res));
+      }, res);
+      const begin = events.findIndex((entry) => entry.event === 'begin');
+      const firstBusinessQuery = events.findIndex((entry) => entry.event === 'query' && /FROM suppliers WHERE id/.test(entry.sql));
+      const commit = events.findIndex((entry) => entry.event === 'commit');
+      const release = events.findIndex((entry) => entry.event === 'release');
+      assert(begin >= 0 && begin < firstBusinessQuery, 'transaction begins before statement reads');
+      assert(firstBusinessQuery < commit, 'all statement reads finish before commit');
+      assert(commit < release, 'connection is released only after commit');
+      assert(!events.some((entry) => entry.event === 'rollback'));
+    });
 
     assert.equal(reports.AP_RETURN_PHASE, 'after_invoice');
     const returnCalls = calls.filter((call) => /purchase_returns pret/.test(call.sql));
@@ -104,7 +139,32 @@ async function withQuery(fake, fn) {
     // period +50 invoice -10 payment -5 AP-affecting return = 85.
     assert.equal(res.body.opening, 50);
     assert.equal(res.body.closingBalance, 85);
+    assert.deepEqual(res.body.supplier, { id: 'SUP-1', name: 'Supplier One', nameEn: 'Supplier One', vatNumber: 'VAT-1' });
+    assert.deepEqual(res.body.snapshot, { complete: true, rowCount: 3, rowLimit: reports.REPORT_SNAPSHOT_LIMIT });
     assert(!res.body.data.some((line) => line.id === 'RET-BEFORE'));
+  });
+
+  await test('supplier statement CSV localizes headers and opening row in English', async () => {
+    const res = responseCapture();
+    const headers = {};
+    res.setHeader = (key, value) => { headers[String(key).toLowerCase()] = String(value); };
+    await withSnapshotConnection(async (sql) => {
+      if (/^SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/.test(sql)) return [[], []];
+      if (/FROM suppliers WHERE id/.test(sql)) return [[{
+        id: 'SUP-CSV', name: 'مورد', name_en: 'Supplier', vat_number: 'VAT-CSV',
+      }]];
+      if (/COALESCE\(SUM/.test(sql)) return [[{ value: 0 }]];
+      if (/FROM supplier_invoices si WHERE|FROM payment_allocations pa|FROM purchase_returns pret WHERE/.test(sql)) return [[]];
+      throw new Error(`unexpected query: ${sql}`);
+    }, async () => handler('/supplier-statement')({
+      query: {
+        supplierId: 'SUP-CSV', from: '2026-08-01', to: '2026-08-31', format: 'csv', lang: 'en',
+      },
+      warehouseScope: { all: true },
+    }, res));
+
+    assert.match(String(res.body), /^﻿Date,Type,Reference,Debit,Credit,Balance\r?\n2026-08-01,Opening,Opening balance/);
+    assert.match(headers['content-disposition'], /supplier-statement-SUP-CSV-2026-08-01-2026-08-31\.csv/);
   });
 
   await test('AP aging uses SQL calendar days and exact 30/60/90 boundaries', async () => {
@@ -133,6 +193,22 @@ async function withQuery(fake, fn) {
     assert.equal(row.d90, 20);      // days 61 and 90
     assert.equal(row.d90plus, 10);  // day 91
     assert.equal(row.total, 80);
+  });
+
+  await test('AP aging CSV follows the requested English language and dated filename', async () => {
+    const res = responseCapture();
+    const headers = {};
+    res.setHeader = (key, value) => { headers[String(key).toLowerCase()] = String(value); };
+    await withQuery(async () => [[{
+      id: 'INV-CSV', supplier_id: 'SUP-1', supplier_name: 'Supplier One',
+      due_date: '2026-08-01', age_days: 10, total_amount: 25, paid: 0,
+    }]], async () => handler('/ap-aging')({
+      query: { asOfDate: '2026-08-12', format: 'csv', lang: 'en' },
+      warehouseScope: { all: true },
+    }, res));
+
+    assert.match(String(res.body), /^﻿Supplier,Current,1-30 days,31-60 days,61-90 days,Over 90 days,Total/);
+    assert.match(headers['content-disposition'], /ap-aging-2026-08-12\.csv/);
   });
 
   console.log(`\nprocurementReportAccounting: ${passed}/${passed} passed`);

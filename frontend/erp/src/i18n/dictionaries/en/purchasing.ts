@@ -148,6 +148,11 @@ export const purchasing = {
     errorBody: "Try again — if the problem persists, contact the administrator.",
     emptyTitle: "No data",
     emptyBody: "There are no rows for this report.",
+    allWarehouses: "All accessible warehouses",
+    scopeLabel: "Warehouse scope",
+    supplierIdentity: "Supplier identity",
+    completeSnapshot: "Complete snapshot: {count} rows within the safe {limit}-row limit",
+    snapshotUnverified: "Report completeness cannot be verified; print and export stay disabled until the server returns a complete snapshot.",
   },
   detail: {
     print: "Print",

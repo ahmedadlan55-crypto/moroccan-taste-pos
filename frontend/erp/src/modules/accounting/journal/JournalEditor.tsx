@@ -378,11 +378,11 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
           <table className="w-full min-w-[52rem] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-                <th className="px-2 py-2 text-right">{t("accounting.common.account")}</th>
-                <th className="px-2 py-2 text-left">{t("accounting.common.debit")}</th>
-                <th className="px-2 py-2 text-left">{t("accounting.common.credit")}</th>
-                <th className="px-2 py-2 text-right">{t("accounting.common.statement")}</th>
-                <th className="px-2 py-2 text-right">{t("accounting.journal.editor.costCenterCol")}</th>
+                <th className="px-2 py-2 text-start">{t("accounting.common.account")}</th>
+                <th className="px-2 py-2 text-end">{t("accounting.common.debit")}</th>
+                <th className="px-2 py-2 text-end">{t("accounting.common.credit")}</th>
+                <th className="px-2 py-2 text-start">{t("accounting.common.statement")}</th>
+                <th className="px-2 py-2 text-start">{t("accounting.journal.editor.costCenterCol")}</th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -400,11 +400,11 @@ function JournalForm({ journal, onDone, canCreate, canPost }: JournalFormProps) 
             {/* RULE 2 — totals + balance footer */}
             <tfoot>
               <tr className="border-t border-slate-200 bg-slate-50 text-xs font-extrabold">
-                <td className="px-3 py-2.5 text-right">{t("accounting.common.total")}</td>
-                <td className="px-3 py-2.5 text-left">
+                <td className="px-3 py-2.5 text-start">{t("accounting.common.total")}</td>
+                <td className="px-3 py-2.5 text-end">
                   <MoneyText value={totals.totalDebit} strong />
                 </td>
-                <td className="px-3 py-2.5 text-left">
+                <td className="px-3 py-2.5 text-end">
                   <MoneyText value={totals.totalCredit} strong />
                 </td>
                 <td className="px-3 py-2.5" colSpan={3}>

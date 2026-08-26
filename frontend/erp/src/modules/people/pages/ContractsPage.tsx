@@ -86,7 +86,7 @@ function ContractDetailDrawer({ id, onClose }: { id: string | null; onClose: () 
       {query.error && <ErrorState error={query.error} onRetry={() => query.refetch()} />}
       {emp && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <DetailStat label={t("people.field.empNumber")} value={emp.employeeNumber || "—"} />
             <DetailStat label={t("people.field.jobTitle")} value={emp.jobTitle || "—"} />
             <DetailStat
@@ -104,13 +104,13 @@ function ContractDetailDrawer({ id, onClose }: { id: string | null; onClose: () 
             <DetailStat label={t("people.field.branch")} value={emp.branchName || "—"} />
           </div>
           {(emp.bankName || emp.bankIban) && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <DetailStat label={t("people.contracts.stat.bank")} value={emp.bankName || "—"} />
               <DetailStat label={t("people.contracts.stat.iban")} value={emp.bankIban || "—"} />
             </div>
           )}
           {emp.status === "terminated" && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <DetailStat label={t("people.contracts.stat.terminationDate")} value={formatDate(emp.terminationDate)} />
               <DetailStat label={t("people.contracts.stat.terminationReason")} value={emp.terminationReason || "—"} />
             </div>

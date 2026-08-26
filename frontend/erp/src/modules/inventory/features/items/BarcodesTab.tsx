@@ -5,6 +5,7 @@ import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { useItemMutations, lookupBarcode, type BarcodeLookupResult } from "@/modules/inventory/lib/hooks/useItems";
 import type { ItemDetail } from "@/modules/inventory/lib/adapters/item.adapter";
 import { ApiError } from "@/shared/api";
+import { useT } from "@/i18n";
 import { code39Svg, printBarcodeLabels } from "./barcodeLabel";
 
 interface Row { code: string; sizeVariant: string; isPrimary: boolean }
@@ -13,6 +14,7 @@ interface Row { code: string; sizeVariant: string; isPrimary: boolean }
 // with size variants, scan-to-add, a live scan tester, explicit 409 conflict
 // display (BARCODE_TAKEN), and Code39 label printing.
 export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: () => void }) {
+  const t = useT();
   const m = useItemMutations();
   const canManage = useCan("barcode.manage");
   const [rows, setRows] = useState<Row[]>([]);
@@ -64,7 +66,7 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
 
   function save() {
     setErr(null); setSaved(false);
-    if (localDup) { setErr(`باركود مكرر ضمن القائمة: ${localDup}`); return; }
+    if (localDup) { setErr(t("inventoryRest.itemBarcodes.duplicate", { code: localDup })); return; }
     const primary = rows.find((r) => r.isPrimary)?.code.trim() ?? null;
     const secondaries = rows.filter((r) => !r.isPrimary && r.code.trim()).map((r) => ({ code: r.code.trim(), sizeVariant: r.sizeVariant.trim() || null }));
     m.saveBarcodes.mutate(
@@ -72,9 +74,9 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
       {
         onSuccess: () => { setSaved(true); setDirty(false); onSaved(); },
         onError: (e) => {
-          if (e instanceof ApiError && e.code === "BARCODE_TAKEN") setErr(`تعارض 409: ${e.message} — الباركود مستخدم لصنف آخر.`);
-          else if (e instanceof ApiError && e.isConflict) { setErr("تغيّر الصنف منذ آخر تحميل — أُعيد التحميل، حاول مجددًا."); onSaved(); }
-          else setErr(e instanceof ApiError ? e.message : "تعذّر حفظ الباركودات.");
+          if (e instanceof ApiError && e.code === "BARCODE_TAKEN") setErr(t("inventoryRest.itemBarcodes.conflictTaken"));
+          else if (e instanceof ApiError && e.isConflict) { setErr(t("inventoryRest.itemBarcodes.conflictVersion")); onSaved(); }
+          else setErr(t("inventoryRest.itemBarcodes.saveFailed"));
         },
       },
     );
@@ -83,29 +85,31 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        {rows.length === 0 && <p className="rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-400">لا باركودات لهذا الصنف — أضف الأول أدناه.</p>}
+        {rows.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-medium leading-6 text-slate-500">{t("inventoryRest.itemBarcodes.empty")}</p>}
         {rows.map((r, i) => {
           const svg = code39Svg(r.code, { height: 28, moduleWidth: 1 });
           return (
-            <div key={i} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2.5 ${r.isPrimary ? "border-teal-300 bg-teal-50/50" : "border-slate-200 bg-white"}`}>
-              <button type="button" title={r.isPrimary ? "الباركود الأساسي" : "تعيين كأساسي"} aria-label={r.isPrimary ? "الأساسي" : `تعيين ${r.code} كأساسي`}
+            <div key={i} className={`flex min-w-0 flex-col gap-3 rounded-2xl border p-3 sm:flex-row sm:items-center ${r.isPrimary ? "border-teal-300 bg-teal-50/50" : "border-slate-200 bg-white"}`}>
+              <button type="button" title={r.isPrimary ? t("inventoryRest.itemBarcodes.primaryTitle") : t("inventoryRest.itemBarcodes.setPrimaryTitle")} aria-label={r.isPrimary ? t("inventoryRest.itemBarcodes.primaryAria", { code: r.code }) : t("inventoryRest.itemBarcodes.setPrimaryAria", { code: r.code })}
                 onClick={() => canManage && setPrimary(i)} disabled={!canManage}
-                className={`grid h-8 w-8 place-items-center rounded-lg ${r.isPrimary ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-400 hover:bg-slate-200"}`}>
-                <Star className="h-4 w-4" />
+                className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-60 ${r.isPrimary ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-400 hover:bg-slate-200"}`}>
+                <Star className="h-4 w-4" aria-hidden="true" />
               </button>
-              <span className="font-mono text-sm font-bold text-slate-800" dir="ltr">{r.code}</span>
-              {r.sizeVariant && <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{r.sizeVariant}</span>}
-              {r.isPrimary && <span className="rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-bold text-teal-700">أساسي</span>}
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <span className="min-w-0 break-all font-mono text-sm font-bold text-slate-800" dir="ltr">{r.code}</span>
+                {r.sizeVariant && <span className="break-words rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{r.sizeVariant}</span>}
+                {r.isPrimary && <span className="rounded-lg bg-teal-100 px-2 py-1 text-xs font-bold text-teal-700">{t("inventoryRest.itemBarcodes.primaryBadge")}</span>}
+              </div>
               {svg && (
                 <img
-                  className="mr-auto hidden sm:block"
+                  className="hidden h-8 max-w-full shrink-0 sm:block"
                   src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`}
-                  alt={`باركود ${r.code}`}
+                  alt={t("inventoryRest.itemBarcodes.imageAlt", { code: r.code })}
                 />
               )}
               {canManage && (
-                <Button variant="ghost" size="icon" aria-label={`حذف ${r.code}`} onClick={() => removeRow(i)}>
-                  <Trash2 className="h-4 w-4 text-rose-500" />
+                <Button className="self-end sm:self-auto" variant="ghost" size="icon" aria-label={t("inventoryRest.itemBarcodes.deleteAria", { code: r.code })} onClick={() => removeRow(i)}>
+                  <Trash2 className="h-4 w-4 text-rose-500" aria-hidden="true" />
                 </Button>
               )}
             </div>
@@ -114,35 +118,35 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
       </div>
 
       {canManage && (
-        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <label className="block flex-1 text-xs font-bold text-slate-500">باركود جديد (امسح أو اكتب)
-            <input ref={addRef} className="field mt-1 w-full font-mono" dir="ltr" value={addCode}
+        <div className="grid grid-cols-1 items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.55fr)_auto]">
+          <label className="block min-w-0 text-xs font-bold leading-5 text-slate-600">{t("inventoryRest.itemBarcodes.add.codeLabel")}
+            <input ref={addRef} className="field mt-1 min-h-11 w-full font-mono" dir="ltr" value={addCode}
               onChange={(e) => setAddCode(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRow(); } }}
-              placeholder="612345678901" aria-label="باركود جديد" />
+              placeholder={t("inventoryRest.itemBarcodes.add.codePlaceholder")} aria-label={t("inventoryRest.itemBarcodes.add.codeAria")} />
           </label>
-          <label className="block w-36 text-xs font-bold text-slate-500">حجم/متغير (اختياري)
-            <input className="field mt-1 w-full" value={addVariant} onChange={(e) => setAddVariant(e.target.value)} placeholder="عبوة 500مل" aria-label="متغير الحجم" />
+          <label className="block min-w-0 text-xs font-bold leading-5 text-slate-600">{t("inventoryRest.itemBarcodes.add.variantLabel")}
+            <input className="field mt-1 min-h-11 w-full" value={addVariant} onChange={(e) => setAddVariant(e.target.value)} placeholder={t("inventoryRest.itemBarcodes.add.variantPlaceholder")} aria-label={t("inventoryRest.itemBarcodes.add.variantAria")} />
           </label>
-          <Button variant="secondary" size="sm" onClick={addRow} disabled={!addCode.trim()}><Plus className="h-4 w-4" /> إضافة</Button>
+          <Button className="w-full sm:w-auto" variant="secondary" size="sm" onClick={addRow} disabled={!addCode.trim()}><Plus className="h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.add.action")}</Button>
         </div>
       )}
 
-      {err && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{err}</p>}
-      {saved && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><CheckCircle2 className="ml-1 inline h-4 w-4" /> حُفظت الباركودات.</p>}
+      {err && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-xs font-bold leading-5 text-rose-700">{err}</p>}
+      {saved && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs font-bold text-emerald-700"><CheckCircle2 className="me-1 inline h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.saved")}</p>}
 
-      <div className="flex flex-wrap justify-between gap-2">
-        <Button variant="ghost" size="sm" disabled={rows.length === 0}
+      <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:justify-between">
+        <Button className="w-full sm:w-auto" variant="ghost" size="sm" disabled={rows.length === 0}
           onClick={() => printBarcodeLabels(rows.map((r) => ({ itemName: detail.name, sku: detail.sku, code: r.code, sizeVariant: r.sizeVariant || null })))}>
-          <Printer className="h-4 w-4" /> طباعة ملصقات
+          <Printer className="h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.printLabels")}
         </Button>
         {canManage && (
-          <Button variant="primary" size="sm" disabled={!dirty || m.saveBarcodes.isPending || !!localDup} onClick={save}>
-            {m.saveBarcodes.isPending ? "جارٍ الحفظ…" : "حفظ الباركودات"}
+          <Button className="w-full sm:w-auto" variant="primary" size="sm" disabled={!dirty || m.saveBarcodes.isPending || !!localDup} onClick={save}>
+            {m.saveBarcodes.isPending ? t("inventoryRest.itemBarcodes.saving") : t("inventoryRest.itemBarcodes.save")}
           </Button>
         )}
       </div>
-      {localDup && <p className="text-xs font-bold text-amber-600">باركود مكرر ضمن القائمة: {localDup}</p>}
+      {localDup && <p className="text-xs font-bold text-amber-600">{t("inventoryRest.itemBarcodes.duplicate", { code: localDup })}</p>}
 
       <ScanTester currentItemId={detail.id} />
     </div>
@@ -151,6 +155,7 @@ export function BarcodesTab({ detail, onSaved }: { detail: ItemDetail; onSaved: 
 
 // Live scan tester: scan any code and see instantly which item it resolves to.
 function ScanTester({ currentItemId }: { currentItemId: string }) {
+  const t = useT();
   const [code, setCode] = useState("");
   const [result, setResult] = useState<BarcodeLookupResult | null | "pending" | "error">(null);
   const [tested, setTested] = useState("");
@@ -163,31 +168,31 @@ function ScanTester({ currentItemId }: { currentItemId: string }) {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 p-3">
-      <div className="mb-2 flex items-center gap-1.5 text-xs font-extrabold text-slate-600"><ScanLine className="h-4 w-4" /> اختبار مسح مباشر</div>
-      <div className="flex gap-2">
-        <input className="field flex-1 font-mono" dir="ltr" value={code} onChange={(e) => setCode(e.target.value)}
+    <section className="rounded-2xl border border-slate-200 p-4">
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-extrabold text-slate-700"><ScanLine className="h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.scan.title")}</h3>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <input className="field min-h-11 min-w-0 w-full font-mono" dir="ltr" value={code} onChange={(e) => setCode(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void test(); } }}
-          placeholder="امسح باركودًا هنا…" aria-label="اختبار مسح" />
-        <Button variant="secondary" size="sm" onClick={() => void test()} disabled={!code.trim() || result === "pending"}>
-          {result === "pending" ? "…" : "فحص"}
+          placeholder={t("inventoryRest.itemBarcodes.scan.placeholder")} aria-label={t("inventoryRest.itemBarcodes.scan.aria")} />
+        <Button className="w-full sm:w-auto" variant="secondary" size="sm" onClick={() => void test()} disabled={!code.trim() || result === "pending"}>
+          {result === "pending" ? t("inventoryRest.itemBarcodes.scan.checking") : t("inventoryRest.itemBarcodes.scan.check")}
         </Button>
       </div>
       {result !== null && result !== "pending" && (
-        <div className="mt-2 text-xs font-bold">
+        <div className="mt-3 break-words rounded-xl bg-slate-50 px-3 py-2 text-xs font-bold leading-5">
           {result === "error" ? (
-            <span className="text-rose-600"><XCircle className="ml-1 inline h-4 w-4" /> تعذّر الفحص — تحقق من الاتصال.</span>
+            <span className="text-rose-600"><XCircle className="me-1 inline h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.scan.error")}</span>
           ) : result === null || !result ? (
-            <span className="text-amber-600"><XCircle className="ml-1 inline h-4 w-4" /> لا يوجد صنف بالباركود «{tested}».</span>
+            <span className="text-amber-600"><XCircle className="me-1 inline h-4 w-4" aria-hidden="true" /> {t("inventoryRest.itemBarcodes.scan.notFound", { code: tested })}</span>
           ) : (
             <span className={result.itemId === currentItemId ? "text-emerald-700" : "text-sky-700"}>
-              <Barcode className="ml-1 inline h-4 w-4" />
-              «{tested}» ← {result.name}{result.sizeVariant ? ` (${result.sizeVariant})` : ""}
-              {result.itemId === currentItemId ? " — هذا الصنف ✓" : " — صنف آخر!"}
+              <Barcode className="me-1 inline h-4 w-4" aria-hidden="true" />
+              {t("inventoryRest.itemBarcodes.scan.result", { code: tested, name: result.name, variant: result.sizeVariant ? ` (${result.sizeVariant})` : "" })}
+              {` — ${result.itemId === currentItemId ? t("inventoryRest.itemBarcodes.scan.currentItem") : t("inventoryRest.itemBarcodes.scan.otherItem")}`}
             </span>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

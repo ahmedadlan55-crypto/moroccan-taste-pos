@@ -72,12 +72,12 @@ export function StocktakeDetailDrawer({ id, onClose }: { id: string | null; onCl
             <div className="overflow-x-auto rounded-xl border border-slate-100">
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 text-slate-500"><tr>
-                  <th className="px-2 py-2 text-right">{t("inventoryRest.stocktakes.detail.colItem")}</th><th>{t("inventoryRest.stocktakes.detail.colSnapshot")}</th><th>{t("inventoryRest.stocktakes.detail.colCountMovements")}</th><th>{t("inventoryRest.stocktakes.detail.colTheoretical")}</th><th>{t("inventoryRest.stocktakes.detail.colCounted")}</th><th>{t("inventoryRest.stocktakes.detail.colVariance")}</th><th>{t("inventoryRest.stocktakes.detail.colValue")}</th>
+                  <th className="px-2 py-2 text-start">{t("inventoryRest.stocktakes.detail.colItem")}</th><th>{t("inventoryRest.stocktakes.detail.colSnapshot")}</th><th>{t("inventoryRest.stocktakes.detail.colCountMovements")}</th><th>{t("inventoryRest.stocktakes.detail.colTheoretical")}</th><th>{t("inventoryRest.stocktakes.detail.colCounted")}</th><th>{t("inventoryRest.stocktakes.detail.colVariance")}</th><th>{t("inventoryRest.stocktakes.detail.colValue")}</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {d.lines.map((l) => (
                     <tr key={l.id} className={l.isFlagged ? "bg-amber-50/60" : ""}>
-                      <td className="px-2 py-2 text-right font-bold text-slate-700">{l.item.name}</td>
+                      <td className="px-2 py-2 text-start font-bold text-slate-700">{l.item.name}</td>
                       <td className="text-center tabular-nums text-slate-500">{formatQty(l.snapshotQty)}</td>
                       <td className="text-center tabular-nums text-slate-500">{l.netMovements > 0 ? "+" : ""}{formatQty(l.netMovements)}</td>
                       <td className="text-center tabular-nums text-slate-600">{formatQty(l.theoreticalQty)}</td>

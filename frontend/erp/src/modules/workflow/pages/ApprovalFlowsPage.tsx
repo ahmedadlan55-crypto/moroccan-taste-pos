@@ -69,7 +69,7 @@ export function ApprovalFlowsPage() {
               <ShieldCheck className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 className="text-lg font-extrabold text-slate-950">{t("workflow.builder.header")}</h2>
+              <h1 className="text-xl font-extrabold text-slate-950 sm:text-2xl">{t("workflow.builder.header")}</h1>
               <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-slate-500">
                 {t("workflow.builder.headerSub")}
               </p>

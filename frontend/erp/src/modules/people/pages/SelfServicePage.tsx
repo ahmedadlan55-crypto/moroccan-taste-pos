@@ -77,7 +77,7 @@ export function SelfServicePage() {
         action={
           <a
             href="/employee/"
-            className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 hover:border-slate-300 hover:bg-slate-50"
           >
             <Smartphone className="h-4 w-4 text-teal-700" aria-hidden="true" />
             {t("people.selfService.openApp")}

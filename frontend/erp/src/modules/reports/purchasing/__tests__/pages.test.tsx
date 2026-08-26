@@ -83,6 +83,7 @@ describe("purchasing report page", () => {
         success: true,
         data: [{ supplierId: "S-1", supplierName: "Supplier One", current: 10, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 10 }],
         grandTotal: { current: 10, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 10 },
+        snapshot: { complete: true, rowCount: 1, rowLimit: 5000 },
       },
     });
     mount(<PurchasingReportPage reportId="ap-aging" />);
@@ -103,6 +104,8 @@ describe("purchasing report page", () => {
     const foot = document.querySelector(".print-document tfoot");
     expect(foot).toBeInTheDocument();
     expect(foot?.textContent).toContain("10.00");
+    expect(screen.getByTestId("purchasing-report-snapshot")).toHaveTextContent("Complete snapshot: 1 rows");
+    expect(screen.getByTestId("print-masthead")).toHaveTextContent("Warehouse scope: All accessible warehouses");
   });
 
   it("declares columns that survive an empty result", () => {
@@ -117,11 +120,30 @@ describe("purchasing report page", () => {
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
-      data: { success: true, data: { invoicesWithoutSupplier: 3, duplicateInvoiceNumbers: 0 } },
+      data: {
+        success: true,
+        data: { invoicesWithoutSupplier: 3, duplicateInvoiceNumbers: 0 },
+        snapshot: { complete: true, rowCount: 2, rowLimit: 5000 },
+      },
     });
     mount(<PurchasingReportPage reportId="data-quality" />);
     await waitFor(() => expect(screen.getAllByText("Invoices with no linked supplier").length).toBeGreaterThan(0));
     expect(screen.getAllByRole("columnheader", { name: "Exceptions" }).length).toBeGreaterThan(0);
+  });
+
+  it("does not print or export a report whose complete snapshot is unverified", () => {
+    useProcurementReportMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      data: { success: true, data: [{ period: "2026-08", net: 100, inputVat: 15 }] },
+    });
+    mount(<PurchasingReportPage reportId="tax" />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Report completeness cannot be verified");
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Print" })).toBeDisabled();
+    expect(document.querySelector(".print-document")).toBeNull();
   });
 
   it("never calls supplier-statement without a supplier", () => {

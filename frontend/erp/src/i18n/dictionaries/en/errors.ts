@@ -14,6 +14,11 @@ export const errors = {
   PERMISSION_DENIED: "You don't have permission to perform this action",
   NOT_FOUND: "The requested item was not found or has been removed",
   RATE_LIMITED: "Too many attempts — please wait a moment and try again",
+  FORBIDDEN: "You don't have permission to view this report",
+  UNKNOWN_REPORT: "This report is not available",
+  PRINT_LIMIT: "This result is too large to print safely — narrow the filters or export it as CSV",
+  REPORT_SNAPSHOT_LIMIT: "The complete report exceeds the safe snapshot limit — narrow the date or warehouse scope and try again",
+  DATE_RANGE_INVALID: "The start date must not be after the end date",
   // Menu D2/D3 — a manual cost write was refused because the item's cost is
   // recipe-derived; the product page surfaces this as an "unlock to edit" flow.
   COST_LOCKED_BY_RECIPE: "This cost is recipe-derived — unlock it on the product page to set it manually",

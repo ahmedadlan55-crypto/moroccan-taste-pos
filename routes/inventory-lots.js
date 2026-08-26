@@ -53,6 +53,15 @@ function _int(v, d) { const n = parseInt(v, 10); return Number.isFinite(n) ? n :
 function _page(q) { let page = _int(q.page, 1); if (page < 1) page = 1; let ps = _int(q.pageSize, 25); if (ps < 1) ps = 1; if (ps > 200) ps = 200; return { page, pageSize: ps, offset: (page - 1) * ps }; }
 const RISK = ['expired', 'critical', 'warning', 'safe', 'none'];
 const STATUSES = ['active', 'quarantined', 'recalled', 'closed'];
+const REPORT_SNAPSHOT_LIMIT = 5000;
+function _snapshotTooLarge(res, total) {
+  return res.status(413).json({
+    code: 'REPORT_TOO_LARGE',
+    error: 'تجاوز التقرير الحد الأقصى (' + REPORT_SNAPSHOT_LIMIT + ' صف). ضيّق الفلاتر ثم أعد المحاولة.',
+    total: Number(total) || 0,
+    limit: REPORT_SNAPSHOT_LIMIT,
+  });
+}
 
 // Decorate a lot row with the Asia/Riyadh date-only expiry classification.
 function _decorate(r, now) {
@@ -66,29 +75,44 @@ function _decorate(r, now) {
   };
 }
 
+function _expiryRiskSql(rawRisk) {
+  const risk = String(rawRisk || '');
+  const th = EXP.thresholds();
+  if (risk === 'expired') return { sql: 'l.expiry_date < CURDATE()', params: [] };
+  if (risk === 'critical') return { sql: 'l.expiry_date >= CURDATE() AND l.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)', params: [th.critical] };
+  if (risk === 'warning') return { sql: 'l.expiry_date > DATE_ADD(CURDATE(), INTERVAL ? DAY) AND l.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)', params: [th.critical, th.warning] };
+  if (risk === 'safe') return { sql: 'l.expiry_date > DATE_ADD(CURDATE(), INTERVAL ? DAY)', params: [th.warning] };
+  if (risk === 'none') return { sql: 'l.expiry_date IS NULL', params: [] };
+  return null;
+}
+
 // ── GET /lots ───────────────────────────────────────────────────────────────
 router.get('/lots', async (req, res) => {
   try {
     const q = req.query || {};
     const { page, pageSize, offset } = _page(q);
+    const snapshot = String(q.snapshot || '') === '1';
     const sc = req.whScopeClause ? req.whScopeClause('b.warehouse_id') : { sql: '', params: [] };
     const where = ['1=1']; const params = [];
     if (q.itemId) { where.push('l.item_id=?'); params.push(String(q.itemId)); }
     if (STATUSES.indexOf(String(q.status)) !== -1) { where.push('l.lifecycle_status=?'); params.push(String(q.status)); }
     if (q.q) { where.push('(l.lot_number LIKE ? OR ii.name LIKE ?)'); params.push('%' + q.q + '%', '%' + q.q + '%'); }
+    const riskSql = _expiryRiskSql(q.risk);
+    if (riskSql) { where.push(riskSql.sql); params.push(...riskSql.params); }
     const whParam = q.warehouseId ? String(q.warehouseId) : null;
     const balExpr = 'SELECT COALESCE(SUM(b.qty),0) FROM warehouse_lot_balances b WHERE b.lot_id=l.id' + (whParam ? ' AND b.warehouse_id=?' : '') + (sc.sql || '');
     const balParams = (whParam ? [whParam] : []).concat(sc.params || []);
     const base = 'FROM inventory_lots l JOIN inv_items ii ON ii.id=l.item_id WHERE ' + where.join(' AND ');
     const [[cnt]] = await db.query('SELECT COUNT(*) AS n ' + base, params);
     const [rows] = await db.query(
-      'SELECT l.*, ii.name AS item_name, (' + balExpr + ') AS total_qty ' + base + ' ORDER BY (l.expiry_date IS NULL), l.expiry_date, l.lot_number LIMIT ? OFFSET ?',
-      balParams.concat(params, [pageSize, offset])
+      'SELECT l.*, ii.name AS item_name, (' + balExpr + ') AS total_qty ' + base + ' ORDER BY (l.expiry_date IS NULL), l.expiry_date, l.lot_number LIMIT ?' + (snapshot ? '' : ' OFFSET ?'),
+      snapshot ? balParams.concat(params, [REPORT_SNAPSHOT_LIMIT + 1]) : balParams.concat(params, [pageSize, offset])
     );
     const now = new Date();
-    let data = rows.map((r) => _decorate(r, now));
-    if (RISK.indexOf(String(q.risk)) !== -1) data = data.filter((d) => d.expiryClass === String(q.risk));
-    res.json({ data, pagination: { page, pageSize, total: Number(cnt.n) || 0, totalPages: Math.max(1, Math.ceil((Number(cnt.n) || 0) / pageSize)) } });
+    const data = rows.map((r) => _decorate(r, now));
+    const total = snapshot ? data.length : (Number(cnt.n) || 0);
+    if (snapshot && total > REPORT_SNAPSHOT_LIMIT) return _snapshotTooLarge(res, total);
+    res.json({ data, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
   } catch (e) { _catch(res, e); }
 });
 
@@ -234,21 +258,26 @@ function _expiryWhere(req) {
   const sc = req.whScopeClause ? req.whScopeClause('b.warehouse_id') : { sql: '', params: [] };
   const where = ['b.qty > 0', "l.lifecycle_status <> 'closed'", 'l.expiry_date IS NOT NULL']; const params = [];
   if (req.query.warehouseId) { where.push('b.warehouse_id=?'); params.push(String(req.query.warehouseId)); }
+  const levelSql = _expiryRiskSql(req.query.level);
+  if (levelSql) { where.push(levelSql.sql); params.push(...levelSql.params); }
   return { sql: ' WHERE ' + where.join(' AND ') + (sc.sql || ''), params: params.concat(sc.params || []) };
 }
 router.get('/expiry', async (req, res) => {
   try {
     const w = _expiryWhere(req); const { page, pageSize, offset } = _page(req.query);
+    const snapshot = String(req.query.snapshot || '') === '1';
+    const from = ' FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id JOIN inv_items ii ON ii.id=l.item_id LEFT JOIN warehouses w ON w.id=b.warehouse_id' + w.sql;
+    const [[countRow]] = await db.query('SELECT COUNT(*) AS n' + from, w.params);
     const [rows] = await db.query(
       "SELECT l.id, l.item_id, ii.name AS item_name, l.lot_number, DATE_FORMAT(l.expiry_date,'%Y-%m-%d') AS expiry_date, l.lifecycle_status, b.warehouse_id, w.name AS warehouse_name, b.qty " +
-      'FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id JOIN inv_items ii ON ii.id=l.item_id LEFT JOIN warehouses w ON w.id=b.warehouse_id' +
-      w.sql + ' ORDER BY l.expiry_date', w.params
+      from + ' ORDER BY l.expiry_date LIMIT ?' + (snapshot ? '' : ' OFFSET ?'),
+      snapshot ? w.params.concat([REPORT_SNAPSHOT_LIMIT + 1]) : w.params.concat([pageSize, offset])
     );
     const now = new Date();
-    let data = rows.map((r) => ({ lotId: r.id, itemId: r.item_id, itemName: r.item_name, lotNumber: r.lot_number, expiryDate: r.expiry_date, daysToExpiry: EXP.daysUntil(r.expiry_date, now), expiryClass: EXP.classify(r.expiry_date, now), lifecycleStatus: r.lifecycle_status, warehouseId: r.warehouse_id, warehouseName: r.warehouse_name || r.warehouse_id, qty: Number(r.qty) }));
-    if (RISK.indexOf(String(req.query.level)) !== -1) data = data.filter((d) => d.expiryClass === String(req.query.level));
-    const total = data.length;
-    res.json({ data: data.slice(offset, offset + pageSize), pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
+    const data = rows.map((r) => ({ lotId: r.id, itemId: r.item_id, itemName: r.item_name, lotNumber: r.lot_number, expiryDate: r.expiry_date, daysToExpiry: EXP.daysUntil(r.expiry_date, now), expiryClass: EXP.classify(r.expiry_date, now), lifecycleStatus: r.lifecycle_status, warehouseId: r.warehouse_id, warehouseName: r.warehouse_name || r.warehouse_id, qty: Number(r.qty) }));
+    const total = snapshot ? data.length : (Number(countRow.n) || 0);
+    if (snapshot && total > REPORT_SNAPSHOT_LIMIT) return _snapshotTooLarge(res, total);
+    res.json({ data, pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } });
   } catch (e) { _catch(res, e); }
 });
 router.get('/expiry/summary', async (req, res) => {

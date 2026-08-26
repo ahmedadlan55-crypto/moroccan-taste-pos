@@ -196,8 +196,13 @@ const code = (s) => s.split(/\r?\n/).filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)
   check('no route is left ungated',
     !/router\.(get|post)\('[^']+',\s*async/.test(src), src.match(/router\.(get|post)\('[^']+',\s*async/g));
   const writes = routes.filter((r) => r.path === '/post' || /reverse/.test(r.path));
-  check('writing to the ledger needs finance.gl.post',
-    writes.length === 2 && writes.every((r) => r.cap === 'finance.gl.post'), writes);
+  check('posting and reversal are separated capabilities',
+    writes.length === 2 &&
+    writes.some((r) => r.path === '/post' && r.cap === 'finance.gl.post') &&
+    writes.some((r) => /reverse/.test(r.path) && r.cap === 'finance.gl.reverse'), writes);
+  check('posted history is paged instead of silently truncated',
+    /COUNT\(\*\) AS total FROM sales_posting_batches/.test(src) &&
+    /LIMIT \? OFFSET \?/.test(src) && /pagination: \{/.test(src));
   const reads = routes.filter((r) => r.method === 'get');
   check('reading needs only finance.reports.view',
     reads.every((r) => r.cap === 'finance.reports.view'), reads);

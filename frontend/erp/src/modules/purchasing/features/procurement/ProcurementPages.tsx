@@ -17,14 +17,20 @@ import { useCan } from "@/modules/inventory/lib/permission-provider";
 import { useT } from "@/i18n";
 import { st } from "./labels";
 import { PageCounter } from "@/shared/tables";
+import { PurchasingReportPage } from "@/modules/reports/purchasing/PurchasingReportPage";
+import {
+  PURCHASING_REPORT_IDS,
+  getPurchasingReport,
+  type PurchasingReportId,
+} from "@/modules/reports/purchasing/registry";
 import {
   useProcurementDashboard, useOrders, useReceipts, useInvoices, usePayments,
-  useReturns, useProcurementReport, type ListParams,
+  useReturns, type ListParams,
 } from "@/modules/inventory/lib/hooks/useProcurement";
 
 // ── shared bits ──────────────────────────────────────────────────────────────
 function Th({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <th className={`px-3 py-2 text-right text-[11px] font-extrabold uppercase tracking-wide text-slate-400 ${className}`}>{children}</th>;
+  return <th className={`px-3 py-2 text-start text-[11px] font-extrabold uppercase tracking-wide text-slate-400 ${className}`}>{children}</th>;
 }
 function Td({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <td className={`px-3 py-2.5 text-sm text-slate-700 ${className}`}>{children}</td>;
@@ -75,7 +81,7 @@ export function ProcurementDashboard() {
   ];
   return (
     <div className="grid gap-6">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => <MetricCard key={c.label} label={c.label} value={c.value} icon={c.icon} tone={c.tone} />)}
       </div>
       <section className="surface">
@@ -117,14 +123,14 @@ export function OrdersPage() {
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.supplier")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th className="text-left">{t("purchasing.col.total")}</Th></tr></thead>
+            <thead className="bg-slate-50"><tr><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.supplier")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th className="text-end">{t("purchasing.col.total")}</Th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {data.rows.map((o) => (
                 <tr key={o.id} className="hover:bg-slate-50">
                   <Td><Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/orders?doc=${o.id}`}>{o.poNumber}</Link></Td>
                   <Td>{o.supplierName}</Td><Td className="tabular-nums">{formatDate(o.poDate)}</Td>
                   <Td><StatusBadge>{st(t, o.status)}</StatusBadge></Td>
-                  <Td className="text-left font-bold tabular-nums">{formatCurrency(o.total)}</Td>
+                  <Td className="text-end font-bold tabular-nums">{formatCurrency(o.total)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -215,11 +221,11 @@ function SimpleList<T extends { id: string }>(props: {
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr>{columns.map((c) => <Th key={c.h} className={c.left ? "text-left" : ""}>{c.h}</Th>)}</tr></thead>
+            <thead className="bg-slate-50"><tr>{columns.map((c) => <Th key={c.h} className={c.left ? "text-end" : ""}>{c.h}</Th>)}</tr></thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-slate-50">
-                  {columns.map((c) => <Td key={c.h} className={c.left ? "text-left font-bold tabular-nums" : ""}>{c.c(r)}</Td>)}
+                  {columns.map((c) => <Td key={c.h} className={c.left ? "text-end font-bold tabular-nums" : ""}>{c.c(r)}</Td>)}
                 </tr>
               ))}
             </tbody>
@@ -232,42 +238,49 @@ function SimpleList<T extends { id: string }>(props: {
 }
 
 // ── Reports ───────────────────────────────────────────────────────────────
-const REPORTS = [
-  { key: "ap-aging", labelKey: "purchasing.reports.apAging" },
-  { key: "open-orders", labelKey: "purchasing.reports.openOrders" },
-  { key: "three-way-match", labelKey: "purchasing.reports.threeWayMatch" },
-  { key: "price-variance", labelKey: "purchasing.reports.priceVariance" },
-  { key: "purchase-analysis", labelKey: "purchasing.reports.purchaseAnalysis" },
-  { key: "tax", labelKey: "purchasing.reports.inputTax" },
-  { key: "data-quality", labelKey: "purchasing.reports.dataQuality" },
-];
+/**
+ * Compatibility entry for the old in-module reports screen.
+ *
+ * Purchasing reports now have one authoritative renderer under
+ * `/reports/purchasing/:id`.  It owns the typed report registry, declared
+ * columns, server-supported filters, data-quality object normalisation,
+ * formatting, full-result print sheet and CSV behaviour. Keeping a second
+ * renderer here was the reason this screen exposed raw database keys and
+ * falsely called data-quality empty. This switcher deliberately delegates to
+ * that same renderer, so the compatibility screen cannot drift again.
+ */
+const REPORTS = PURCHASING_REPORT_IDS.map((id) => {
+  const report = getPurchasingReport(id);
+  if (!report) throw new Error(`Missing purchasing report definition: ${id}`);
+  return report;
+});
+
 export function ProcurementReportsPage() {
   const t = useT();
-  const [type, setType] = useState("ap-aging");
-  const { data, isLoading, isError, error, refetch } = useProcurementReport(type, {});
-  const rows = Array.isArray((data as { data?: unknown })?.data) ? ((data as { data: Record<string, unknown>[] }).data) : [];
-  const cols = rows.length ? Object.keys(rows[0]) : [];
+  const [type, setType] = useState<PurchasingReportId>("ap-aging");
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap gap-2">
-        {REPORTS.map((r) => (
-          <button key={r.key} onClick={() => setType(r.key)} className={`rounded-xl px-3 py-1.5 text-sm font-bold transition ${type === r.key ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{t(r.labelKey)}</button>
-        ))}
-      </div>
-      {isLoading ? <LoadingState /> : isError ? (
-        <ErrorState error={error} onRetry={() => refetch()} title={t("purchasing.reports.errorTitle")} body={t("purchasing.reports.errorBody")} />
-      ) : rows.length === 0 ? (
-        <EmptyState title={t("purchasing.reports.emptyTitle")} body={t("purchasing.reports.emptyBody")} />
-      ) : (
-        <div className="surface overflow-hidden"><div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr>{cols.map((c) => <Th key={c}>{c}</Th>)}</tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.map((row, i) => <tr key={i}>{cols.map((c) => <Td key={c} className="tabular-nums">{String(row[c] ?? "")}</Td>)}</tr>)}
-            </tbody>
-          </table>
-        </div></div>
-      )}
+    <div className="grid min-w-0 gap-5" data-testid="procurement-reports-compat">
+      <nav
+        className="no-print -mx-1 min-w-0 overflow-x-auto px-1 pb-1"
+        aria-label={t("purchasing.layout.tabsAria")}
+      >
+        <div className="flex min-w-max gap-2">
+          {REPORTS.map((report) => (
+            <Button
+              key={report.id}
+              type="button"
+              data-report-id={report.id}
+              variant={type === report.id ? "primary" : "secondary"}
+              aria-pressed={type === report.id}
+              onClick={() => setType(report.id)}
+            >
+              {t(report.labelKey)}
+            </Button>
+          ))}
+        </div>
+      </nav>
+
+      <PurchasingReportPage reportId={type} />
     </div>
   );
 }

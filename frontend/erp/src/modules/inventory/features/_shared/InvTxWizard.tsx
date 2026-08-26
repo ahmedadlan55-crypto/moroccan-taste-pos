@@ -262,7 +262,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                 <table className="w-full text-sm">
                   <thead className="text-xs text-slate-400">
                     <tr>
-                      <th className="py-2 text-right">{t("inventoryRest.invtx.wizard.colItem")}</th>
+                      <th className="py-2 text-start">{t("inventoryRest.invtx.wizard.colItem")}</th>
                       {isAdj ? (<><th>{t("inventoryRest.invtx.wizard.colSystemQty")}</th><th>{t("inventoryRest.invtx.wizard.colCounted")}</th><th>{t("inventoryRest.invtx.wizard.colDelta")}</th></>) : (<th>{t("inventoryRest.invtx.wizard.colQty")}</th>)}
                       {isReceipt && <th>{t("inventoryRest.invtx.wizard.colUnitCost")}</th>}
                       {!isAdj && <th>{t("inventoryRest.invtx.wizard.colTotal")}</th>}
@@ -288,7 +288,7 @@ export function InvTxWizard({ config }: { config: InvTxConfig }) {
                           )}
                           {isReceipt && <td className="text-center"><input type="number" min={0} step="any" className="field w-24 text-center" value={l.unitCost} onChange={(e) => updateLine(i, { unitCost: Number(e.target.value) })} aria-label={t("inventoryRest.invtx.wizard.unitCostAria")} dir="ltr" /></td>}
                           {!isAdj && <td className="text-center tabular-nums text-slate-600">{formatCurrency(base * l.unitCost)}</td>}
-                          <td className="text-left"><Button variant="ghost" size="icon" aria-label={t("inventoryRest.invtx.wizard.removeAria")} onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
+                          <td className="text-end"><Button variant="ghost" size="icon" aria-label={t("inventoryRest.invtx.wizard.removeAria")} onClick={() => removeLine(i)}><Trash2 className="h-4 w-4" /></Button></td>
                         </tr>
                         {isReceipt && (
                           <tr className="bg-slate-50/50">

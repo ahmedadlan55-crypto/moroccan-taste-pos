@@ -20,6 +20,13 @@ const openOrderValue = require('../../lib/procurement/openOrderValue');
 
 const REPORT_READ_CAPS = Object.freeze(['finance.reports.view', 'procurement.reports']);
 const DATA_QUALITY_READ_CAPS = Object.freeze(['finance.reports.view', 'procurement.data_quality']);
+// A report response is a COMPLETE snapshot or an explicit 413 — never a
+// plausible-looking first N rows.  The previous per-route LIMIT 500/1000/2000
+// silently truncated reports while the UI printed and exported them as final.
+// Fetch one sentinel row so we can refuse oversized snapshots without running
+// an unbounded query or pretending that the prefix is the report.
+const REPORT_SNAPSHOT_LIMIT = 5000;
+const REPORT_SNAPSHOT_FETCH_LIMIT = REPORT_SNAPSHOT_LIMIT + 1;
 // Only a return posted after the supplier invoice debits AP.  A before-invoice
 // return clears GRNI instead and must never reduce a supplier AP statement.
 const AP_RETURN_PHASE = 'after_invoice';
@@ -76,6 +83,48 @@ function sqlWhere(where) {
   return where.length ? `WHERE ${where.join(' AND ')}` : '';
 }
 
+function reportLang(req) {
+  return String(req && req.query && req.query.lang).toLowerCase() === 'en' ? 'en' : 'ar';
+}
+
+function completeSnapshotMeta(rowCount) {
+  return {
+    pagination: {
+      page: 1,
+      pageSize: rowCount,
+      total: rowCount,
+      totalPages: rowCount > 0 ? 1 : 0,
+      isTruncated: false,
+    },
+    snapshot: {
+      complete: true,
+      rowCount,
+      rowLimit: REPORT_SNAPSHOT_LIMIT,
+    },
+  };
+}
+
+function completeSnapshot(res, data, extra = {}, lang = 'ar') {
+  if (!Array.isArray(data)) throw new TypeError('completeSnapshot expects an array');
+  if (data.length > REPORT_SNAPSHOT_LIMIT) {
+    return res.status(413).json({
+      success: false,
+      code: 'REPORT_SNAPSHOT_LIMIT',
+      error: lang === 'en'
+        ? 'The complete report exceeds the safe snapshot limit. Narrow the date or warehouse scope and try again.'
+        : 'نتيجة التقرير أكبر من حد اللقطة الكاملة. ضيّق الفترة أو نطاق المستودع ثم أعد المحاولة.',
+      details: { rowLimit: REPORT_SNAPSHOT_LIMIT },
+    });
+  }
+  const rowCount = data.length;
+  return H.sendData(res, data, {
+    ...extra,
+    // DataTable paginates this complete in-memory snapshot. These fields make
+    // the server basis explicit and keep print/export honest.
+    ...completeSnapshotMeta(rowCount),
+  });
+}
+
 // GET /open-orders — approved/sent POs with unreceived quantity.
 router.get('/open-orders', RPT, async (req, res) => {
   try {
@@ -92,19 +141,20 @@ router.get('/open-orders', RPT, async (req, res) => {
         GROUP BY po.id, po.po_number, po.supplier_name, po.po_date,
                  po.expected_date, po.status, po.total_after_vat, po.warehouse_id
        HAVING COALESCE(SUM(${OPEN_ORDER_QTY}),0) > 0
-        ORDER BY po.expected_date ASC, po.po_number ASC`, q.params);
+        ORDER BY po.expected_date ASC, po.po_number ASC
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
     const data = rows.map((row) => ({
       ...row,
       open_qty: calc.qty(row.open_qty),
       remaining_value: calc.money(row.remaining_value),
     }));
-    return H.sendData(res, data, {
+    return completeSnapshot(res, data, {
       filters: q.filters,
       totals: {
         count: data.length,
         value: calc.money(data.reduce((sum, row) => sum + Number(row.remaining_value), 0)),
       },
-    });
+    }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -124,8 +174,8 @@ router.get('/receiving-variance', RPT, async (req, res) => {
          JOIN purchase_orders po ON po.id ${C} = pl.po_id ${C}
          ${sqlWhere(q.where)}
         ORDER BY po.po_number, pl.id
-        LIMIT 2000`, q.params);
-    return H.sendData(res, rows, { filters: q.filters });
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+    return completeSnapshot(res, rows, { filters: q.filters }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -162,12 +212,12 @@ router.get('/three-way-match', RPT, async (req, res) => {
         GROUP BY si.id, si.code, si.invoice_no, si.supplier_name,
                  si.issue_date, si.matching_status, ${MATCH_WAREHOUSE}
         ORDER BY si.issue_date DESC, si.code DESC
-        LIMIT 2000`, q.params);
-    return H.sendData(res, rows.map((row) => ({
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+    return completeSnapshot(res, rows.map((row) => ({
       ...row,
       price_variance: calc.money(row.price_variance),
       qty_variance: calc.qty(row.qty_variance),
-    })), { filters: q.filters });
+    })), { filters: q.filters }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -230,19 +280,24 @@ router.get('/ap-aging', RPT, async (req, res) => {
     });
     for (const key of Object.keys(grand)) grand[key] = calc.money(grand[key]);
     if (String(req.query.format).toLowerCase() === 'csv') {
-      return H.sendCsv(res, 'ap-aging.csv', list, [
-        { key: 'supplierName', label: 'المورد' }, { key: 'current', label: 'جاري' },
-        { key: 'd30', label: '1-30' }, { key: 'd60', label: '31-60' },
-        { key: 'd90', label: '61-90' }, { key: 'd90plus', label: '90+' },
-        { key: 'total', label: 'الإجمالي' },
+      if (list.length > REPORT_SNAPSHOT_LIMIT) return completeSnapshot(res, list, {}, reportLang(req));
+      const lang = reportLang(req);
+      const labels = lang === 'en'
+        ? { supplier: 'Supplier', current: 'Current', d30: '1-30 days', d60: '31-60 days', d90: '61-90 days', d90plus: 'Over 90 days', total: 'Total' }
+        : { supplier: 'المورد', current: 'جاري', d30: '1-30 يومًا', d60: '31-60 يومًا', d90: '61-90 يومًا', d90plus: 'أكثر من 90 يومًا', total: 'الإجمالي' };
+      return H.sendCsv(res, `ap-aging-${asOf}.csv`, list, [
+        { key: 'supplierName', label: labels.supplier }, { key: 'current', label: labels.current },
+        { key: 'd30', label: labels.d30 }, { key: 'd60', label: labels.d60 },
+        { key: 'd90', label: labels.d90 }, { key: 'd90plus', label: labels.d90plus },
+        { key: 'total', label: labels.total },
       ]);
     }
-    return H.sendData(res, list, { asOf, filters: q.filters, grandTotal: grand });
+    return completeSnapshot(res, list, { asOf, filters: q.filters, grandTotal: grand }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
-async function sumOne(sql, params, key) {
-  const [rows] = await db.query(sql, params);
+async function sumOne(executor, sql, params, key) {
+  const [rows] = await executor.query(sql, params);
   return calc.money(rows[0] && rows[0][key]);
 }
 
@@ -251,6 +306,8 @@ async function sumOne(sql, params, key) {
 // endpoint. Invoice/payment rows use the invoice warehouse; returns use their
 // own warehouse. NULL warehouse facts are hidden from a scoped caller.
 router.get('/supplier-statement', RPT, async (req, res) => {
+  let connection = null;
+  let transactionOpen = false;
   try {
     if (!req.query.supplierId) throw err('VALIDATION_ERROR', 'supplierId مطلوب');
     const supplierId = String(req.query.supplierId);
@@ -258,15 +315,35 @@ router.get('/supplier-statement', RPT, async (req, res) => {
     const invScope = S.warehousePredicate(req.warehouseScope, 'si.warehouse_id', f.warehouseId);
     const retScope = S.warehousePredicate(req.warehouseScope, 'pret.warehouse_id', f.warehouseId);
 
+    // Opening balance, invoices, payments and returns must describe ONE point
+    // in database time. Separate pool queries could otherwise observe a payment
+    // committed halfway through and produce a statement whose opening +
+    // movements do not reconcile to its own closing balance.
+    connection = await db.getConnection();
+    await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await connection.beginTransaction();
+    transactionOpen = true;
+
+    const [supplierRows] = await connection.query(
+      'SELECT id, name, name_en, vat_number FROM suppliers WHERE id = ? LIMIT 1',
+      [supplierId]);
+    if (!supplierRows.length) throw err('NOT_FOUND', 'المورد غير موجود');
+    const supplier = {
+      id: String(supplierRows[0].id),
+      name: String(supplierRows[0].name || ''),
+      nameEn: supplierRows[0].name_en == null ? null : String(supplierRows[0].name_en),
+      vatNumber: supplierRows[0].vat_number == null ? null : String(supplierRows[0].vat_number),
+    };
+
     let opening = 0;
     if (f.from) {
-      const invoiceOpening = await sumOne(
+      const invoiceOpening = await sumOne(connection,
         `SELECT COALESCE(SUM(si.total_amount),0) value
            FROM supplier_invoices si
           WHERE si.supplier_id = ? AND si.status NOT IN ('cancelled','draft')
             AND si.issue_date < ?${invScope.sql}`,
         [supplierId, f.from, ...invScope.params], 'value');
-      const paymentOpening = await sumOne(
+      const paymentOpening = await sumOne(connection,
         `SELECT COALESCE(SUM(pa.allocated_amount),0) value
            FROM payment_allocations pa
            JOIN supplier_invoices si
@@ -274,7 +351,7 @@ router.get('/supplier-statement', RPT, async (req, res) => {
           WHERE si.supplier_id = ? AND pa.reversed = 0
             AND pa.allocation_date < ?${invScope.sql}`,
         [supplierId, f.from, ...invScope.params], 'value');
-      const returnOpening = await sumOne(
+      const returnOpening = await sumOne(connection,
         `SELECT COALESCE(SUM(pret.total),0) value
            FROM purchase_returns pret
           WHERE pret.supplier_id = ? AND pret.status IN ('posted','settled')
@@ -287,34 +364,37 @@ router.get('/supplier-statement', RPT, async (req, res) => {
     const invParams = [supplierId];
     S.appendPredicate(invWhere, invParams, S.datePredicate('si.issue_date', f.from, f.to));
     S.appendPredicate(invWhere, invParams, invScope);
-    const [invoices] = await db.query(
+    const [invoices] = await connection.query(
       `SELECT si.id, si.code, si.invoice_no, si.issue_date AS date, si.total_amount
-         FROM supplier_invoices si WHERE ${invWhere.join(' AND ')}`, invParams);
+         FROM supplier_invoices si WHERE ${invWhere.join(' AND ')}
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, invParams);
 
     const payWhere = ['si.supplier_id = ?', 'pa.reversed = 0'];
     const payParams = [supplierId];
     if (f.from) add(payWhere, payParams, 'pa.allocation_date >= ?', [f.from]);
     if (f.to) add(payWhere, payParams, 'pa.allocation_date <= ?', [f.to]);
     S.appendPredicate(payWhere, payParams, invScope);
-    const [payments] = await db.query(
+    const [payments] = await connection.query(
       `SELECT pa.id, pa.payment_id, pa.allocation_date AS date,
               pa.allocated_amount, payment.payment_number
          FROM payment_allocations pa
          JOIN supplier_invoices si
            ON si.id ${C} = pa.supplier_invoice_id ${C}
-         LEFT JOIN payment_records payment
+        LEFT JOIN payment_records payment
            ON payment.id ${C} = pa.payment_id ${C}
-        WHERE ${payWhere.join(' AND ')}`, payParams);
+        WHERE ${payWhere.join(' AND ')}
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, payParams);
 
     const returnWhere = ['pret.supplier_id = ?', "pret.status IN ('posted','settled')"];
     const returnParams = [supplierId];
     add(returnWhere, returnParams, 'pret.phase = ?', [AP_RETURN_PHASE]);
     S.appendPredicate(returnWhere, returnParams, S.datePredicate('pret.return_date', f.from, f.to));
     S.appendPredicate(returnWhere, returnParams, retScope);
-    const [returns] = await db.query(
+    const [returns] = await connection.query(
       `SELECT pret.id, pret.return_number, pret.credit_note_no,
               pret.return_date AS date, pret.total
-         FROM purchase_returns pret WHERE ${returnWhere.join(' AND ')}`, returnParams);
+         FROM purchase_returns pret WHERE ${returnWhere.join(' AND ')}
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, returnParams);
 
     const lines = [];
     for (const row of invoices) lines.push({
@@ -343,22 +423,43 @@ router.get('/supplier-statement', RPT, async (req, res) => {
       running = calc.money(running + line.debit - line.credit);
       line.balance = running;
     }
+    await connection.commit();
+    transactionOpen = false;
+
     if (String(req.query.format).toLowerCase() === 'csv') {
+      const lang = reportLang(req);
+      const labels = lang === 'en'
+        ? { date: 'Date', type: 'Type', ref: 'Reference', debit: 'Debit', credit: 'Credit', balance: 'Balance', opening: 'Opening balance' }
+        : { date: 'التاريخ', type: 'النوع', ref: 'المرجع', debit: 'مدين', credit: 'دائن', balance: 'الرصيد', opening: 'رصيد افتتاحي' };
+      const typeLabels = lang === 'en'
+        ? { invoice: 'Invoice', return: 'Return', payment: 'Payment', opening: 'Opening' }
+        : { invoice: 'فاتورة', return: 'مرتجع', payment: 'سداد', opening: 'افتتاحي' };
       const rows = f.from
-        ? [{ date: f.from, type: 'opening', ref: 'رصيد افتتاحي', debit: 0, credit: 0, balance: opening }, ...lines]
-        : lines;
-      return H.sendCsv(res, `supplier-statement-${supplierId}.csv`, rows, [
-        { key: 'date', label: 'التاريخ' }, { key: 'type', label: 'النوع' },
-        { key: 'ref', label: 'المرجع' }, { key: 'debit', label: 'مدين' },
-        { key: 'credit', label: 'دائن' }, { key: 'balance', label: 'الرصيد' },
+        ? [{ date: f.from, type: typeLabels.opening, ref: labels.opening, debit: 0, credit: 0, balance: opening }, ...lines.map((line) => ({ ...line, type: typeLabels[line.type] || line.type }))]
+        : lines.map((line) => ({ ...line, type: typeLabels[line.type] || line.type }));
+      if (rows.length > REPORT_SNAPSHOT_LIMIT) return completeSnapshot(res, rows, {}, reportLang(req));
+      const safeSupplier = supplierId.replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 80) || 'supplier';
+      const range = `${f.from || 'start'}-${f.to || 'current'}`;
+      return H.sendCsv(res, `supplier-statement-${safeSupplier}-${range}.csv`, rows, [
+        { key: 'date', label: labels.date }, { key: 'type', label: labels.type },
+        { key: 'ref', label: labels.ref }, { key: 'debit', label: labels.debit },
+        { key: 'credit', label: labels.credit }, { key: 'balance', label: labels.balance },
       ]);
     }
-    return H.sendData(res, lines, {
+    return completeSnapshot(res, lines, {
       from: f.from || null, to: f.to || null, opening, closingBalance: running,
-      filters: f,
+      filters: f, supplier,
       totals: { debit: calc.money(totalDebit), credit: calc.money(totalCredit) },
-    });
-  } catch (e) { return H.sendErr(res, e); }
+    }, reportLang(req));
+  } catch (e) {
+    if (connection && transactionOpen) {
+      try { await connection.rollback(); } catch (_) { /* preserve original error */ }
+      transactionOpen = false;
+    }
+    return H.sendErr(res, e);
+  } finally {
+    if (connection && typeof connection.release === 'function') connection.release();
+  }
 });
 
 // ONLY_FULL_GROUP_BY-safe purchase-analysis query builder. The exported global
@@ -382,7 +483,7 @@ function purchaseAnalysisSql(extraWhere) {
      LEFT JOIN suppliers s
        ON s.id ${PA_COLLATE} = agg.supplier_id ${PA_COLLATE}
     ORDER BY agg.spend DESC
-    LIMIT 500`;
+    LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`;
 }
 const PURCHASE_ANALYSIS_SQL = purchaseAnalysisSql('');
 
@@ -401,10 +502,10 @@ router.get('/purchase-analysis', RPT, async (req, res) => {
   try {
     const q = buildPurchaseAnalysisQuery(req);
     const [rows] = await db.query(q.sql, q.params);
-    return H.sendData(res, rows.map((row) => ({ ...row, spend: calc.money(row.spend) })), {
+    return completeSnapshot(res, rows.map((row) => ({ ...row, spend: calc.money(row.spend) })), {
       filters: q.filters,
       totals: { spend: calc.money(rows.reduce((sum, row) => sum + Number(row.spend), 0)) },
-    });
+    }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -433,12 +534,12 @@ router.get('/price-variance', RPT, async (req, res) => {
            ON po.id ${C} = COALESCE(pol.po_id ${C}, si.purchase_order_id ${C})
          ${sqlWhere(q.where)}
         ORDER BY ABS(m.price_variance) DESC, si.code DESC
-        LIMIT 1000`, q.params);
-    return H.sendData(res, rows.map((row) => ({
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+    return completeSnapshot(res, rows.map((row) => ({
       ...row,
       matched_amount: calc.money(row.matched_amount),
       price_variance: calc.money(row.price_variance),
-    })), { filters: q.filters });
+    })), { filters: q.filters }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -455,12 +556,12 @@ router.get('/tax', RPT, async (req, res) => {
          ${sqlWhere(q.where)}
         GROUP BY DATE_FORMAT(si.issue_date,'%Y-%m')
         ORDER BY period DESC
-        LIMIT 36`, q.params);
-    return H.sendData(res, rows.map((row) => ({
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+    return completeSnapshot(res, rows.map((row) => ({
       period: row.period,
       net: calc.money(row.net),
       inputVat: calc.money(row.input_vat),
-    })), { filters: q.filters });
+    })), { filters: q.filters }, reportLang(req));
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -517,7 +618,10 @@ router.get('/data-quality', DATA_QUALITY_RPT, async (req, res) => {
         WHERE ${journalWhere.join(' AND ')}`, baseParams);
     checks.unbalancedJournals = Number(unbalanced[0].c);
 
-    return H.sendData(res, checks, { filters: q.filters });
+    return H.sendData(res, checks, {
+      filters: q.filters,
+      ...completeSnapshotMeta(Object.keys(checks).length),
+    });
   } catch (e) { return H.sendErr(res, e); }
 });
 
@@ -528,5 +632,8 @@ module.exports.MATCH_WAREHOUSE = MATCH_WAREHOUSE;
 module.exports.REPORT_READ_CAPS = REPORT_READ_CAPS;
 module.exports.DATA_QUALITY_READ_CAPS = DATA_QUALITY_READ_CAPS;
 module.exports.AP_RETURN_PHASE = AP_RETURN_PHASE;
+module.exports.REPORT_SNAPSHOT_LIMIT = REPORT_SNAPSHOT_LIMIT;
+module.exports.REPORT_SNAPSHOT_FETCH_LIMIT = REPORT_SNAPSHOT_FETCH_LIMIT;
+module.exports.completeSnapshot = completeSnapshot;
 module.exports.OPEN_ORDER_QTY = OPEN_ORDER_QTY;
 module.exports.OPEN_ORDER_VALUE = OPEN_ORDER_VALUE;

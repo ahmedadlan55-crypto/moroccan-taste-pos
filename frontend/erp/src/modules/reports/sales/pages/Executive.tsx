@@ -1185,7 +1185,7 @@ export default function Executive() {
                 <button
                   type="button"
                   onClick={() => patch({ compare: "prevPeriod" }, { push: true })}
-                  className="min-h-10 rounded-xl border border-white/25 bg-white/10 px-3 text-xs font-extrabold text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/20"
+                  className="min-h-11 rounded-xl border border-white/25 bg-white/10 px-3 text-xs font-extrabold text-white transition hover:bg-white/20 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/20"
                 >
                   {t("salesReports.command.enableCompare")}
                 </button>

@@ -88,9 +88,9 @@ export function ExplainNumber({
         aria-expanded={open}
         aria-label={triggerLabel}
         onClick={() => setOpen((o) => !o)}
-        className="grid h-5 w-5 place-items-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+        className="grid h-11 w-11 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
       >
-        <Info className="h-3.5 w-3.5" />
+        <Info className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
 
       {open && (

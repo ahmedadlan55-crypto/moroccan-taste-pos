@@ -158,7 +158,7 @@ function CreateClosingDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("banking.cashClosing.countedAmount")} required><Input value={counted} dir="ltr" onChange={(e) => setCounted(e.target.value)} /></Field>
         </div>
         {cashboxId && (
-          <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-4 py-3 text-center">
+          <div className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 px-4 py-3 text-center sm:grid-cols-3">
             <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.expected")}</div><Money value={expected} /></div>
             <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.counted")}</div><Money value={Number(counted) || 0} /></div>
             <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.difference")}</div><Money value={diff} signed /></div>
@@ -211,7 +211,7 @@ function ApproveClosingDialog({ closing, onClose }: { closing: CashClosing; onCl
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-4 py-3 text-center">
+        <div className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 px-4 py-3 text-center sm:grid-cols-3">
           <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.expected")}</div><Money value={closing.expectedBalance} /></div>
           <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.counted")}</div><Money value={closing.countedAmount} /></div>
           <div><div className="text-[11px] font-bold text-slate-400">{t("banking.shared.difference")}</div><Money value={closing.difference} signed /></div>

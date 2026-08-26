@@ -341,11 +341,9 @@ export const PURCHASING_REPORTS: Record<PurchasingReportId, PurchasingReportDef>
     descriptionKey: "warehouseIntelligence.reports.purchaseDataQuality.description",
     icon: ScanSearch,
     tone: "teal",
-    // The endpoint accepts 'finance.reports.view' OR 'procurement.data_quality'.
-    // Only the first exists in the client capability catalog, so that is what is
-    // declared: hiding the row from a data-quality-only user is conservative,
-    // and widening a guard to match is expressly not this module's business.
-    capsAny: ["finance.reports.view"],
+    // Exactly mirrors DATA_QUALITY_READ_CAPS in the backend. This does not
+    // widen access: either capability already passes the server guard.
+    capsAny: ["finance.reports.view", "procurement.data_quality"],
     shape: "checks",
     columns: [
       { key: "check", labelKey: `${C}.check`, format: "checkName", align: "start" },

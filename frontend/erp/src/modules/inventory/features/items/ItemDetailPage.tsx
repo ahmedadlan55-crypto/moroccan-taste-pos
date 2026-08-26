@@ -91,9 +91,9 @@ export function ItemDetailPage({ itemId }: { itemId: string }) {
           <table className="w-full text-sm">
             <thead className="text-[11px] font-extrabold uppercase text-slate-400">
               <tr>
-                <th className="px-3 py-2 text-right">{t("items.form.field.majorUnitName")}</th>
-                <th className="px-3 py-2 text-left">{t("items.form.field.conversionFactor")}</th>
-                <th className="px-3 py-2 text-right">{t("common.status")}</th>
+                <th className="px-3 py-2 text-start">{t("items.form.field.majorUnitName")}</th>
+                <th className="px-3 py-2 text-end">{t("items.form.field.conversionFactor")}</th>
+                <th className="px-3 py-2 text-start">{t("common.status")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -102,7 +102,7 @@ export function ItemDetailPage({ itemId }: { itemId: string }) {
               ) : unitRows.map((u, i) => (
                 <tr key={u.unitCode || i}>
                   <td className="px-3 py-2 font-bold text-slate-700">{u.unitName} {u.isBase && <Badge tone="teal">{t("items.form.field.baseUnitName")}</Badge>}</td>
-                  <td className="px-3 py-2 text-left tabular-nums text-slate-600" dir="ltr">{u.isBase ? "1" : t("items.conversionPreview", { major: u.unitName, factor: formatQty(u.conversionToBase), base: d.unit })}</td>
+                  <td className="px-3 py-2 text-end tabular-nums text-slate-600" dir="ltr">{u.isBase ? "1" : t("items.conversionPreview", { major: u.unitName, factor: formatQty(u.conversionToBase), base: d.unit })}</td>
                   <td className="px-3 py-2"><StatusBadge>{u.isActive ? t("status.active") : t("common.inactive")}</StatusBadge></td>
                 </tr>
               ))}
@@ -141,19 +141,19 @@ export function ItemDetailPage({ itemId }: { itemId: string }) {
             <table className="w-full text-sm">
               <thead className="text-[11px] font-extrabold uppercase text-slate-400">
                 <tr>
-                  <th className="px-3 py-2 text-right">{t("items.assign.warehouse")}</th>
-                  <th className="px-3 py-2 text-left">{t("items.col.availableQty")}</th>
-                  {canCost && <th className="px-3 py-2 text-left">WAC</th>}
-                  {canCost && <th className="px-3 py-2 text-left">{t("items.detail.section.cost")}</th>}
+                  <th className="px-3 py-2 text-start">{t("items.assign.warehouse")}</th>
+                  <th className="px-3 py-2 text-end">{t("items.col.availableQty")}</th>
+                  {canCost && <th className="px-3 py-2 text-end">WAC</th>}
+                  {canCost && <th className="px-3 py-2 text-end">{t("items.detail.section.cost")}</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {d.distribution.map((w) => (
                   <tr key={w.warehouseId}>
                     <td className="px-3 py-2 font-bold text-slate-700">{w.warehouseName}{w.isMain && <Badge tone="teal">{t("items.assign.isDefault")}</Badge>}</td>
-                    <td className="px-3 py-2 text-left tabular-nums text-slate-600" dir="ltr">{formatQty(w.qty)}</td>
-                    {canCost && <td className="px-3 py-2 text-left tabular-nums text-slate-600" dir="ltr">{formatCurrency(w.avgCost)}</td>}
-                    {canCost && <td className="px-3 py-2 text-left tabular-nums text-slate-600" dir="ltr">{formatCurrency(w.value)}</td>}
+                    <td className="px-3 py-2 text-end tabular-nums text-slate-600" dir="ltr">{formatQty(w.qty)}</td>
+                    {canCost && <td className="px-3 py-2 text-end tabular-nums text-slate-600" dir="ltr">{formatCurrency(w.avgCost)}</td>}
+                    {canCost && <td className="px-3 py-2 text-end tabular-nums text-slate-600" dir="ltr">{formatCurrency(w.value)}</td>}
                   </tr>
                 ))}
               </tbody>

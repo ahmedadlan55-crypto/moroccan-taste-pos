@@ -82,6 +82,14 @@ export interface HealthProblem {
   count?: number;
   bucket?: string;
   account?: string;
+  warnings?: string[];
+}
+
+export interface PostedPagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
 export interface Filters {
@@ -105,12 +113,12 @@ export function usePendingBatches(granularity: Granularity, filters: Filters) {
   });
 }
 
-export function usePostedBatches(filters: Filters) {
+export function usePostedBatches(filters: Filters, page = 1, pageSize = 25) {
   return useQuery({
-    queryKey: ["sales-posting", "batches", filters],
+    queryKey: ["sales-posting", "batches", filters, page, pageSize],
     queryFn: ({ signal }) =>
-      apiClient.get<{ success: boolean; batches: PostedBatch[] }>("/erp/sales-posting/batches", {
-        params: clean(filters),
+      apiClient.get<{ success: boolean; batches: PostedBatch[]; pagination: PostedPagination }>("/erp/sales-posting/batches", {
+        params: { ...clean(filters), page, pageSize },
         signal,
       }),
   });

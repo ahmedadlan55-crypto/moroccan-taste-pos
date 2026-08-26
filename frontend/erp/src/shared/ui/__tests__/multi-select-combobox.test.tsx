@@ -105,14 +105,32 @@ describe("MultiSelectCombobox", () => {
     // "Clear all" exists twice by design: the trigger X affordance and the
     // popover button. Scope to the popover (the listbox's container) first.
     const popover = screen.getByRole("listbox").parentElement as HTMLElement;
-    fireEvent.click(within(popover).getByRole("button", { name: "Clear all" }));
+    const popoverClear = within(popover).getByRole("button", { name: "Clear all" });
+    expect(popoverClear).toHaveClass("min-h-11");
+    fireEvent.click(popoverClear);
     expect(onChange).toHaveBeenCalledWith([]);
     onChange.mockClear();
 
-    // the trigger X clears too
+    // The trigger X is a real, independently focusable 44px sibling button;
+    // nesting it inside the combobox trigger produces invalid interactive DOM.
     const trigger = screen.getByRole("button", { name: "Branches" });
-    fireEvent.click(within(trigger).getByRole("button", { name: "Clear all" }));
+    const triggerClear = screen
+      .getAllByRole("button", { name: "Clear all" })
+      .find((button) => !popover.contains(button)) as HTMLButtonElement;
+    expect(trigger.contains(triggerClear)).toBe(false);
+    expect(triggerClear).toHaveClass("h-11", "w-11");
+    fireEvent.click(triggerClear);
     expect(onChange).toHaveBeenCalledWith([]);
+  });
+
+  it("keeps every compact popover action and option at least 44px high", () => {
+    renderBox(["a"]);
+    openIt();
+    expect(screen.getByRole("button", { name: "Select all" })).toHaveClass("min-h-11");
+    expect(screen.getByPlaceholderText("Search options")).toHaveClass("h-11", "min-h-11");
+    for (const option of screen.getAllByRole("option")) {
+      expect(option.querySelector("button")).toHaveClass("min-h-11");
+    }
   });
 
   it("supports keyboard: ArrowDown + Enter toggles the active option", () => {

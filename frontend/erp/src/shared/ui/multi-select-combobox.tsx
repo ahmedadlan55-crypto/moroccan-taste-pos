@@ -169,6 +169,7 @@ export function MultiSelectCombobox({
         onKeyDown={onKeyDown}
         className={cn(
           "field flex items-center justify-between gap-2 py-2 text-start",
+          selectedLabels.length > 0 && !disabled && "pe-20",
           invalid && "border-rose-400 focus:border-rose-500 focus:ring-rose-100",
           disabled && "cursor-not-allowed opacity-60",
         )}
@@ -181,24 +182,19 @@ export function MultiSelectCombobox({
         >
           {triggerText}
         </span>
-        <span className="flex items-center gap-1">
-          {selectedLabels.length > 0 && !disabled && (
-            <span
-              role="button"
-              tabIndex={-1}
-              aria-label={labels?.clear ?? t("sharedUi.combobox.clear")}
-              className="grid h-6 w-6 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-rose-600"
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange([]);
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </span>
-          )}
-          <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
       </button>
+
+      {selectedLabels.length > 0 && !disabled && (
+        <button
+          type="button"
+          aria-label={labels?.clear ?? t("sharedUi.combobox.clear")}
+          className="absolute end-8 top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
+          onClick={() => onChange([])}
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
 
       {open && (
         <div className="absolute z-popover mt-1 w-full min-w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl ring-1 ring-black/5">
@@ -211,7 +207,7 @@ export function MultiSelectCombobox({
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   onKeyDown={onKeyDown}
-                  className="field h-9 w-full py-1 pe-9 text-sm"
+                  className="field h-11 min-h-11 w-full py-1 pe-9 text-sm"
                   placeholder={labels?.searchPlaceholder ?? t("sharedUi.combobox.searchPlaceholder")}
                   aria-label={labels?.searchPlaceholder ?? t("sharedUi.combobox.searchLabel")}
                 />
@@ -223,7 +219,7 @@ export function MultiSelectCombobox({
               type="button"
               onClick={selectAllFiltered}
               disabled={enabledFiltered.length === 0}
-              className="rounded-md px-2 py-1 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-xl px-3 py-1 text-xs font-extrabold text-teal-700 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {labels?.selectAll ?? t("table.selectAllRows")}
             </button>
@@ -231,7 +227,7 @@ export function MultiSelectCombobox({
               type="button"
               onClick={() => onChange([])}
               disabled={values.length === 0}
-              className="rounded-md px-2 py-1 text-xs font-extrabold text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 rounded-xl px-3 py-1 text-xs font-extrabold text-slate-500 transition hover:bg-slate-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {labels?.clear ?? t("sharedUi.combobox.clear")}
             </button>
@@ -257,7 +253,7 @@ export function MultiSelectCombobox({
                       onMouseEnter={() => setActive(i)}
                       onClick={() => toggle(o.value)}
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start transition disabled:cursor-not-allowed disabled:opacity-50",
+                        "flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-start transition disabled:cursor-not-allowed disabled:opacity-50",
                         i === active ? "bg-teal-50 ring-1 ring-teal-200" : "hover:bg-slate-50",
                       )}
                     >

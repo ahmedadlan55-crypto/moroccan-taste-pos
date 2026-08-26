@@ -126,7 +126,7 @@ export function ShiftForm({ shift, submitting, onSubmit, onCancel }: ShiftFormPr
                 onClick={() => toggleDay(d)}
                 aria-pressed={on}
                 className={cn(
-                  "min-h-9 rounded-xl border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
+                  "min-h-11 rounded-xl border px-3 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100",
                   on
                     ? "border-teal-600 bg-teal-600 text-white"
                     : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",

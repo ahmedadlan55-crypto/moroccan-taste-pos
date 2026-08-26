@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Badge,
+  Button,
   ConfirmDialog,
   IconButton,
+  PageHeader,
   Select,
   StatusBadge,
   safeUserMessage,
@@ -151,6 +153,11 @@ export function RegisterPage() {
 
   return (
     <div className="space-y-5">
+      <PageHeader
+        title={t("posAdmin.register.heading")}
+        subtitle={t("posAdmin.register.subtitle")}
+      />
+
       <PosLauncherCard
         icon={Monitor}
         title={t("posAdmin.register.launcherTitle")}
@@ -158,17 +165,7 @@ export function RegisterPage() {
         ctaLabel={t("posAdmin.register.launcherCta")}
       />
 
-      <div>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-extrabold text-slate-900">{t("posAdmin.register.heading")}</h2>
-            <p className="mt-0.5 text-xs font-medium text-slate-500">
-              {t("posAdmin.register.subtitle")}
-            </p>
-          </div>
-        </div>
-
-        <DataTable
+      <DataTable
           columns={columns}
           rows={rows}
           getRowId={(r) => String(r.id)}
@@ -185,7 +182,6 @@ export function RegisterPage() {
           filterBar={
             <>
               <Select
-                className="h-10 w-40 py-1.5"
                 value={group}
                 onChange={(e) => setGroup(e.target.value)}
                 aria-label={t("posAdmin.col.group")}
@@ -198,7 +194,6 @@ export function RegisterPage() {
                 ))}
               </Select>
               <Select
-                className="h-10 w-36 py-1.5"
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
                 aria-label={t("common.status")}
@@ -211,13 +206,9 @@ export function RegisterPage() {
           }
           toolbarActions={
             <Can cap="pos.register.view">
-              <button
-                type="button"
-                onClick={openCreate}
-                className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-teal-600 px-3 text-sm font-bold text-white transition hover:bg-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
-              >
+              <Button variant="primary" onClick={openCreate}>
                 <Plus className="h-4 w-4" /> {t("posAdmin.register.newMethod")}
-              </button>
+              </Button>
             </Can>
           }
           rowActions={(r) => (
@@ -240,8 +231,7 @@ export function RegisterPage() {
               </div>
             </Can>
           )}
-        />
-      </div>
+      />
 
       <PaymentMethodDialog
         open={dialogOpen}

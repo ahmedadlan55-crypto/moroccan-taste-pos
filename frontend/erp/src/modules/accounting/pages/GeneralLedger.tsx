@@ -131,15 +131,15 @@ function AccountSection({
               <th className="px-3 py-2 text-start">{t("accounting.common.date")}</th>
               <th className="px-3 py-2 text-start">{t("accounting.common.journalNo")}</th>
               <th className="px-3 py-2 text-start">{t("accounting.common.statement")}</th>
-              <th className="px-3 py-2 text-left">{t("accounting.common.debit")}</th>
-              <th className="px-3 py-2 text-left">{t("accounting.common.credit")}</th>
-              <th className="px-3 py-2 text-left">{t("accounting.common.balance")}</th>
+              <th className="px-3 py-2 text-end">{t("accounting.common.debit")}</th>
+              <th className="px-3 py-2 text-end">{t("accounting.common.credit")}</th>
+              <th className="px-3 py-2 text-end">{t("accounting.common.balance")}</th>
             </tr>
           </thead>
           <tbody>
             <tr className="border-b border-slate-50 bg-slate-50/40 text-xs font-bold text-slate-500">
               <td className="px-3 py-1.5" colSpan={5}>{t("accounting.generalLedger.openingBalance")}</td>
-              <td className="px-3 py-1.5 text-left"><Num value={s.opening} signed /></td>
+              <td className="px-3 py-1.5 text-end"><Num value={s.opening} signed /></td>
             </tr>
             {s.lines.map((l) => (
               <tr key={l.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70">
@@ -153,18 +153,18 @@ function AccountSection({
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-1.5 text-left"><Num value={l.debit} /></td>
-                <td className="px-3 py-1.5 text-left"><Num value={l.credit} /></td>
-                <td className="px-3 py-1.5 text-left"><Num value={l.runningBalance} signed /></td>
+                <td className="px-3 py-1.5 text-end"><Num value={l.debit} /></td>
+                <td className="px-3 py-1.5 text-end"><Num value={l.credit} /></td>
+                <td className="px-3 py-1.5 text-end"><Num value={l.runningBalance} signed /></td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr className="border-t border-slate-200 bg-slate-50 text-xs font-extrabold">
               <td className="px-3 py-2" colSpan={3}>{t("accounting.generalLedger.totalMovements", { count: s.lineCount })}</td>
-              <td className="px-3 py-2 text-left"><Num value={s.totalDebit} strong /></td>
-              <td className="px-3 py-2 text-left"><Num value={s.totalCredit} strong /></td>
-              <td className="px-3 py-2 text-left"><Num value={s.closingBalance} signed strong /></td>
+              <td className="px-3 py-2 text-end"><Num value={s.totalDebit} strong /></td>
+              <td className="px-3 py-2 text-end"><Num value={s.totalCredit} strong /></td>
+              <td className="px-3 py-2 text-end"><Num value={s.closingBalance} signed strong /></td>
             </tr>
           </tfoot>
         </table>
@@ -172,7 +172,7 @@ function AccountSection({
       <div className="divide-y divide-slate-100 sm:hidden">
         <div className="grid grid-cols-2 gap-2 bg-slate-50/50 px-4 py-3 text-xs font-bold text-slate-600">
           <span>{t("accounting.generalLedger.openingBalance")}</span>
-          <span className="text-left"><Num value={s.opening} signed /></span>
+          <span className="text-end"><Num value={s.opening} signed /></span>
         </div>
         {s.lines.map((line) => (
           <article key={line.id} className="space-y-3 px-4 py-4">
@@ -199,7 +199,7 @@ function AccountSection({
         ))}
         <div className="grid grid-cols-2 gap-2 bg-slate-50 px-4 py-3 text-xs font-extrabold">
           <span>{t("accounting.generalLedger.totalMovements", { count: s.lineCount })}</span>
-          <span className="text-left"><Num value={s.closingBalance} signed strong /></span>
+          <span className="text-end"><Num value={s.closingBalance} signed strong /></span>
         </div>
       </div>
     </div>
@@ -374,7 +374,7 @@ export function GeneralLedgerPage() {
             })}
           </span>
           {search && (
-            <button type="button" className="text-xs font-bold text-teal-700 underline"
+            <button type="button" className="inline-flex min-h-11 items-center rounded-xl px-2 text-xs font-bold text-teal-700 underline hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
               onClick={() => setSearch("")}>
               {t("accounting.generalLedger.clearSearch")}
             </button>

@@ -296,7 +296,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex min-h-10 items-center rounded-xl border px-3 text-xs font-extrabold transition ${
+      className={`inline-flex min-h-11 items-center rounded-xl border px-3 text-xs font-extrabold transition ${
         active ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
       }`}
     >

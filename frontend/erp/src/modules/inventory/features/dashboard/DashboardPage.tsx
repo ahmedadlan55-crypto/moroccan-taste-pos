@@ -117,7 +117,7 @@ export function DashboardPage() {
             <div className="p-10 text-center text-sm font-bold text-slate-400">{t("inventoryRest.dashboard.healthEmpty")}</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[620px] text-right">
+              <table className="w-full min-w-[620px] text-start">
                 <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                   <tr>
                     <th className="px-5 py-3">{t("inventoryRest.dashboard.col.warehouse")}</th>

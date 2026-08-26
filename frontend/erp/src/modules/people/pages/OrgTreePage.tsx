@@ -65,12 +65,12 @@ function EmployeeRow({
               onClick={() => onToggle(e.id)}
               aria-label={isCollapsed ? t("people.orgTree.expand") : t("people.orgTree.collapse")}
               aria-expanded={!isCollapsed}
-              className="grid h-6 w-6 shrink-0 place-items-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"
             >
-              {isCollapsed ? <ChevronLeft className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              {isCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
           ) : (
-            <span className="h-6 w-6 shrink-0" />
+            <span className="h-11 w-11 shrink-0" aria-hidden="true" />
           )}
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-slate-800">{e.fullName || e.empNumber}</div>
@@ -224,7 +224,7 @@ export function OrgTreePage() {
           ) : (
             <table className="w-full min-w-[720px] text-sm">
               <thead>
-                <tr className="text-right text-xs font-bold text-slate-500">
+                <tr className="text-start text-xs font-bold text-slate-500">
                   <th className="px-3 py-2">{t("people.field.employee")}</th>
                   <th className="px-3 py-2">{t("people.orgTree.col.position")}</th>
                   <th className="px-3 py-2">{t("people.field.department")}</th>

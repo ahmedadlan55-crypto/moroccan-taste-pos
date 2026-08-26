@@ -37,7 +37,7 @@ const COLUMNS: { key: string; label: string; sort?: string; className?: string }
   { key: "date", label: "inventoryRest.transfers.col.date", sort: "issue_date" },
   { key: "lines", label: "inventoryRest.transfers.col.lines", className: "text-center" },
   { key: "remaining", label: "inventoryRest.transfers.col.remaining", className: "text-center" },
-  { key: "value", label: "inventoryRest.transfers.col.value", sort: "total_cost", className: "text-left" },
+  { key: "value", label: "inventoryRest.transfers.col.value", sort: "total_cost", className: "text-end" },
 ];
 
 export function TransfersPage() {
@@ -140,9 +140,9 @@ export function TransfersPage() {
       <section className="surface mt-4 flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <label className="relative flex-1">
-            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
-              className="field w-full pr-10"
+              className="field w-full ps-10"
               placeholder={t("inventoryRest.transfers.searchPlaceholder")}
               defaultValue={q}
               onChange={(e) => patch({ q: e.target.value })}
@@ -172,7 +172,7 @@ export function TransfersPage() {
               key={o.value}
               type="button"
               onClick={() => patch({ status: o.value })}
-              className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${
+              className={`min-h-11 rounded-xl border px-3 text-xs font-extrabold transition ${
                 status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               }`}
             >
@@ -218,7 +218,7 @@ export function TransfersPage() {
                   <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                     <tr>
                       {COLUMNS.map((c) => (
-                        <th key={c.key} className={`px-4 py-3 text-right ${c.className ?? ""}`}>
+                        <th key={c.key} className={`px-4 py-3 text-start ${c.className ?? ""}`}>
                           {c.sort ? (
                             <button type="button" className="inline-flex items-center gap-1 font-bold hover:text-slate-800" onClick={() => toggleSort(c.sort!)}>
                               {t(c.label)}
@@ -244,7 +244,7 @@ export function TransfersPage() {
                         <td className="px-4 py-3 text-slate-500">{formatDate(r.issueDate)}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-slate-600">{formatNumber(r.lineCount)}</td>
                         <td className="px-4 py-3 text-center tabular-nums text-slate-600">{formatQty(r.remainingQty)}</td>
-                        <td className="px-4 py-3 text-left font-bold tabular-nums text-slate-800">{formatCurrency(r.totalCost)}</td>
+                        <td className="px-4 py-3 text-end font-bold tabular-nums text-slate-800">{formatCurrency(r.totalCost)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -255,7 +255,7 @@ export function TransfersPage() {
             {/* Mobile cards */}
             <div className="space-y-3 md:hidden">
               {data.rows.map((r) => (
-                <button key={r.id} type="button" onClick={() => openDocument(r.id)} className="surface block w-full p-4 text-right">
+                <button key={r.id} type="button" onClick={() => openDocument(r.id)} className="surface block w-full p-4 text-start">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-extrabold text-slate-900">{r.number}</span>
                     <StatusBadge>{transferStatusToLabel(r.status)}</StatusBadge>
@@ -275,7 +275,7 @@ export function TransfersPage() {
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
                 <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(pg?.total ?? 0) })}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>
+                <select className="field min-h-11 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>
                   {PAGE_SIZES.map((s) => <option key={s} value={s}>{t("inventoryRest.ui.perPage", { count: s })}</option>)}
                 </select>
                 {isFetching && <span className="text-teal-600">{t("inventoryRest.ui.updatingShort")}</span>}

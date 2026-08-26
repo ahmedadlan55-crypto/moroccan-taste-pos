@@ -239,7 +239,7 @@ export function TransferCreateWizard() {
           {notes && <p className="text-xs text-slate-500">{t("inventoryRest.transfers.wizard.reviewNotes", { notes })}</p>}
           <div className="overflow-hidden rounded-xl border border-slate-100">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-400"><tr><th className="px-3 py-2 text-right">{t("inventoryRest.transfers.wizard.colItem")}</th><th className="px-3 py-2 text-center">{t("inventoryRest.transfers.wizard.colRequested")}</th><th className="px-3 py-2 text-center">{t("inventoryRest.transfers.wizard.colAvailable")}</th></tr></thead>
+              <thead className="bg-slate-50 text-slate-400"><tr><th className="px-3 py-2 text-start">{t("inventoryRest.transfers.wizard.colItem")}</th><th className="px-3 py-2 text-center">{t("inventoryRest.transfers.wizard.colRequested")}</th><th className="px-3 py-2 text-center">{t("inventoryRest.transfers.wizard.colAvailable")}</th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {lines.map((l) => {
                   const base = lineBase(l);

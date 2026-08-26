@@ -282,7 +282,7 @@ function PriceEditDialog({
       }
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <DetailStat label={t("sales.pricing.currentPrice")} value={<Money value={current.gross} />} />
           <DetailStat label={t("sales.pricing.col.cost")} value={<Money value={item.cost} tone="text-slate-500" />} />
           <DetailStat

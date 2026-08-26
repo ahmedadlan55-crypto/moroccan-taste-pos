@@ -131,22 +131,22 @@ export function GLPanel({ journalId }: { journalId: string | null | undefined })
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead className="bg-slate-50"><tr>
-              <th className="px-3 py-2 text-right text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.account")}</th>
-              <th className="px-3 py-2 text-left text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.debit")}</th>
-              <th className="px-3 py-2 text-left text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.credit")}</th>
+              <th className="px-3 py-2 text-start text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.account")}</th>
+              <th className="px-3 py-2 text-end text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.debit")}</th>
+              <th className="px-3 py-2 text-end text-[11px] font-extrabold text-slate-400">{t("purchasing.detail.credit")}</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
               {data.entries.map((e, i) => (
                 <tr key={i}>
                   <td className="px-3 py-2 text-sm text-slate-700"><span className="tabular-nums text-slate-400">{e.account_code}</span> {e.account_name}</td>
-                  <td className="px-3 py-2 text-left text-sm font-bold tabular-nums text-slate-800">{Number(e.debit) ? formatCurrency(Number(e.debit)) : "—"}</td>
-                  <td className="px-3 py-2 text-left text-sm font-bold tabular-nums text-slate-800">{Number(e.credit) ? formatCurrency(Number(e.credit)) : "—"}</td>
+                  <td className="px-3 py-2 text-end text-sm font-bold tabular-nums text-slate-800">{Number(e.debit) ? formatCurrency(Number(e.debit)) : "—"}</td>
+                  <td className="px-3 py-2 text-end text-sm font-bold tabular-nums text-slate-800">{Number(e.credit) ? formatCurrency(Number(e.credit)) : "—"}</td>
                 </tr>
               ))}
               <tr className="bg-slate-50 font-extrabold">
                 <td className="px-3 py-2 text-sm text-slate-500">{t("purchasing.col.total")}</td>
-                <td className="px-3 py-2 text-left text-sm tabular-nums text-teal-700">{formatCurrency(Number(data.total_debit))}</td>
-                <td className="px-3 py-2 text-left text-sm tabular-nums text-teal-700">{formatCurrency(Number(data.total_credit))}</td>
+                <td className="px-3 py-2 text-end text-sm tabular-nums text-teal-700">{formatCurrency(Number(data.total_debit))}</td>
+                <td className="px-3 py-2 text-end text-sm tabular-nums text-teal-700">{formatCurrency(Number(data.total_credit))}</td>
               </tr>
             </tbody>
           </table>

@@ -83,7 +83,7 @@ export function ProductionPage() {
           role="tab"
           aria-selected={view === id}
           onClick={() => setView(id)}
-          className={`min-h-10 rounded-xl border px-4 text-sm font-extrabold transition ${
+          className={`min-h-11 rounded-xl border px-4 text-sm font-extrabold transition ${
             view === id ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
           }`}
         >
@@ -142,7 +142,7 @@ export function ProductionPage() {
         <div className="flex flex-wrap gap-1">
           {PRODUCTION_STATUS_OPTIONS.map((o) => (
             <button key={o.value} type="button" onClick={() => patch({ status: o.value })}
-              className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+              className={`min-h-11 rounded-xl border px-3 text-xs font-extrabold transition ${status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
               {o.value === "" ? t("production.filters.allStatuses") : productionStatusLabel(t, o.value)}
             </button>
           ))}
@@ -216,7 +216,7 @@ export function ProductionPage() {
             <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
               <div className="flex items-center gap-3 text-xs font-medium text-slate-500">
                 <span>{t("table.showing")} {formatNumber(from)}–{formatNumber(to)} {t("table.of")} {formatNumber(pg?.total ?? 0)}</span>
-                <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("table.perPage", { count: s })}</option>)}</select>
+                <select className="field min-h-11 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((s) => <option key={s} value={s}>{t("table.perPage", { count: s })}</option>)}</select>
                 {isFetching && <span className="text-teal-600">{t("production.list.updating")}</span>}
               </div>
               <div className="flex items-center gap-2">

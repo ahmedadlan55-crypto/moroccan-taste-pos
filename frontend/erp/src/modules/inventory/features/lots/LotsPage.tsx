@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Search, Boxes, AlertTriangle, CalendarClock, ShieldAlert, Printer, Download } from "lucide-react";
 import { PageHeader,
@@ -14,7 +14,8 @@ import { useWarehouseScope } from "@/modules/inventory/lib/warehouse-scope-provi
 import { getToken } from "@/shared/api";
 import { formatNumber, formatQty } from "@/shared/lib";
 import { lotStatusToLabel, expiryClassToLabel } from "@/modules/inventory/lib/status-labels";
-import { useLotList } from "@/modules/inventory/lib/hooks/useLots";
+import { fetchLotSnapshot, useLotList } from "@/modules/inventory/lib/hooks/useLots";
+import type { LotRow } from "@/modules/inventory/lib/adapters/lot.adapter";
 import { useExpirySummary } from "@/modules/inventory/lib/hooks/useExpiry";
 import { useLotIntegrity } from "@/modules/inventory/lib/hooks/useLotIntegrity";
 import { LotDetailDrawer } from "./LotDetailDrawer";
@@ -46,6 +47,8 @@ export function LotsPage() {
   const view = params.get("view");
   const tab = params.get("tab") === "integrity" ? "integrity" : "lots";
   const [expErr, setExpErr] = useState<string | null>(null);
+  const [printRows, setPrintRows] = useState<LotRow[] | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const statusOptions = [
     { value: "", label: t("inventoryRest.lots.statusFilter.all") },
@@ -73,6 +76,28 @@ export function LotsPage() {
   const integrity = useLotIntegrity({ warehouseId, driftOnly: false });
   const whOptions = useMemo(() => allWarehousesAccess ? (allWh.data?.warehouses ?? []).map((w) => ({ id: w.id, name: w.name })) : accessibleWarehouses.map((w) => ({ id: w.id, name: w.name })), [allWarehousesAccess, accessibleWarehouses, allWh.data]);
   const pg = list.data?.pagination; const totalPages = pg?.totalPages ?? 1; const s = summary.data; const drift = integrity.data?.summary.drifting ?? 0;
+  const visibleLotRows = printRows ?? list.data?.rows ?? [];
+
+  useEffect(() => {
+    if (!printing || printRows === null) return;
+    const clear = () => { setPrintRows(null); setPrinting(false); };
+    window.addEventListener("afterprint", clear, { once: true });
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("afterprint", clear); };
+  }, [printing, printRows]);
+
+  async function printCompleteReport() {
+    setExpErr(null);
+    if (tab === "integrity") { window.print(); return; }
+    setPrinting(true);
+    try {
+      const snapshot = await fetchLotSnapshot({ q, warehouseId, status, risk });
+      setPrintRows(snapshot.rows);
+    } catch {
+      setPrinting(false); setPrintRows(null);
+      setExpErr(t("inventoryRest.lots.exportFailed"));
+    }
+  }
 
   return (
     // Every report printed inside the system wears the same head and hides
@@ -82,7 +107,7 @@ export function LotsPage() {
       <PageHeader eyebrow={t("inventoryRest.lots.eyebrow")} title={t("inventoryRest.lots.title")} subtitle={t("inventoryRest.lots.subtitle")}
         action={<div className="no-print flex gap-2">
           {tab === "integrity" && <Button variant="secondary" onClick={() => exportIntegrityCsv(warehouseId).catch(() => setExpErr(t("inventoryRest.lots.exportFailed")))}><Download className="h-4 w-4" /> {t("inventoryRest.ui.csv")}</Button>}
-          <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
+          <Button variant="secondary" loading={printing} disabled={printing} onClick={() => void printCompleteReport()}><Printer className="h-4 w-4" /> {t("inventoryRest.ui.print")}</Button>
         </div>} />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -95,7 +120,7 @@ export function LotsPage() {
       <section className="no-print mt-4 flex flex-wrap gap-1">
         {[{ v: "lots", l: t("inventoryRest.lots.tabLots") }, { v: "integrity", l: t("inventoryRest.lots.tabIntegrity") }].map((tabDef) => (
           <button key={tabDef.v} type="button" onClick={() => patch({ tab: tabDef.v === "lots" ? null : tabDef.v })}
-            className={`min-h-10 rounded-xl border px-4 text-xs font-extrabold transition ${tab === tabDef.v ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{tabDef.l}</button>
+            className={`min-h-11 rounded-xl border px-4 text-xs font-extrabold transition ${tab === tabDef.v ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{tabDef.l}</button>
         ))}
       </section>
 
@@ -103,8 +128,8 @@ export function LotsPage() {
         <>
           <section className="no-print surface mt-4 flex flex-col gap-3 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-              <label className="relative flex-1"><Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input className="field w-full pr-10" placeholder={t("inventoryRest.lots.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("common.search")} /></label>
+              <label className="relative flex-1"><Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input className="field w-full ps-10" placeholder={t("inventoryRest.lots.searchPlaceholder")} defaultValue={q} onChange={(e) => patch({ q: e.target.value })} aria-label={t("common.search")} /></label>
               <select className="field lg:w-48" value={warehouseId} onChange={(e) => patch({ wh: e.target.value })} aria-label={t("inventoryRest.lots.warehouseAria")}><option value="">{t("inventoryRest.filter.allWarehouses")}</option>{whOptions.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select>
               <select className="field lg:w-40" value={status} onChange={(e) => patch({ status: e.target.value })} aria-label={t("inventoryRest.lots.statusAria")}>{statusOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
               <select className="field lg:w-40" value={risk} onChange={(e) => patch({ risk: e.target.value })} aria-label={t("inventoryRest.lots.riskAria")}>{classOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
@@ -113,18 +138,18 @@ export function LotsPage() {
           </section>
 
           <section className="mt-4">
-            {list.isLoading ? <LoadingState /> : list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : !list.data || list.data.rows.length === 0 ? (
+            {list.isLoading ? <LoadingState /> : list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : visibleLotRows.length === 0 ? (
               <EmptyState title={t("inventoryRest.lots.emptyTitle")} body={t("inventoryRest.lots.emptyBody")} />
             ) : (
               <>
                 <div className="surface hidden overflow-x-auto md:block">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                      <th className="px-3 py-3 text-right">{t("inventoryRest.lots.col.lot")}</th><th className="px-3 py-3 text-right">{t("inventoryRest.lots.col.item")}</th><th className="px-3 py-3">{t("inventoryRest.lots.col.qty")}</th>
+                      <th className="px-3 py-3 text-start">{t("inventoryRest.lots.col.lot")}</th><th className="px-3 py-3 text-start">{t("inventoryRest.lots.col.item")}</th><th className="px-3 py-3">{t("inventoryRest.lots.col.qty")}</th>
                       <th className="px-3 py-3">{t("inventoryRest.lots.col.expiry")}</th><th className="px-3 py-3">{t("inventoryRest.lots.col.daysLeft")}</th><th className="px-3 py-3">{t("inventoryRest.lots.col.class")}</th><th className="px-3 py-3">{t("inventoryRest.lots.col.status")}</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100">
-                      {list.data.rows.map((r) => (
+                      {visibleLotRows.map((r) => (
                         <tr key={r.id} className="cursor-pointer hover:bg-slate-50" onClick={() => patch({ view: r.id }, false)}>
                           <td className="px-3 py-2 font-mono text-xs font-bold text-slate-800" dir="ltr">{r.lotNumber}{r.isImported && <span className="mr-1 text-[10px] text-amber-600">·{t("inventoryRest.lots.imported")}</span>}</td>
                           <td className="px-3 py-2 text-slate-700">{r.itemName}</td>
@@ -139,8 +164,8 @@ export function LotsPage() {
                   </table>
                 </div>
                 <div className="space-y-3 md:hidden">
-                  {list.data.rows.map((r) => (
-                    <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-right">
+                  {visibleLotRows.map((r) => (
+                    <button key={r.id} type="button" onClick={() => patch({ view: r.id }, false)} className="surface block w-full p-4 text-start">
                       <div className="flex items-center justify-between gap-2"><span className="font-mono font-extrabold text-slate-900" dir="ltr">{r.lotNumber}</span><StatusBadge>{lotStatusToLabel(r.lifecycleStatus)}</StatusBadge></div>
                       <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-slate-600"><span>{r.itemName}</span><span>{t("inventoryRest.lots.balanceLabel")}: {formatQty(r.totalQty)}</span><span>{t("inventoryRest.lots.expiryLabel")}: {r.expiryDate || "—"}</span><StatusBadge>{expiryClassToLabel(r.expiryClass)}</StatusBadge></div>
                     </button>
@@ -149,7 +174,7 @@ export function LotsPage() {
                 <div className="no-print mt-4 flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                   <span>{t("inventoryRest.lots.lotsTotal", { count: formatNumber(pg?.total ?? 0) })} {list.isFetching && <span className="text-teal-600">· {t("inventoryRest.ui.updatingShort")}</span>}</span>
                   <div className="flex items-center gap-2">
-                    <select className="field min-h-9 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((n) => <option key={n} value={n}>{t("inventoryRest.ui.perPage", { count: n })}</option>)}</select>
+                    <select className="field min-h-11 py-1 text-xs" value={pageSize} onChange={(e) => patch({ pageSize: e.target.value })} aria-label={t("table.rowsPerPage")}>{PAGE_SIZES.map((n) => <option key={n} value={n}>{t("inventoryRest.ui.perPage", { count: n })}</option>)}</select>
                     <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={page <= 1} onClick={() => patch({ page: page - 1 }, false)}>‹</Button>
                     <PageCounter page={page} pageCount={totalPages} className="font-bold text-slate-600" />
                     <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={page >= totalPages} onClick={() => patch({ page: page + 1 }, false)}>›</Button>
@@ -166,7 +191,7 @@ export function LotsPage() {
               <div className="border-b border-slate-100 p-3 text-xs font-bold text-slate-500">{t("inventoryRest.lots.integrity.note")}</div>
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500"><tr>
-                  <th className="px-3 py-3 text-right">{t("inventoryRest.lots.integrity.colWarehouse")}</th><th className="px-3 py-3 text-right">{t("inventoryRest.lots.integrity.colItem")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colStockQty")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colLotQty")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colDrift")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colStatus")}</th>
+                  <th className="px-3 py-3 text-start">{t("inventoryRest.lots.integrity.colWarehouse")}</th><th className="px-3 py-3 text-start">{t("inventoryRest.lots.integrity.colItem")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colStockQty")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colLotQty")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colDrift")}</th><th className="px-3 py-3">{t("inventoryRest.lots.integrity.colStatus")}</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {(integrity.data?.rows ?? []).map((r, i) => (

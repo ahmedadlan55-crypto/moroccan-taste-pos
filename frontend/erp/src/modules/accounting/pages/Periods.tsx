@@ -106,7 +106,7 @@ export function PeriodsPage() {
           <div className="overflow-x-auto p-5">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-right text-xs font-bold text-slate-500">
+                <tr className="text-start text-xs font-bold text-slate-500">
                   <th className="px-3 py-2">{t("accounting.periods.col.name")}</th>
                   <th className="px-3 py-2">{t("accounting.periods.col.from")}</th>
                   <th className="px-3 py-2">{t("accounting.periods.col.to")}</th>

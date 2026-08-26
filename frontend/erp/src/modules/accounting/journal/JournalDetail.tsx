@@ -104,11 +104,11 @@ export function JournalDetail({ journal, onReverse, onBack }: JournalDetailProps
           <table className="w-full min-w-[44rem] text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] font-extrabold text-slate-500">
-                <th className="px-3 py-2 text-right">{t("accounting.journal.detail.accountNo")}</th>
-                <th className="px-3 py-2 text-right">{t("accounting.journal.detail.accountName")}</th>
-                <th className="px-3 py-2 text-right">{t("accounting.common.statement")}</th>
-                <th className="px-3 py-2 text-left">{t("accounting.common.debit")}</th>
-                <th className="px-3 py-2 text-left">{t("accounting.common.credit")}</th>
+                <th className="px-3 py-2 text-start">{t("accounting.journal.detail.accountNo")}</th>
+                <th className="px-3 py-2 text-start">{t("accounting.journal.detail.accountName")}</th>
+                <th className="px-3 py-2 text-start">{t("accounting.common.statement")}</th>
+                <th className="px-3 py-2 text-end">{t("accounting.common.debit")}</th>
+                <th className="px-3 py-2 text-end">{t("accounting.common.credit")}</th>
               </tr>
             </thead>
             <tbody>
@@ -133,10 +133,10 @@ export function JournalDetail({ journal, onReverse, onBack }: JournalDetailProps
                     )}
                   </td>
                   <td className="px-3 py-2 text-slate-600">{l.description || "—"}</td>
-                  <td className="px-3 py-2 text-left">
+                  <td className="px-3 py-2 text-end">
                     <MoneyText value={l.debit} />
                   </td>
-                  <td className="px-3 py-2 text-left">
+                  <td className="px-3 py-2 text-end">
                     <MoneyText value={l.credit} />
                   </td>
                 </tr>
@@ -147,10 +147,10 @@ export function JournalDetail({ journal, onReverse, onBack }: JournalDetailProps
                 <td className="px-3 py-2.5" colSpan={3}>
                   {t("accounting.journal.detail.totalLines", { count: journal.entries.length })}
                 </td>
-                <td className="px-3 py-2.5 text-left">
+                <td className="px-3 py-2.5 text-end">
                   <MoneyText value={totals.totalDebit} strong />
                 </td>
-                <td className="px-3 py-2.5 text-left">
+                <td className="px-3 py-2.5 text-end">
                   <MoneyText value={totals.totalCredit} strong />
                 </td>
               </tr>

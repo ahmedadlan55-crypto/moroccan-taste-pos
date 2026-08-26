@@ -2,7 +2,20 @@
 // (Record<string, unknown>) and rendered via the per-report column config in
 // lib/reports-config.ts.
 
-export interface ReportWarning { code: string; message: string; level: string; }
+import type { TFunction } from "@/i18n";
+
+export interface ReportWarning {
+  code: string;
+  message: string;
+  level: string;
+  params?: Record<string, string | number>;
+}
+
+export function localizeReportWarning(warning: ReportWarning, t: TFunction) {
+  const path = `inventoryRest.reports.warnings.${warning.code}`;
+  const translated = t(path, warning.params);
+  return translated === path ? warning.message : translated;
+}
 export interface Pagination { page: number; pageSize: number; total: number; totalPages: number; }
 
 export interface ReportResult {

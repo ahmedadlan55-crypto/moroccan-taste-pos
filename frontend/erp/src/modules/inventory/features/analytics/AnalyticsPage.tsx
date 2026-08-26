@@ -37,6 +37,7 @@ import {
   formatDateTime,
 } from "@/shared/lib";
 import { useT } from "@/i18n";
+import { localizeReportWarning } from "@/modules/inventory/lib/adapters/reports.adapter";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useAnalytics, type AnalyticsFilters } from "@/modules/inventory/lib/hooks/useAnalytics";
 import type {
@@ -413,9 +414,9 @@ function WarningsBanner({ data }: { data: Analytics }) {
         <AlertTriangle className="h-5 w-5 shrink-0" />
         {t("inventoryRest.analytics.warningsTitle")}
       </div>
-      <ul className="mt-2 list-inside list-disc space-y-1 pr-1 text-xs font-bold text-amber-700">
+      <ul className="mt-2 list-inside list-disc space-y-1 ps-1 text-xs font-bold text-amber-700">
         {data.warnings.map((w, i) => (
-          <li key={`${w.code}-${i}`}>{w.message}</li>
+          <li key={`${w.code}-${i}`}>{localizeReportWarning(w, t)}</li>
         ))}
       </ul>
     </div>
@@ -604,7 +605,7 @@ function WarehouseComparisonSection({ rows }: { rows: WarehouseComparison[] }) {
         <div className="p-10 text-center text-sm font-bold text-slate-400">{t("inventoryRest.analytics.comparison.empty")}</div>
       ) : (
         <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full min-w-[820px] text-right">
+          <table className="w-full min-w-[820px] text-start">
             <caption className="sr-only">{t("inventoryRest.analytics.comparison.caption")}</caption>
             <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
               <tr>
@@ -622,7 +623,7 @@ function WarehouseComparisonSection({ rows }: { rows: WarehouseComparison[] }) {
             <tbody>
               {rows.map((w) => (
                 <tr key={w.id} className="table-row">
-                  <th scope="row" className="px-5 py-4 text-right font-extrabold text-slate-800">{w.name}</th>
+                  <th scope="row" className="px-5 py-4 text-start font-extrabold text-slate-800">{w.name}</th>
                   <td className="px-4 py-4 text-xs font-bold text-slate-400">{w.code}</td>
                   <td className="px-4 py-4 text-xs font-bold text-slate-500">{w.type || "—"}</td>
                   <td className="px-4 py-4 text-sm font-bold text-slate-600 tabular-nums">{formatNumber(w.itemCount)}</td>
@@ -653,7 +654,7 @@ function DataTable({ caption, head, rows }: { caption: string; head: string[]; r
         {t("inventoryRest.analytics.showTable")}
       </summary>
       <div className="mt-3 overflow-x-auto scrollbar-thin">
-        <table className="w-full min-w-[360px] text-right">
+        <table className="w-full min-w-[360px] text-start">
           <caption className="sr-only">{caption}</caption>
           <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
             <tr>

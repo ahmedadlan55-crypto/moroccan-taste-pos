@@ -15,6 +15,8 @@
 
 import type { ComponentType } from "react";
 import { useLocation } from "react-router-dom";
+import { NotFound } from "@/app/shell/NotFound";
+import { normalizeRoutePath } from "@/shared/lib";
 import { InboxPage } from "./pages/InboxPage";
 import { OutboxPage } from "./pages/OutboxPage";
 import { MyRequestsPage } from "./pages/MyRequestsPage";
@@ -33,6 +35,6 @@ const PAGES: Record<string, ComponentType> = {
 
 export default function WorkflowModule() {
   const { pathname } = useLocation();
-  const Page = PAGES[pathname] ?? InboxPage;
-  return <Page />;
+  const Page = PAGES[normalizeRoutePath(pathname)];
+  return Page ? <Page /> : <NotFound />;
 }

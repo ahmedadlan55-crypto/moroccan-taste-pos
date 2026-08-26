@@ -37,7 +37,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
 
   return (
     <div>
-      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-bold text-slate-500 hover:text-teal-700"><ArrowRight className="h-4 w-4" /> {t("sales.returns.detail.back")}</button>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-bold text-slate-500 hover:bg-slate-100 hover:text-teal-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100"><ArrowRight className="h-4 w-4 rotate-180 rtl:rotate-0" /> {t("sales.returns.detail.back")}</button>
       <PageHeader
         eyebrow={t("sales.returns.detail.eyebrow")}
         title={r.return_number}
@@ -53,7 +53,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
       />
       {anyErr && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{safeUserMessage(anyErr)}</div>}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Info label={t("common.status")} value={<SalesStatus status={r.status} />} />
         <Info label={t("sales.col.date")} value={<DateCell value={r.return_date} />} />
         <Info label={t("sales.returns.detail.subtotal")} value={<Money value={r.subtotal} />} />
@@ -83,7 +83,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
           </div>
           <PanelTitle title={t("sales.returns.detail.creditNoteTitle")} subtitle={t("sales.returns.detail.creditNoteSubtitle")} />
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Info label={t("sales.returns.detail.number")} value={<span dir="ltr" className="tabular-nums">{r.creditNote.document_number}</span>} />
             <Info label={t("sales.col.date")} value={<DateCell value={r.creditNote.issue_date} />} />
             <Info label={t("sales.returns.detail.originalInvoice")} value={r.creditNote.original_document_number ? <span dir="ltr" className="tabular-nums">{r.creditNote.original_document_number}</span> : "—"} />
@@ -95,7 +95,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
           </div>
 
           <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Info label={t("sales.col.net")} value={<Money value={r.creditNote.subtotal ?? r.subtotal} />} />
               <Info label={t("sales.col.vat")} value={<Money value={r.creditNote.vat_amount ?? r.vat_amount} />} />
               <Info label={t("sales.col.total")} value={<Money value={r.creditNote.total_amount} />} />
@@ -119,7 +119,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-right text-xs font-extrabold text-slate-500">
+              <tr className="border-b border-slate-200 text-start text-xs font-extrabold text-slate-500">
                 <th className="py-2">{t("sales.returns.detail.itemCol")}</th>
                 <th className="py-2">{t("sales.returns.detail.sold")}</th>
                 <th className="py-2">{t("sales.returns.detail.returned")}</th>
@@ -168,7 +168,7 @@ export function ReturnDetail({ id, onBack }: { id: string; onBack: () => void })
         </p>
       </section>
 
-      <p className="mt-3 text-left text-xs font-semibold text-slate-400">{t("sales.version")}: <Num value={r.version} /></p>
+      <p className="mt-3 text-end text-xs font-semibold text-slate-400">{t("sales.version")}: <Num value={r.version} /></p>
     </div>
   );
 }

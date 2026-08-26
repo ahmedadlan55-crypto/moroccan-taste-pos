@@ -74,8 +74,8 @@ export default function SettingsPage() {
   const schema = useMemo(() => makeSettingsSchema(t), [t]);
 
   const query = useQuery({
-    queryKey: ["settings"],
-    queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings", { signal }),
+    queryKey: ["settings", "all"],
+    queryFn: ({ signal }) => apiClient.get<SettingsMap>("/settings/all", { signal }),
   });
 
   const {

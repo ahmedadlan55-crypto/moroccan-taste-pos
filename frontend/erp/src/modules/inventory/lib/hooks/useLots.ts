@@ -19,6 +19,12 @@ export function useLotList(query: LotListQuery) {
   for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== "") params[k] = v as string | number;
   return useQuery({ queryKey: queryKeys.lots.list(scope, params), queryFn: ({ signal }) => apiClient.get<unknown>(BASE, { signal, params }).then(toLotPage), staleTime: 30_000, placeholderData: (prev) => prev });
 }
+/** Full filtered lot snapshot for print. Never falls back to the visible page. */
+export async function fetchLotSnapshot(query: Omit<LotListQuery, "page" | "pageSize">): Promise<ReturnType<typeof toLotPage>> {
+  const params: Record<string, string | number> = { snapshot: 1 };
+  for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== "") params[k] = v as string | number;
+  return apiClient.get<unknown>(BASE, { params }).then(toLotPage);
+}
 export function useLotDetail(id: string | null) {
   return useQuery({ enabled: !!id, queryKey: queryKeys.lots.detail(id ?? ""), queryFn: ({ signal }) => apiClient.get<unknown>(`${BASE}/${id}`, { signal }).then(toLotDetail) });
 }

@@ -182,7 +182,7 @@ function IsoField({
         // A half-typed date is not a range bound; only a real calendar day is.
         if (isValidISODate(e.target.value)) onCommit(e.target.value);
       }}
-      className="field h-9 min-h-0 w-full py-1 text-center text-[13px] tabular-nums"
+      className="field h-11 min-h-11 w-full py-1 text-center text-[13px] tabular-nums"
     />
   );
 }

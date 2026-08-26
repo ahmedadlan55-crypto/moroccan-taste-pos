@@ -28,6 +28,16 @@ const VALUE_EXPR = 'COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0)';
 const ACTIVE = 'i.active = 1 AND i.deleted_at IS NULL';
 
 function _generatedAt() { return new Date().toISOString(); }
+function _reportDb(req) { return req._reportDb || db; }
+function _reportLang(req) { return String((req.query && req.query.lang) || '').toLowerCase() === 'en' ? 'en' : 'ar'; }
+function _displayName(req, alias, fallbackColumn) {
+  const fallback = alias + '.' + (fallbackColumn || 'name');
+  return req._reportLang === 'en' ? 'COALESCE(NULLIF(' + alias + '.name_en,\'\'),' + fallback + ')' : fallback;
+}
+function _reportFailure(res, error, operation) {
+  console.error('[warehouse-reports:' + operation + ']', error && (error.code || error.message || error));
+  return res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'تعذّر تجهيز التقرير. حاول مرة أخرى.' });
+}
 
 function _scopeInfo(req) {
   const s = STRICT_SCOPE.publicScope(req.warehouseScope);
@@ -56,6 +66,12 @@ function _guardRequestedWarehouse(req, res, warehouseId) {
   return false;
 }
 
+function _guardDateRange(res, filters) {
+  if (!filters.from || !filters.to || filters.from <= filters.to) return true;
+  res.status(400).json({ success: false, code: 'DATE_RANGE_INVALID', error: 'تاريخ البداية يجب ألا يكون بعد تاريخ النهاية.' });
+  return false;
+}
+
 // Push the injection-safe scope IN(...) fragment onto a where[]/params[] pair.
 // Returns true if a restriction was added (used to detect "no access").
 function _scopeWhere(req, column, where, params) {
@@ -69,8 +85,8 @@ async function _perWarehouse(req) {
   const params = [];
   _scopeWhere(req, 'w.id', where, params);
   const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
-  const [rows] = await db.query(
-    `SELECT w.id, w.name, w.code, w.type, w.location, w.manager, w.is_active,
+  const [rows] = await _reportDb(req).query(
+    `SELECT w.id, ${_displayName(req, 'w')} AS name, w.code, w.type, w.location, w.manager, w.is_active,
             COUNT(DISTINCT i.id) AS item_count,
             COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 THEN ws.qty ELSE 0 END), 0) AS total_qty,
             COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND ws.qty > 0 THEN ws.qty * ${VALUE_EXPR} ELSE 0 END), 0) AS total_value,
@@ -84,7 +100,7 @@ async function _perWarehouse(req) {
        LEFT JOIN warehouse_stock ws ON ws.warehouse_id = w.id
        LEFT JOIN inv_items i ON i.id = ws.item_id AND i.active = 1 AND i.deleted_at IS NULL
        ${whereSql}
-      GROUP BY w.id, w.name, w.code, w.type, w.location, w.manager, w.is_active
+      GROUP BY w.id, w.name, w.name_en, w.code, w.type, w.location, w.manager, w.is_active
       ORDER BY w.is_main DESC, w.code`, params);
   return rows;
 }
@@ -96,7 +112,7 @@ async function _expiryLotCoverage(req) {
   const where = [ACTIVE, "i.tracking_mode='expiry'", 'ws.qty > 0'];
   const params = [];
   _scopeWhere(req, 'ws.warehouse_id', where, params);
-  const [[row]] = await db.query(
+  const [[row]] = await _reportDb(req).query(
     `SELECT COUNT(*) AS tracked_positions,
             COALESCE(SUM(ws.qty),0) AS tracked_stock_qty,
             SUM(CASE WHEN ABS(ws.qty-COALESCE(lb.expiry_lot_qty,0)) <= 0.001 THEN 1 ELSE 0 END) AS fully_covered_positions,
@@ -134,7 +150,9 @@ async function _expiryLotCoverage(req) {
 // optional ?warehouseId, ?category, ?type, ?window, ?from, ?to.
 router.get('/analytics/summary', READ, async (req, res) => {
   try {
+    req._reportLang = _reportLang(req);
     const filters = RC.parseReportFilters(req.query, 'movements');
+    if (!_guardDateRange(res, filters)) return;
     if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
     req._reportWarehouseId = filters.warehouseId || '';
     const warnings = [];
@@ -168,7 +186,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
 
     // 2) Value by category.
     const cat = scopedWhere('ws.warehouse_id');
-    const [catRows] = await db.query(
+    const [catRows] = await _reportDb(req).query(
       `SELECT COALESCE(NULLIF(i.category,''),'(غير مصنّف)') AS category,
               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * ${VALUE_EXPR} ELSE 0 END),0) AS value,
               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty,
@@ -183,7 +201,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
 
     // 3) Top items by value.
     const top = scopedWhere('ws.warehouse_id');
-    const [topRows] = await db.query(
+    const [topRows] = await _reportDb(req).query(
       `SELECT i.id AS item_id, i.name, i.category, i.unit,
               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * ${VALUE_EXPR} ELSE 0 END),0) AS value,
               COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty
@@ -206,7 +224,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
     if (filters.type === 'in' || filters.type === 'out') { mWhere.push('m.type = ?'); mParams.push(filters.type); }
     const spanDays = (filters.from && filters.to) ? (Math.round((Date.parse(filters.to) - Date.parse(filters.from)) / 86400000)) : 30;
     const bucket = spanDays > 92 ? "DATE_FORMAT(m.movement_date,'%x-W%v')" : 'DATE(m.movement_date)';
-    const [trendRows] = await db.query(
+    const [trendRows] = await _reportDb(req).query(
       `SELECT ${bucket} AS bucket, m.type, COALESCE(SUM(m.qty),0) AS qty, COUNT(*) AS n
          FROM inventory_movements m
         WHERE ${mWhere.join(' AND ')}
@@ -231,7 +249,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
     const subScopeParams = [];
     _scopeWhere(req, 'mm.warehouse_id', subWhere, subScopeParams);
     const subScope = subWhere.length ? ' AND ' + subWhere.join(' AND ') : '';
-    const [[slowRow]] = await db.query(
+    const [[slowRow]] = await _reportDb(req).query(
       `SELECT COUNT(*) AS cnt FROM (
          SELECT i.id,
                 COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty,
@@ -254,13 +272,13 @@ router.get('/analytics/summary', READ, async (req, res) => {
     if (sf.sql) { tWhere.push('(' + sf.sql.replace(/^\s*AND\s+/i, '') + ' OR ' + st.sql.replace(/^\s*AND\s+/i, '') + ')'); tParams.push(...sf.params, ...st.params); }
     let transfers = { pending: 0, inTransit: 0, byStatus: {}, remainingQty: 0 };
     try {
-      const [trows] = await db.query('SELECT status, COUNT(*) AS n FROM stock_issues' + (tWhere.length ? ' WHERE ' + tWhere.join(' AND ') : '') + ' GROUP BY status', tParams);
+      const [trows] = await _reportDb(req).query('SELECT status, COUNT(*) AS n FROM stock_issues' + (tWhere.length ? ' WHERE ' + tWhere.join(' AND ') : '') + ' GROUP BY status', tParams);
       const tc = INV.transferCounts(trows);
       // Remaining-to-receive = Σ(qty_issued − qty_received) for in-transit, scoped on destination.
       const rWhere = ["si.status IN ('issued','partially_received')"];
       const rParams = [];
       _scopeWhere(req, 'si.to_warehouse_id', rWhere, rParams);
-      const [[rem]] = await db.query(
+      const [[rem]] = await _reportDb(req).query(
         `SELECT COALESCE(SUM(GREATEST(sii.qty_issued - sii.qty_received, 0)),0) AS remaining
            FROM stock_issue_items sii JOIN stock_issues si ON si.id = sii.issue_id
           WHERE ${rWhere.join(' AND ')}`, rParams);
@@ -269,7 +287,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
 
     // 7) Data-quality indicators (counts only; the detail report is admin-gated).
     const dq = scopedWhere('ws.warehouse_id');
-    const [[dqRow]] = await db.query(
+    const [[dqRow]] = await _reportDb(req).query(
       `SELECT SUM(CASE WHEN ws.qty > 0 AND COALESCE(NULLIF(ws.avg_cost,0),0) = 0 THEN 1 ELSE 0 END) AS estimated_cost_items,
               SUM(CASE WHEN i.min_stock <= 0 THEN 1 ELSE 0 END) AS missing_min_stock
          FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id
@@ -288,7 +306,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
       missingMinStock: Number(dqRow && dqRow.missing_min_stock) || 0,
       expiryCoverage,
     };
-    if (dataQualityIndicators.estimatedCostItems > 0) RC.pushWarning(warnings, 'COST_ESTIMATED', dataQualityIndicators.estimatedCostItems + ' صنف مُقيّم بتكلفة عامة تقديرية (لا يوجد WAC للمستودع).', 'info');
+    if (dataQualityIndicators.estimatedCostItems > 0) RC.pushWarning(warnings, 'COST_ESTIMATED', dataQualityIndicators.estimatedCostItems + ' صنف مُقيّم بتكلفة عامة تقديرية (لا يوجد WAC للمستودع).', 'info', { count: dataQualityIndicators.estimatedCostItems });
 
     res.json(RC.envelope({
       data: {
@@ -323,7 +341,7 @@ router.get('/analytics/summary', READ, async (req, res) => {
       generatedAt: _generatedAt(),
       dataQualityWarnings: warnings,
     }));
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) { _reportFailure(res, e, 'analytics'); }
 });
 
 // ── GET /api/inventory/reports/catalog ──────────────────────────────────────
@@ -342,7 +360,98 @@ router.get('/reports/catalog', READ, async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════
 
 const EXPORT_PROBE = ' LIMIT ' + (CSV.MAX_EXPORT_ROWS + 1);
+// Printing thousands of browser-table rows is useful up to a point; beyond
+// this bound the honest action is to ask for a narrower scope or CSV rather
+// than silently print the first server page. The +1 row proves truncation.
+const PRINT_MAX_ROWS = 5000;
+const PRINT_PROBE = ' LIMIT ' + (PRINT_MAX_ROWS + 1);
+function _unpagedProbe(mode) { return mode === 'print' ? PRINT_PROBE : EXPORT_PROBE; }
 function _round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+
+function _warehouseRowsPage(rows, filters, forExport) {
+  const keyBySort = {
+    value: 'totalValue',
+    qty: 'totalQty',
+    items: 'itemCount',
+    warehouse: 'code',
+    name: 'name',
+  };
+  const key = keyBySort[filters.sort.key] || 'name';
+  const direction = filters.sort.dir === 'ASC' ? 1 : -1;
+  const sorted = rows.slice().sort((a, b) => {
+    const av = a[key], bv = b[key];
+    const byValue = typeof av === 'number' || typeof bv === 'number'
+      ? (Number(av) || 0) - (Number(bv) || 0)
+      : String(av ?? '').localeCompare(String(bv ?? ''), 'ar');
+    if (byValue !== 0) return direction * byValue;
+    return String(a.code ?? a.id ?? '').localeCompare(String(b.code ?? b.id ?? ''), 'en');
+  });
+  return forExport ? sorted : sorted.slice(filters.offset, filters.offset + filters.pageSize);
+}
+
+const CSV_HEADERS_EN = {
+  'stock-balance': ['Item', 'Category', 'Warehouse', 'Quantity', 'Unit cost', 'Estimated', 'Value', 'Reorder point', 'Status'],
+  valuation: ['Warehouse', 'Code', 'Item count', 'Quantity', 'Value (WAC)', 'Estimated portion'],
+  movements: ['Date', 'Item', 'Type', 'Quantity', 'Reason', 'User', 'Warehouse'],
+  'low-stock': ['Item', 'Warehouse', 'Quantity', 'Minimum', 'Status', 'Reorder quantity', 'Reorder value'],
+  'warehouse-compare': ['Warehouse', 'Code', 'Type', 'Item count', 'Quantity', 'Value', 'Low', 'Out', 'Negative'],
+  transfers: ['Number', 'Date', 'From', 'To', 'Status', 'Issued', 'Received', 'Remaining'],
+  'receipts-issues': ['Number', 'Date', 'From', 'To', 'Status', 'Value'],
+  adjustments: ['Number', 'Date', 'Warehouse', 'Reason', 'Status', 'Item count', 'Cost', 'Approved by', 'Approved at'],
+  stocktakes: ['Number', 'Date', 'Warehouse', 'Status', 'Item count', 'Total variance'],
+  'no-movement': ['Item', 'Category', 'Quantity', 'Value', 'Last consumption/issue', 'Days without consumption'],
+  expiry: ['Item', 'Warehouse', 'Lot', 'Remaining quantity', 'Unit cost', 'Value', 'Expiry date', 'Days remaining', 'Status'],
+  'data-quality': ['Indicator', 'Count', 'Note'],
+};
+
+const CSV_STATUS = {
+  ar: { available: 'متوفر', low: 'منخفض', out: 'نافد', negative: 'سالب', draft: 'مسودة', approved: 'معتمد', issued: 'مصروف', partially_received: 'مستلم جزئيًا', received: 'مستلم', cancelled: 'ملغى', reversed: 'معكوس', pending: 'معلق', pending_approval: 'بانتظار الاعتماد', completed: 'مكتمل', rejected: 'مرفوض', expired: 'منتهي الصلاحية', critical: 'حرج', soon: 'قريب', safe: 'آمن', unknown: 'غير معروف' },
+  en: { available: 'Available', low: 'Low', out: 'Out of stock', negative: 'Negative', draft: 'Draft', approved: 'Approved', issued: 'Issued', partially_received: 'Partially received', received: 'Received', cancelled: 'Cancelled', reversed: 'Reversed', pending: 'Pending', pending_approval: 'Pending approval', completed: 'Completed', rejected: 'Rejected', expired: 'Expired', critical: 'Critical', soon: 'Due soon', safe: 'Safe', unknown: 'Unknown' },
+};
+const CSV_REASON = {
+  ar: { damaged: 'تالف', admin: 'إداري', settlement: 'تسوية' },
+  en: { damaged: 'Damaged', admin: 'Administrative', settlement: 'Settlement' },
+};
+const CSV_WAREHOUSE_TYPE = {
+  ar: { branch: 'مستودع فرع', main: 'مستودع رئيسي', production: 'مستودع إنتاج', waste: 'مستودع هدر', raw: 'مواد خام', finished: 'منتجات تامة' },
+  en: { branch: 'Branch warehouse', main: 'Main warehouse', production: 'Production warehouse', waste: 'Waste warehouse', raw: 'Raw materials', finished: 'Finished goods' },
+};
+const CSV_QUALITY = {
+  ar: {
+    movementsWithoutWarehouse: ['حركات بلا مستودع', 'حركات مخزون لا تحمل معرّف مستودع وتحتاج مراجعة مصدرها.'],
+    adjustmentsWithoutWarehouse: ['تعديلات بلا مستودع', 'تعديلات مخزون غير مرتبطة بمستودع محدد.'],
+    stocktakesWithoutWarehouse: ['سندات جرد بلا مستودع', 'سندات جرد لا تحدد المستودع الذي جرى عده.'],
+    estimatedCostItems: ['أصناف بتكلفة تقديرية', 'أصناف استُخدمت لها تكلفة عامة لعدم توفر متوسط تكلفة مستودعي.'],
+    itemsWithoutMinimum: ['أصناف بلا حد أدنى', 'أصناف نشطة لا تحمل حدًا أدنى أو نقطة إعادة طلب للرقابة.'],
+    activeCanonicalLots: ['دفعات معيارية نشطة', 'دفعات نشطة محفوظة في سجل الدفعات المعياري وقابلة للتتبع.'],
+  },
+  en: {
+    movementsWithoutWarehouse: ['Movements without a warehouse', 'Inventory movements with no warehouse identifier that need source review.'],
+    adjustmentsWithoutWarehouse: ['Adjustments without a warehouse', 'Inventory adjustments not linked to a specific warehouse.'],
+    stocktakesWithoutWarehouse: ['Stocktakes without a warehouse', 'Stocktake documents that do not identify the warehouse counted.'],
+    estimatedCostItems: ['Items with estimated cost', 'Items using a general cost because no warehouse average cost is available.'],
+    itemsWithoutMinimum: ['Items without a minimum', 'Active items with no minimum quantity or reorder point for control.'],
+    activeCanonicalLots: ['Active canonical lots', 'Active lots stored in the canonical lot ledger and available for traceability.'],
+  },
+};
+
+function _csvLocalizedDto(type, row, lang) {
+  const out = { ...row };
+  if (out.status) out.statusLabel = CSV_STATUS[lang][out.status] || out.status;
+  if (out.severity) out.severityLabel = CSV_STATUS[lang][out.severity] || out.severity;
+  if (out.type && type === 'movements') out.typeLabel = lang === 'en' ? (out.type === 'in' ? 'In' : 'Out') : (out.type === 'in' ? 'وارد' : 'صادر');
+  if (out.reason) out.reasonLabel = CSV_REASON[lang][out.reason] || out.reason;
+  if (type === 'warehouse-compare') out.type = CSV_WAREHOUSE_TYPE[lang][out.type] || out.type;
+  if (type === 'stock-balance') {
+    out.status = CSV_STATUS[lang][out.status] || out.status;
+    out.costEstimatedLabel = out.costEstimated ? (lang === 'en' ? 'Yes' : 'نعم') : (lang === 'en' ? 'No' : 'لا');
+  }
+  if (type === 'data-quality') {
+    const quality = CSV_QUALITY[lang][out.metric];
+    if (quality) { out.label = quality[0]; out.note = out.measurementFailed ? (lang === 'en' ? 'Could not calculate this indicator.' : 'تعذّر احتساب هذا المؤشر.') : quality[1]; }
+  }
+  return out;
+}
 
 // Item-stock base (warehouse_stock × active items × warehouses), scoped.
 function _itemBase(req, filters, extra) {
@@ -350,7 +459,7 @@ function _itemBase(req, filters, extra) {
   const params = [];
   _scopeWhere(req, 'ws.warehouse_id', where, params);
   if (filters.category) { where.push('i.category = ?'); params.push(filters.category); }
-  if (filters.q) { where.push('(i.name LIKE ? OR i.id LIKE ?)'); params.push('%' + filters.q + '%', '%' + filters.q + '%'); }
+  if (filters.q) { where.push('(i.name LIKE ? OR i.name_en LIKE ? OR i.id LIKE ?)'); params.push('%' + filters.q + '%', '%' + filters.q + '%', '%' + filters.q + '%'); }
   (extra || []).forEach((c) => where.push(c));
   return { where, params };
 }
@@ -359,18 +468,18 @@ const BUILDERS = {
   // 1) Current stock balance (per item per warehouse).
   'stock-balance': {
     headers: ['الصنف', 'الفئة', 'المستودع', 'الكمية', 'تكلفة الوحدة', 'تقديري', 'القيمة', 'حد الطلب', 'الحالة'],
-    csvRow: (r) => [r.name, r.category, r.warehouseName, r.qty, r.avgCost, r.costEstimated ? 'نعم' : 'لا', r.value, r.reorderPoint, r.status],
+    csvRow: (r) => [r.name, r.category, r.warehouseName, r.qty, r.avgCost, r.costEstimatedLabel, r.value, r.reorderPoint, r.status],
     async run(req, filters, forExport) {
       const { where, params } = _itemBase(req, filters);
       const statusSql = INV.statusFilterSql(INV.STATUS_KEYS.indexOf(filters.status) !== -1 ? filters.status : '');
       if (statusSql) where.push(statusSql);
       const whereSql = ' WHERE ' + where.join(' AND ');
       const from = ' FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id JOIN warehouses w ON w.id = ws.warehouse_id';
-      const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty*' + VALUE_EXPR + ' ELSE 0 END),0) AS v, COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty ELSE 0 END),0) AS q' + from + whereSql, params);
-      const sel = 'SELECT i.id AS item_id, i.name, i.category, i.unit, i.min_stock, i.cost AS global_cost, ws.qty, ws.avg_cost, w.id AS warehouse_id, w.name AS warehouse_name, w.code AS warehouse_code';
+      const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty*' + VALUE_EXPR + ' ELSE 0 END),0) AS v, COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty ELSE 0 END),0) AS q' + from + whereSql, params);
+      const sel = 'SELECT i.id AS item_id, ' + _displayName(req, 'i') + ' AS name, i.category, i.unit, i.min_stock, i.cost AS global_cost, ws.qty, ws.avg_cost, w.id AS warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name, w.code AS warehouse_code';
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir + ', i.name ASC';
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-      const [rows] = await db.query(sel + ', ' + VALUE_EXPR + ' AS eff_cost, (CASE WHEN ws.qty>0 THEN ws.qty*' + VALUE_EXPR + ' ELSE 0 END) AS line_value' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+      const [rows] = await _reportDb(req).query(sel + ', ' + VALUE_EXPR + ' AS eff_cost, (CASE WHEN ws.qty>0 THEN ws.qty*' + VALUE_EXPR + ' ELSE 0 END) AS line_value' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
       return { rows: rows.map(INV.mapGridRow), total: Number(c.n) || 0, totals: { totalValue: _round2(c.v), totalQty: Number(c.q) || 0, rows: Number(c.n) || 0 }, warnings: [] };
     },
   },
@@ -379,16 +488,16 @@ const BUILDERS = {
   'valuation': {
     headers: ['المستودع', 'الكود', 'عدد الأصناف', 'الكمية', 'القيمة (WAC)', 'منها تقديري'],
     csvRow: (r) => [r.name, r.code, r.itemCount, r.totalQty, r.totalValue, r.estimatedValue],
-    async run(req) {
+    async run(req, filters, forExport) {
       const whRows = await _perWarehouse(req);
-      const rows = whRows.map((r) => {
+      const allRows = whRows.map((r) => {
         const dto = INV.mapWarehouseRow(r);
         dto.estimatedValue = _round2(r.estimated_value);
         return dto;
       });
-      const totals = INV.summarizeWarehouses(rows);
-      totals.estimatedValue = _round2(rows.reduce((s, w) => s + (w.estimatedValue || 0), 0));
-      return { rows, total: rows.length, totals, warnings: [] };
+      const totals = INV.summarizeWarehouses(allRows);
+      totals.estimatedValue = _round2(allRows.reduce((s, w) => s + (w.estimatedValue || 0), 0));
+      return { rows: _warehouseRowsPage(allRows, filters, forExport), total: allRows.length, totals, warnings: [] };
     },
   },
 
@@ -405,11 +514,12 @@ const BUILDERS = {
       if (filters.type === 'in' || filters.type === 'out') { where.push('m.type = ?'); params.push(filters.type); }
       if (filters.q) { where.push('(m.item_name LIKE ? OR m.reason LIKE ?)'); params.push('%' + filters.q + '%', '%' + filters.q + '%'); }
       const whereSql = ' WHERE ' + where.join(' AND ');
-      const from = ' FROM inventory_movements m LEFT JOIN warehouses w ON w.id = m.warehouse_id';
-      const [[c]] = await db.query("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN m.type='in' THEN m.qty ELSE 0 END),0) AS qin, COALESCE(SUM(CASE WHEN m.type='out' THEN m.qty ELSE 0 END),0) AS qout" + from + whereSql, params);
+      const from = ' FROM inventory_movements m LEFT JOIN warehouses w ON w.id = m.warehouse_id LEFT JOIN inv_items mi ON mi.id = m.item_id';
+      const [[c]] = await _reportDb(req).query("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN m.type='in' THEN m.qty ELSE 0 END),0) AS qin, COALESCE(SUM(CASE WHEN m.type='out' THEN m.qty ELSE 0 END),0) AS qout" + from + whereSql, params);
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir + ', m.id DESC';
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-      const [rows] = await db.query('SELECT m.id, m.movement_date, m.item_id, m.item_name, m.type, m.qty, m.reason, m.username, m.warehouse_id, w.name AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+      const movementName = req._reportLang === 'en' ? "COALESCE(NULLIF(mi.name_en,''),m.item_name)" : 'm.item_name';
+      const [rows] = await _reportDb(req).query('SELECT m.id, m.movement_date, m.item_id, ' + movementName + ' AS item_name, m.type, m.qty, m.reason, m.username, m.warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
       return {
         rows: rows.map((m) => ({ id: m.id, date: m.movement_date, itemId: m.item_id, itemName: m.item_name, type: m.type, typeLabel: m.type === 'in' ? 'وارد' : 'صادر', qty: Number(m.qty) || 0, reason: m.reason || '', username: m.username || '', warehouseId: m.warehouse_id || '', warehouseName: m.warehouse_name || '' })),
         total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, inQty: Number(c.qin) || 0, outQty: Number(c.qout) || 0 }, warnings: [],
@@ -425,11 +535,11 @@ const BUILDERS = {
       const { where, params } = _itemBase(req, filters, ['(ws.qty < 0 OR ws.qty = 0 OR (i.min_stock > 0 AND ws.qty <= i.min_stock))']);
       const whereSql = ' WHERE ' + where.join(' AND ');
       const from = ' FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id JOIN warehouses w ON w.id = ws.warehouse_id';
-      const [[c]] = await db.query('SELECT COUNT(*) AS n, SUM(ws.qty<0) AS neg, SUM(ws.qty=0) AS outc, SUM(ws.qty>0) AS lowc, COALESCE(SUM(GREATEST(i.min_stock-ws.qty,0)*' + VALUE_EXPR + '),0) AS rv' + from + whereSql, params);
+      const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, SUM(ws.qty<0) AS neg, SUM(ws.qty=0) AS outc, SUM(ws.qty>0) AS lowc, COALESCE(SUM(GREATEST(i.min_stock-ws.qty,0)*' + VALUE_EXPR + '),0) AS rv' + from + whereSql, params);
       const order = ' ORDER BY (ws.qty<0) DESC, (ws.qty=0) DESC, ' + filters.sort.column + ' ' + filters.sort.dir;
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-      const sel = 'SELECT i.id AS item_id, i.name, i.category, i.unit, i.min_stock, i.cost AS global_cost, ws.qty, ws.avg_cost, w.id AS warehouse_id, w.name AS warehouse_name, GREATEST(i.min_stock-ws.qty,0) AS reorder_qty, GREATEST(i.min_stock-ws.qty,0)*' + VALUE_EXPR + ' AS reorder_value';
-      const [rows] = await db.query(sel + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+      const sel = 'SELECT i.id AS item_id, ' + _displayName(req, 'i') + ' AS name, i.category, i.unit, i.min_stock, i.cost AS global_cost, ws.qty, ws.avg_cost, w.id AS warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name, GREATEST(i.min_stock-ws.qty,0) AS reorder_qty, GREATEST(i.min_stock-ws.qty,0)*' + VALUE_EXPR + ' AS reorder_value';
+      const [rows] = await _reportDb(req).query(sel + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
       return {
         rows: rows.map((r) => {
           const sev = INV.computeItemStatus(r.qty, r.min_stock);
@@ -444,10 +554,10 @@ const BUILDERS = {
   'warehouse-compare': {
     headers: ['المستودع', 'الكود', 'النوع', 'عدد الأصناف', 'الكمية', 'القيمة', 'منخفض', 'نافد', 'سالب'],
     csvRow: (r) => [r.name, r.code, r.type, r.itemCount, r.totalQty, r.totalValue, r.lowCount, r.outCount, r.negativeCount],
-    async run(req) {
+    async run(req, filters, forExport) {
       const whRows = await _perWarehouse(req);
-      const rows = whRows.map(INV.mapWarehouseRow);
-      return { rows, total: rows.length, totals: INV.summarizeWarehouses(rows), warnings: [] };
+      const allRows = whRows.map(INV.mapWarehouseRow);
+      return { rows: _warehouseRowsPage(allRows, filters, forExport), total: allRows.length, totals: INV.summarizeWarehouses(allRows), warnings: [] };
     },
   },
 
@@ -478,11 +588,11 @@ const BUILDERS = {
       if (filters.status) { where.push('a.status = ?'); params.push(filters.status); }
       const whereSql = ' WHERE ' + where.join(' AND ');
       const from = ' FROM stock_adjustments a LEFT JOIN warehouses w ON w.id = a.warehouse_id';
-      const [[c]] = await db.query("SELECT COUNT(*) AS n, COALESCE(SUM(a.total_cost),0) AS tc, SUM(a.status='pending') AS pend, SUM(a.status='approved') AS appr" + from + whereSql, params);
+      const [[c]] = await _reportDb(req).query("SELECT COUNT(*) AS n, COALESCE(SUM(a.total_cost),0) AS tc, SUM(a.status='pending') AS pend, SUM(a.status='approved') AS appr" + from + whereSql, params);
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
       const REASON = { damaged: 'تالف', admin: 'إداري', settlement: 'تسوية' };
-      const [rows] = await db.query('SELECT a.id, a.adjustment_date, a.reason, a.status, a.items_count, a.total_cost, a.approved_by, a.approved_at, a.warehouse_id, w.name AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+      const [rows] = await _reportDb(req).query('SELECT a.id, a.adjustment_date, a.reason, a.status, a.items_count, a.total_cost, a.approved_by, a.approved_at, a.warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
       return {
         rows: rows.map((a) => ({ id: a.id, date: a.adjustment_date, warehouseId: a.warehouse_id || '', warehouseName: a.warehouse_name || '', reason: a.reason, reasonLabel: REASON[a.reason] || a.reason, status: a.status, statusLabel: a.status === 'approved' ? 'معتمد' : 'بانتظار', itemsCount: Number(a.items_count) || 0, totalCost: _round2(a.total_cost), approvedBy: a.approved_by || '', approvedAt: a.approved_at || '' })),
         total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, totalCost: _round2(c.tc), pending: Number(c.pend) || 0, approved: Number(c.appr) || 0 }, warnings: [],
@@ -502,10 +612,10 @@ const BUILDERS = {
       if (dr.sql) { where.push(dr.sql.replace(/^\s*AND\s+/i, '')); params.push(...dr.params); }
       const whereSql = ' WHERE ' + where.join(' AND ');
       const from = ' FROM stocktakes s LEFT JOIN warehouses w ON w.id = s.warehouse_id';
-      const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(s.total_variance),0) AS tv' + from + whereSql, params);
+      const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, COALESCE(SUM(s.total_variance),0) AS tv' + from + whereSql, params);
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-      const [rows] = await db.query('SELECT s.id, s.stocktake_date, COALESCE(s.workflow_status, s.status) AS eff_status, s.items_count, s.total_variance, s.warehouse_id, w.name AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+      const [rows] = await _reportDb(req).query('SELECT s.id, s.stocktake_date, COALESCE(s.workflow_status, s.status) AS eff_status, s.items_count, s.total_variance, s.warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
       const STL = { completed: 'مكتمل', approved: 'معتمد', pending_approval: 'بانتظار الاعتماد', rejected: 'مرفوض', draft: 'مسودة', cancelled: 'ملغى' };
       return {
         rows: rows.map((s) => ({ id: s.id, date: s.stocktake_date, warehouseId: s.warehouse_id || '', warehouseName: s.warehouse_name || '', status: s.eff_status, statusLabel: STL[s.eff_status] || s.eff_status || '', itemsCount: Number(s.items_count) || 0, totalVariance: _round2(s.total_variance) })),
@@ -517,7 +627,7 @@ const BUILDERS = {
   // 10) No outbound consumption (sales/independent issue/production material).
   'no-movement': {
     headers: ['الصنف', 'الفئة', 'الكمية', 'القيمة', 'آخر استهلاك/صرف', 'أيام بلا استهلاك'],
-    csvRow: (r) => [r.name, r.category, r.qty, r.value, r.lastOutboundAt || 'لا يوجد', r.daysSinceOutbound == null ? '∞' : r.daysSinceOutbound],
+    csvRow: (r, lang) => [r.name, r.category, r.qty, r.value, r.lastOutboundAt || (lang === 'en' ? 'None' : 'لا يوجد'), r.daysSinceOutbound == null ? '∞' : r.daysSinceOutbound],
     async run(req, filters, forExport) {
       const where = [ACTIVE];
       const params = [];
@@ -528,20 +638,20 @@ const BUILDERS = {
       const subScopeParams = [];
       _scopeWhere(req, 'mm.warehouse_id', sub, subScopeParams);
       const subScope = sub.length ? ' AND ' + sub.join(' AND ') : '';
-      const innerSel = `SELECT i.id AS item_id, i.name, i.category, i.unit,
+      const innerSel = `SELECT i.id AS item_id, ${_displayName(req, 'i')} AS name, i.category, i.unit,
                COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty ELSE 0 END),0) AS qty,
                COALESCE(SUM(CASE WHEN ws.qty>0 THEN ws.qty*${VALUE_EXPR} ELSE 0 END),0) AS value,
                (SELECT MAX(mm.movement_date) FROM inventory_movements mm WHERE mm.item_id = i.id AND ${consumption.sql}${subScope}) AS last_movement
           FROM warehouse_stock ws JOIN inv_items i ON i.id = ws.item_id
          WHERE ${where.join(' AND ')}
-         GROUP BY i.id, i.name, i.category, i.unit`;
+         GROUP BY i.id, i.name, i.name_en, i.category, i.unit`;
       // The SELECT subquery placeholders occur before the outer WHERE.
       const innerParams = MOVEMENT.subqueryFirstParams(consumption.params, subScopeParams, params);
       const havQty = ' HAVING qty > 0 AND (last_movement IS NULL OR last_movement < DATE_SUB(NOW(), INTERVAL ' + Number(filters.window) + ' DAY))';
-      const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(value),0) AS v FROM (' + innerSel + havQty + ') t', innerParams);
+      const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, COALESCE(SUM(value),0) AS v FROM (' + innerSel + havQty + ') t', innerParams);
       const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
-      const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-      const [rows] = await db.query('SELECT * FROM (' + innerSel + havQty + ') t' + order + pg, forExport ? innerParams : innerParams.concat([filters.pageSize, filters.offset]));
+      const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+      const [rows] = await _reportDb(req).query('SELECT * FROM (' + innerSel + havQty + ') t' + order + pg, forExport ? innerParams : innerParams.concat([filters.pageSize, filters.offset]));
       return {
         rows: rows.map((r) => {
           const lastOutboundAt = r.last_movement || null;
@@ -562,7 +672,7 @@ const BUILDERS = {
       const where = ['b.qty > 0', 'l.expiry_date IS NOT NULL', "l.lifecycle_status<>'closed'"];
       const params = [];
       _scopeWhere(req, 'b.warehouse_id', where, params);
-      if (filters.q) { where.push('i.name LIKE ?'); params.push('%' + filters.q + '%'); }
+      if (filters.q) { where.push('(i.name LIKE ? OR i.name_en LIKE ?)'); params.push('%' + filters.q + '%', '%' + filters.q + '%'); }
       const whereSql = ' WHERE ' + where.join(' AND ');
       const from = ' FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id JOIN inv_items i ON i.id=l.item_id LEFT JOIN warehouse_stock ws ON ws.warehouse_id=b.warehouse_id AND ws.item_id=b.item_id LEFT JOIN warehouses w ON w.id=b.warehouse_id';
       let total = 0, sumVal = 0;
@@ -571,11 +681,11 @@ const BUILDERS = {
       let sourceAvailable = true;
       try {
         const valuationCost = 'COALESCE(NULLIF(ws.avg_cost,0),NULLIF(i.cost,0),0)';
-        const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(b.qty*' + valuationCost + '),0) AS v' + from + whereSql, params);
+        const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, COALESCE(SUM(b.qty*' + valuationCost + '),0) AS v' + from + whereSql, params);
         total = Number(c.n) || 0; sumVal = _round2(c.v);
         const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
-        const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
-        const [r] = await db.query('SELECT l.id, l.item_id AS inv_item_id, i.name AS item_name, b.warehouse_id, w.name AS warehouse_name, l.lot_number AS batch_number, b.qty AS qty_remaining, ' + valuationCost + ' AS unit_cost, l.unit_cost AS lot_receipt_cost, (b.qty*' + valuationCost + ') AS lot_value, l.expiry_date, l.lifecycle_status, DATEDIFF(l.expiry_date, CURDATE()) AS days_to_expiry' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+        const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
+        const [r] = await _reportDb(req).query('SELECT l.id, l.item_id AS inv_item_id, ' + _displayName(req, 'i') + ' AS item_name, b.warehouse_id, ' + _displayName(req, 'w') + ' AS warehouse_name, l.lot_number AS batch_number, b.qty AS qty_remaining, ' + valuationCost + ' AS unit_cost, l.unit_cost AS lot_receipt_cost, (b.qty*' + valuationCost + ') AS lot_value, l.expiry_date, l.lifecycle_status, DATEDIFF(l.expiry_date, CURDATE()) AS days_to_expiry' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
         rows = r.map((x) => {
           const d = x.days_to_expiry == null ? null : Number(x.days_to_expiry);
           const st = d == null ? 'unknown' : d < 0 ? 'expired' : d <= 7 ? 'critical' : d <= 30 ? 'soon' : 'safe';
@@ -589,7 +699,7 @@ const BUILDERS = {
       try {
         coverage = await _expiryLotCoverage(req);
         const stocked = coverage.trackedPositions, covered = coverage.fullyCoveredPositions;
-        if (stocked > 0 && covered < stocked) RC.pushWarning(warnings, 'EXPIRY_LOW_COVERAGE', 'تقديري: ' + covered + ' من ' + stocked + ' صنف لها طبقات استلام — الأصناف بلا طبقات لا تظهر هنا.', 'warning');
+        if (stocked > 0 && covered < stocked) RC.pushWarning(warnings, 'EXPIRY_LOW_COVERAGE', 'تقديري: ' + covered + ' من ' + stocked + ' صنف لها طبقات استلام — الأصناف بلا طبقات لا تظهر هنا.', 'warning', { covered, stocked });
         if (!coverage.complete && !(stocked > 0 && covered < stocked)) RC.pushWarning(warnings, 'EXPIRY_LOT_QUANTITY_DRIFT', 'أرصدة دفعات الصلاحية لا تطابق رصيد المستودع؛ التقرير غير نهائي.', 'warning');
       } catch (_) {
         sourceAvailable = false;
@@ -604,19 +714,29 @@ const BUILDERS = {
     adminOnly: true,
     headers: ['المؤشر', 'العدد', 'ملاحظة'],
     csvRow: (r) => [r.label, r.count, r.note],
-    async run(req) {
+    async run(req, filters, forExport) {
       const rows = [];
-      async function one(label, sql, note) {
-        try { const [[r]] = await db.query(sql); rows.push({ metric: label, label, count: Number(r.cnt) || 0, note }); }
-        catch (_) { rows.push({ metric: label, label, count: 0, note: 'تعذّر القياس' }); }
+      async function one(metric, label, sql, note) {
+        try { const [[r]] = await _reportDb(req).query(sql); rows.push({ metric, label, count: Number(r.cnt) || 0, note, measurementFailed: false }); }
+        catch (_) { rows.push({ metric, label, count: 0, note: 'تعذّر القياس', measurementFailed: true }); }
       }
-      await one('حركات بلا مستودع', "SELECT COUNT(*) AS cnt FROM inventory_movements WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
-      await one('تعديلات بلا مستودع', "SELECT COUNT(*) AS cnt FROM stock_adjustments WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
-      await one('جرد بلا مستودع', "SELECT COUNT(*) AS cnt FROM stocktakes WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
-      await one('أصناف بتكلفة تقديرية', "SELECT COUNT(*) AS cnt FROM warehouse_stock ws WHERE ws.qty>0 AND COALESCE(NULLIF(ws.avg_cost,0),0)=0", 'WAC غير متوفر — قُيّمت بالتكلفة العامة');
-      await one('أصناف بلا حد أدنى', "SELECT COUNT(*) AS cnt FROM inv_items WHERE active=1 AND deleted_at IS NULL AND (min_stock IS NULL OR min_stock<=0)", 'تقارير المنخفض قد تكون ناقصة');
-      await one('دفعات معيارية برصيد نشط', 'SELECT COUNT(*) AS cnt FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.qty>0', 'المصدر المعياري لتقارير الصلاحية والتتبع');
-      return { rows, total: rows.length, totals: { metrics: rows.length }, warnings: [] };
+      await one('movementsWithoutWarehouse', 'حركات بلا مستودع', "SELECT COUNT(*) AS cnt FROM inventory_movements WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
+      await one('adjustmentsWithoutWarehouse', 'تعديلات بلا مستودع', "SELECT COUNT(*) AS cnt FROM stock_adjustments WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
+      await one('stocktakesWithoutWarehouse', 'جرد بلا مستودع', "SELECT COUNT(*) AS cnt FROM stocktakes WHERE warehouse_id IS NULL OR warehouse_id=''", 'رؤية الإدارة فقط');
+      await one('estimatedCostItems', 'أصناف بتكلفة تقديرية', "SELECT COUNT(*) AS cnt FROM warehouse_stock ws WHERE ws.qty>0 AND COALESCE(NULLIF(ws.avg_cost,0),0)=0", 'WAC غير متوفر — قُيّمت بالتكلفة العامة');
+      await one('itemsWithoutMinimum', 'أصناف بلا حد أدنى', "SELECT COUNT(*) AS cnt FROM inv_items WHERE active=1 AND deleted_at IS NULL AND (min_stock IS NULL OR min_stock<=0)", 'تقارير المنخفض قد تكون ناقصة');
+      await one('activeCanonicalLots', 'دفعات معيارية برصيد نشط', 'SELECT COUNT(*) AS cnt FROM warehouse_lot_balances b JOIN inventory_lots l ON l.id=b.lot_id WHERE b.qty>0', 'المصدر المعياري لتقارير الصلاحية والتتبع');
+      const total = rows.length;
+      const direction = filters.sort.dir === 'ASC' ? 1 : -1;
+      const sorted = rows.slice().sort((a, b) => {
+        const av = filters.sort.key === 'count' ? a.count : a.metric;
+        const bv = filters.sort.key === 'count' ? b.count : b.metric;
+        return (typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv))) * direction;
+      });
+      const resultRows = forExport ? sorted : sorted.slice(filters.offset, filters.offset + filters.pageSize);
+      return { rows: resultRows, total, totals: { metrics: total }, warnings: [] };
     },
   },
 };
@@ -633,33 +753,91 @@ async function _transferReport(req, filters, forExport, valueMode) {
   if (filters.status) { where.push('si.status = ?'); params.push(filters.status); }
   const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
   const from = ' FROM stock_issues si LEFT JOIN warehouses wf ON wf.id = si.from_warehouse_id LEFT JOIN warehouses wt ON wt.id = si.to_warehouse_id';
-  const [[c]] = await db.query('SELECT COUNT(*) AS n, COALESCE(SUM(si.total_cost),0) AS v' + from + whereSql, params);
+  const [[c]] = await _reportDb(req).query('SELECT COUNT(*) AS n, COALESCE(SUM(si.total_cost),0) AS v' + from + whereSql, params);
   const order = ' ORDER BY ' + filters.sort.column + ' ' + filters.sort.dir;
-  const pg = forExport ? EXPORT_PROBE : ' LIMIT ? OFFSET ?';
+  const pg = forExport ? _unpagedProbe(forExport) : ' LIMIT ? OFFSET ?';
   const rem = '(SELECT COALESCE(SUM(GREATEST(sii.qty_issued-sii.qty_received,0)),0) FROM stock_issue_items sii WHERE sii.issue_id = si.id)';
   const iss = '(SELECT COALESCE(SUM(sii.qty_issued),0) FROM stock_issue_items sii WHERE sii.issue_id = si.id)';
   const rcv = '(SELECT COALESCE(SUM(sii.qty_received),0) FROM stock_issue_items sii WHERE sii.issue_id = si.id)';
-  const [rows] = await db.query('SELECT si.id, si.issue_number, si.issue_date, si.status, si.total_cost, si.from_warehouse_id, si.to_warehouse_id, wf.name AS from_name, wt.name AS to_name, ' + rem + ' AS remaining_qty, ' + iss + ' AS issued_qty, ' + rcv + ' AS received_qty' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
+  const transitWhere = whereSql + (whereSql ? ' AND ' : ' WHERE ') + "si.status IN ('issued','partially_received')";
+  const [[transit]] = await _reportDb(req).query('SELECT COALESCE(SUM(' + rem + '),0) AS remaining' + from + transitWhere, params);
+  const [rows] = await _reportDb(req).query('SELECT si.id, si.issue_number, si.issue_date, si.status, si.total_cost, si.from_warehouse_id, si.to_warehouse_id, ' + _displayName(req, 'wf') + ' AS from_name, ' + _displayName(req, 'wt') + ' AS to_name, ' + rem + ' AS remaining_qty, ' + iss + ' AS issued_qty, ' + rcv + ' AS received_qty' + from + whereSql + order + pg, forExport ? params : params.concat([filters.pageSize, filters.offset]));
   const STL = { draft: 'مسودة', approved: 'معتمد', issued: 'مُصدر', partially_received: 'استلام جزئي', received: 'مستلم', cancelled: 'ملغى', reversed: 'معكوس' };
-  let inTransitRemaining = 0;
   const data = rows.map((r) => {
     const remaining = Number(r.remaining_qty) || 0;
-    if (r.status === 'issued' || r.status === 'partially_received') inTransitRemaining += remaining;
     return { id: r.id, number: r.issue_number, date: r.issue_date, fromId: r.from_warehouse_id, toId: r.to_warehouse_id, fromName: r.from_name || '', toName: r.to_name || '', status: r.status, statusLabel: STL[r.status] || r.status, value: _round2(r.total_cost), issued: Number(r.issued_qty) || 0, received: Number(r.received_qty) || 0, remaining };
   });
-  return { rows: data, total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, totalValue: _round2(c.v), inTransitRemaining: _round2(inTransitRemaining) }, warnings: [] };
+  return { rows: data, total: Number(c.n) || 0, totals: { count: Number(c.n) || 0, totalValue: _round2(c.v), inTransitRemaining: _round2(transit.remaining) }, warnings: [] };
 }
 
 function _isAdminScope(req) { return !!(req.warehouseScope && req.warehouseScope.all); }
 
-// ── GET /api/inventory/reports/:reportType ───────────────────────────────────
-router.get('/reports/:reportType', READ, async (req, res) => {
+async function _withConsistentReportSnapshot(req, run) {
+  const conn = await db.getConnection();
   try {
+    // Builders intentionally use separate aggregate + row queries. Pin all of
+    // them to one REPEATABLE READ transaction so a concurrent receipt/issue
+    // cannot make printed totals disagree with the rows below them.
+    await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await conn.beginTransaction();
+    req._reportDb = conn;
+    const result = await run();
+    await conn.commit();
+    return result;
+  } catch (error) {
+    try { await conn.rollback(); } catch (_) { /* preserve the original error */ }
+    throw error;
+  } finally {
+    delete req._reportDb;
+    try { conn.release(); } catch (_) { /* pool may already have released it */ }
+  }
+}
+
+// ── GET /api/inventory/reports/:reportType/print ────────────────────────────
+// A transaction-consistent JSON snapshot for browser printing. The
+// paged screen route must never masquerade as a complete printed report.
+router.get('/reports/:reportType/print', READ, async (req, res) => {
+  try {
+    req._reportLang = _reportLang(req);
     const type = String(req.params.reportType);
     if (!RC.isReportType(type)) return res.status(404).json({ success: false, code: 'UNKNOWN_REPORT', error: 'تقرير غير معروف.' });
     const builder = BUILDERS[type];
     if (builder.adminOnly && !_isAdminScope(req)) return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'هذا التقرير متاح للإدارة فقط.' });
     const filters = RC.parseReportFilters(req.query, type);
+    if (!_guardDateRange(res, filters)) return;
+    if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
+    req._reportWarehouseId = filters.warehouseId || '';
+    const out = await _withConsistentReportSnapshot(req, () => builder.run(req, filters, 'print'));
+    if ((out.total || out.rows.length) > PRINT_MAX_ROWS || out.rows.length > PRINT_MAX_ROWS) {
+      return res.status(413).json({
+        success: false,
+        code: 'PRINT_LIMIT',
+        error: 'نتيجة التقرير أكبر من حد الطباعة الآمنة (' + PRINT_MAX_ROWS + ' صف). ضيّق الفلاتر أو استخدم تصدير CSV.',
+      });
+    }
+    res.json(RC.envelope({
+      data: out.rows,
+      totals: out.totals,
+      pagination: null,
+      filters: { warehouseId: filters.warehouseId, from: filters.from, to: filters.to, category: filters.category, status: filters.status, type: filters.type, q: filters.q, window: filters.window, sort: filters.sort.key, dir: filters.sort.dir },
+      scope: _scopeInfo(req),
+      generatedAt: _generatedAt(),
+      dataQualityWarnings: out.warnings || [],
+      print: { complete: true, rowCount: out.rows.length },
+    }));
+  } catch (e) { _reportFailure(res, e, 'print'); }
+});
+
+// ── GET /api/inventory/reports/:reportType ───────────────────────────────────
+router.get('/reports/:reportType', READ, async (req, res) => {
+  try {
+    req._reportLang = _reportLang(req);
+    const type = String(req.params.reportType);
+    if (!RC.isReportType(type)) return res.status(404).json({ success: false, code: 'UNKNOWN_REPORT', error: 'تقرير غير معروف.' });
+    const builder = BUILDERS[type];
+    if (builder.adminOnly && !_isAdminScope(req)) return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'هذا التقرير متاح للإدارة فقط.' });
+    const filters = RC.parseReportFilters(req.query, type);
+    if (!_guardDateRange(res, filters)) return;
     if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
     req._reportWarehouseId = filters.warehouseId || '';
     const out = await builder.run(req, filters, false);
@@ -668,28 +846,32 @@ router.get('/reports/:reportType', READ, async (req, res) => {
       data: out.rows,
       totals: out.totals,
       pagination: { page: filters.page, pageSize: filters.pageSize, total: out.total || 0, totalPages },
-      filters: { warehouseId: filters.warehouseId, from: filters.from, to: filters.to, category: filters.category, status: filters.status, type: filters.type, window: filters.window, sort: filters.sort.key, dir: filters.sort.dir },
+      filters: { warehouseId: filters.warehouseId, from: filters.from, to: filters.to, category: filters.category, status: filters.status, type: filters.type, q: filters.q, window: filters.window, sort: filters.sort.key, dir: filters.sort.dir },
       scope: _scopeInfo(req),
       generatedAt: _generatedAt(),
       dataQualityWarnings: out.warnings || [],
     }));
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) { _reportFailure(res, e, 'report'); }
 });
 
 // ── GET /api/inventory/reports/:reportType/export → CSV ──────────────────────
 router.get('/reports/:reportType/export', READ, async (req, res) => {
   try {
+    req._reportLang = _reportLang(req);
     const type = String(req.params.reportType);
     if (!RC.isReportType(type)) return res.status(404).json({ success: false, code: 'UNKNOWN_REPORT', error: 'تقرير غير معروف.' });
     const builder = BUILDERS[type];
     if (builder.adminOnly && !_isAdminScope(req)) return res.status(403).json({ success: false, code: 'FORBIDDEN', error: 'هذا التقرير متاح للإدارة فقط.' });
     const filters = RC.parseReportFilters(req.query, type);
+    if (!_guardDateRange(res, filters)) return;
     if (!_guardRequestedWarehouse(req, res, filters.warehouseId)) return;
     req._reportWarehouseId = filters.warehouseId || '';
     const out = await builder.run(req, filters, true);
     let csv;
     try {
-      csv = CSV.toCsv(builder.headers, out.rows.map(builder.csvRow));
+      const lang = req._reportLang;
+      const headers = lang === 'en' ? CSV_HEADERS_EN[type] : builder.headers;
+      csv = CSV.toCsv(headers, out.rows.map((row) => builder.csvRow(_csvLocalizedDto(type, row, lang), lang)));
     } catch (e) {
       if (e.code === 'EXPORT_LIMIT') return res.status(413).json({ success: false, code: 'EXPORT_LIMIT', error: e.message });
       throw e;
@@ -698,7 +880,16 @@ router.get('/reports/:reportType/export', READ, async (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="' + fname + '"');
     res.send(csv);
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  } catch (e) { _reportFailure(res, e, 'export'); }
+});
+
+Object.defineProperty(router, '__test', {
+  value: {
+    warehouseRowsPage: _warehouseRowsPage,
+    withConsistentReportSnapshot: _withConsistentReportSnapshot,
+    csvLocalizedDto: _csvLocalizedDto,
+    csvHeadersEn: CSV_HEADERS_EN,
+  },
 });
 
 module.exports = router;

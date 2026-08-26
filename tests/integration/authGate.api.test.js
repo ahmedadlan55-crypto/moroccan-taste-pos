@@ -75,6 +75,15 @@ async function cleanup() {
     const anonGet = await call('GET', '/api/settings', null);
     check('anonymous GET /api/settings still 200 (login pages read branding)',
       anonGet.status === 200 && anonGet.body && typeof anonGet.body === 'object', { status: anonGet.status });
+    const publicKeys = new Set([
+      'CompanyName', 'name', 'TaxNumber', 'taxNumber', 'CrNumber', 'NationalAddress',
+      'CompanyPhone', 'companyPhone', 'CompanyEmail', 'companyEmail', 'Address', 'address',
+      'Currency', 'currency', 'VATRate', 'vat_rate', 'receiptFooter', 'ReceiptFooter', 'logo', 'Logo',
+    ]);
+    check('anonymous settings response is allowlisted (no security/user metadata)',
+      Object.keys(anonGet.body || {}).every((key) => publicKeys.has(key)), Object.keys(anonGet.body || {}));
+    const anonAll = await call('GET', '/api/settings/all', null);
+    check('anonymous GET /api/settings/all → 401', anonAll.status === 401, { status: anonAll.status });
     const anonPut = await call('PUT', '/api/settings', null, { CompanyName: 'HACKED' });
     check('anonymous PUT /api/settings → 401 (write no longer rides the GET exemption)',
       anonPut.status === 401, { status: anonPut.status, body: anonPut.body });

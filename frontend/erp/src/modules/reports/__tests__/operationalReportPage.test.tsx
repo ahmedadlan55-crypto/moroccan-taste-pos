@@ -29,6 +29,7 @@ vi.mock("@/shared/api", async (importOriginal) => ({
 
 import { PeopleReportPage } from "../people/PeopleReportPage";
 import { OperationsReportPage } from "../operations/OperationsReportPage";
+import { OPERATIONS_REPORTS_SECTION } from "../operations/registry";
 
 function Wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -81,11 +82,11 @@ describe("a people / operations report page", () => {
       </Wrapper>,
     );
 
-    expect(await screen.findByText("سالم القحطاني")).toBeInTheDocument();
-    expect(screen.getByText("1042")).toBeInTheDocument();
+    expect((await screen.findAllByText("سالم القحطاني")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1042").length).toBeGreaterThan(0);
     // A declared column that the server did not fill would render "—"; these
     // are the values, not the headers.
-    expect(screen.getByText("47")).toBeInTheDocument();
+    expect(screen.getAllByText("47").length).toBeGreaterThan(0);
     // The month/year filter reaches the endpoint as the server's own params.
     const call = get.mock.calls.find(([path]) => path === "/hr/attendance/summary");
     expect(call?.[1]?.params).toEqual(
@@ -122,5 +123,28 @@ describe("a people / operations report page", () => {
     );
 
     expect(await screen.findByText("تعذّر تحميل الورديات")).toBeInTheDocument();
+  });
+
+  it("requests the complete guarded contract for every capped operations report", async () => {
+    get.mockResolvedValue([]);
+    const filters = { from: "2026-08-01", to: "2026-08-31", status: "" };
+    for (const id of ["shift-variance", "user-actions", "transaction-log"]) {
+      const report = OPERATIONS_REPORTS_SECTION.reports.find((candidate) => candidate.id === id);
+      expect(report, id).toBeDefined();
+      await report!.load(filters);
+    }
+
+    expect(get).toHaveBeenCalledWith(
+      "/shifts/",
+      expect.objectContaining({ params: expect.objectContaining({ report: 1 }) }),
+    );
+    expect(get).toHaveBeenCalledWith(
+      "/erp/audit-logs",
+      expect.objectContaining({ params: { report: 1, from: "2026-08-01", to: "2026-08-31" } }),
+    );
+    expect(get).toHaveBeenCalledWith(
+      "/workflow/reports/transaction-log",
+      expect.objectContaining({ params: expect.objectContaining({ startDate: "2026-08-01", endDate: "2026-08-31" }) }),
+    );
   });
 });

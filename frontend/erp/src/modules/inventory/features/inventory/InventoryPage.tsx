@@ -17,16 +17,30 @@ import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { Spinner } from "@/shared/ui";
 import { Drawer, DetailStat } from "@/shared/ui";
 import { formatCurrency, formatNumber, formatQty, formatDateTime } from "@/shared/lib";
-import { useT } from "@/i18n";
+import { useLang, useT } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { useWarehouseInventory, useInventoryCategories } from "@/modules/inventory/lib/hooks/useInventory";
 import { useInventoryItem } from "@/modules/inventory/lib/hooks/useInventoryItem";
 import { useDebouncedValue } from "@/modules/inventory/lib/hooks/useDebouncedValue";
-import { itemStatusLabel } from "@/modules/inventory/lib/status-labels";
 import type { InventoryRow } from "@/modules/inventory/lib/adapters/inventory.adapter";
+
+const ITEM_STATUS_PATH: Record<InventoryRow["status"], string> = {
+  available: "status.available",
+  low: "status.low",
+  out: "status.outOfStock",
+  negative: "status.negative",
+};
+
+function ItemStatusBadge({ status }: { status: InventoryRow["status"] }) {
+  const t = useT();
+  return <StatusBadge>{t(ITEM_STATUS_PATH[status])}</StatusBadge>;
+}
 
 export function InventoryPage() {
   const t = useT();
+  const lang = useLang();
+  const PreviousIcon = lang === "ar" ? ChevronRight : ChevronLeft;
+  const NextIcon = lang === "ar" ? ChevronLeft : ChevronRight;
   const { scope } = useWarehouseScope();
   const [params, setParams] = useSearchParams();
   const statusOptions = [
@@ -113,28 +127,28 @@ export function InventoryPage() {
 
       <article className="surface overflow-hidden">
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-4">
-          <label className="relative min-w-56 flex-1">
-            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4">
+          <label className="relative w-full min-w-0 flex-1 sm:min-w-56">
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
-              className="field pr-10"
+              className="field ps-10"
               placeholder={t("inventoryRest.balances.searchPlaceholder")}
               aria-label={t("inventoryRest.balances.searchAria")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </label>
-          <select className="field max-w-44" aria-label={t("inventoryRest.balances.categoryAria")} value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select className="field w-full sm:max-w-52" aria-label={t("inventoryRest.balances.categoryAria")} value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="">{t("inventoryRest.filter.allCategories")}</option>
             {(categories ?? []).map((c) => (<option key={c} value={c}>{c}</option>))}
           </select>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex w-full flex-wrap gap-1.5 xl:w-auto">
             {statusOptions.map((o) => (
               <button
                 key={o.value || "all"}
                 type="button"
                 onClick={() => setStatusFilter(o.value)}
-                className={`min-h-10 rounded-xl border px-3 text-xs font-extrabold transition ${
+                className={`min-h-11 flex-1 rounded-xl border px-3 text-xs font-extrabold transition sm:flex-none ${
                   status === o.value ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                 }`}
               >
@@ -142,7 +156,7 @@ export function InventoryPage() {
               </button>
             ))}
           </div>
-          <span className="mr-auto flex items-center gap-2 text-xs font-bold text-slate-400">
+          <span className="ms-auto flex items-center gap-2 text-xs font-bold text-slate-400">
             {isFetching && <Spinner className="h-3.5 w-3.5" />}
             {formatNumber(data.total)} {t("inventoryRest.ui.rowsSuffix")}
           </span>
@@ -160,8 +174,14 @@ export function InventoryPage() {
             body={debouncedSearch || category || status ? t("inventoryRest.balances.emptyMatchBody") : t("inventoryRest.balances.emptyBody")}
           />
         ) : (
-          <div className={`overflow-x-auto transition-opacity ${isPlaceholderData ? "opacity-60" : ""}`}>
-            <table className="w-full min-w-[1040px] text-right">
+          <>
+            <div className={`grid gap-3 p-3 sm:grid-cols-2 xl:hidden ${isPlaceholderData ? "opacity-60" : ""}`}>
+              {data.rows.map((r) => (
+                <InventoryMobileCard key={`${r.warehouseId}:${r.itemId}`} row={r} onOpen={() => setSelected(r)} />
+              ))}
+            </div>
+            <div className={`hidden overflow-x-auto transition-opacity xl:block ${isPlaceholderData ? "opacity-60" : ""}`}>
+            <table className="w-full min-w-[1040px] text-start">
               <thead className="bg-slate-50 text-[11px] font-extrabold text-slate-400">
                 <tr>
                   <SortableTh label={t("inventoryRest.balances.col.item")} col="name" sort={sort} dir={dir} onSort={toggleSort} />
@@ -195,31 +215,32 @@ export function InventoryPage() {
                       {r.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(r.value)}
                     </td>
                     <td className="px-4 py-4 text-sm font-bold text-slate-500 tabular-nums">{r.reorderPoint > 0 ? formatNumber(r.reorderPoint) : "—"}</td>
-                    <td className="px-4 py-4"><StatusBadge>{itemStatusLabel[r.status]}</StatusBadge></td>
+                    <td className="px-4 py-4"><ItemStatusBadge status={r.status} /></td>
                     <td className="px-4 py-4 text-xs font-bold text-slate-400">{formatDateTime(r.lastMovementAt)}</td>
                     <td className="px-5 py-4"><ChevronLeft className="h-4 w-4 text-slate-300" /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
 
         {/* Pagination */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs font-bold text-slate-400">
           <div className="flex items-center gap-3">
             <span>{t("inventoryRest.ui.showingRange", { from: formatNumber(from), to: formatNumber(to), total: formatNumber(data.total) })}</span>
-            <select className="field h-9 min-h-9 w-auto py-0 text-xs" aria-label={t("table.rowsPerPage")} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+            <select className="field min-h-11 w-auto py-0 text-xs" aria-label={t("table.rowsPerPage")} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
               {[10, 25, 50, 100].map((n) => (<option key={n} value={n}>{t("inventoryRest.ui.perPage", { count: n })}</option>))}
             </select>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("inventoryRest.ui.prev")} disabled={data.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-              <ChevronRight className="h-4 w-4" />
+            <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.prev")} disabled={data.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              <PreviousIcon className="h-4 w-4" />
             </Button>
             <span className="px-2 tabular-nums">{formatNumber(data.page)} / {formatNumber(data.totalPages)}</span>
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={t("inventoryRest.ui.next")} disabled={data.page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>
-              <ChevronLeft className="h-4 w-4" />
+            <Button variant="ghost" size="icon" aria-label={t("inventoryRest.ui.next")} disabled={data.page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>
+              <NextIcon className="h-4 w-4" />
             </Button>
           </div>
         </div>
@@ -250,6 +271,42 @@ function SortableTh({ label, col, sort, dir, onSort }: { label: string; col: str
   );
 }
 
+function InventoryMobileCard({ row, onOpen }: { row: InventoryRow; onOpen: () => void }) {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="min-h-11 rounded-2xl border border-slate-200 bg-white p-4 text-start shadow-sm transition hover:border-teal-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+    >
+      <span className="flex min-w-0 items-start justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-extrabold text-slate-900">{row.name}</span>
+          <span className="mt-1 block truncate font-mono text-[11px] font-bold text-slate-400">
+            {row.sku || "—"}{row.category ? ` · ${row.category}` : ""}
+          </span>
+        </span>
+        <ItemStatusBadge status={row.status} />
+      </span>
+      <span className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 pt-3 text-xs">
+        <MobileMetric label={t("inventoryRest.balances.col.qty")} value={formatQty(row.qty, row.unit)} />
+        <MobileMetric label={t("inventoryRest.balances.col.available")} value={formatNumber(row.available)} />
+        <MobileMetric label={t("inventoryRest.balances.col.value")} value={`${row.costEstimated ? "≈ " : ""}${formatCurrency(row.value)}`} />
+        <MobileMetric label={t("inventoryRest.balances.col.warehouse")} value={row.warehouseName || "—"} />
+      </span>
+    </button>
+  );
+}
+
+function MobileMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="min-w-0">
+      <span className="block text-[10px] font-bold text-slate-400">{label}</span>
+      <span className="mt-1 block truncate font-extrabold tabular-nums text-slate-700">{value}</span>
+    </span>
+  );
+}
+
 function ItemDetail({ row }: { row: InventoryRow }) {
   const t = useT();
   const { distribution, movements } = useInventoryItem(row.itemId);
@@ -262,10 +319,10 @@ function ItemDetail({ row }: { row: InventoryRow }) {
             {formatNumber(row.qty)} <span className="text-sm text-slate-400">{row.unit}</span>
           </div>
         </div>
-        <StatusBadge>{itemStatusLabel[row.status]}</StatusBadge>
+        <ItemStatusBadge status={row.status} />
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <DetailStat label={t("inventoryRest.balances.detail.value")} value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.value)}</>} />
         <DetailStat label={t("inventoryRest.balances.detail.unitCostWac")} value={<>{row.costEstimated && <span className="text-amber-600">≈ </span>}{formatCurrency(row.avgCost)}</>} />
         <DetailStat label={t("inventoryRest.balances.detail.reorderPoint")} value={row.reorderPoint > 0 ? formatQty(row.reorderPoint, row.unit) : "—"} />

@@ -515,7 +515,7 @@ function FilterChip({
       size="sm"
       aria-pressed={active}
       onClick={onClick}
-      className="min-h-10"
+      className="min-h-11"
     >
       {children}
     </Button>

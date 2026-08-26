@@ -240,7 +240,7 @@ export const NAV: NavGroup[] = [
       // links somewhere else — which is exactly how the report rows ended up
       // pointing at `#anchors` and at other top-level sections.
       { id: "rp-inventory", path: "/reports/inventory", label: "nav.items.rp-inventory", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports", subRoutes: true },
-      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports"], module: "reports", subRoutes: true },
+      { id: "rp-purchasing", path: "/reports/purchasing", label: "nav.items.rp-purchasing", icon: "FileBarChart", cap: "finance.reports.view", capsAny: ["finance.reports.view", "procurement.reports", "procurement.data_quality"], module: "reports", subRoutes: true },
       { id: "rp-financial", path: "/reports/financial", label: "nav.items.rp-financial", icon: "LineChart", cap: "reports.view", module: "reports", subRoutes: true },
       // Order-to-cash reporting. `ar_reports.view` is the capability the O2C
       // report routes already enforce server-side — copied, never widened — and

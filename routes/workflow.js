@@ -1760,6 +1760,50 @@ router.get('/my-transactions', async (req, res) => {
   }
 });
 
+// Read-only governance report. This is deliberately separate from the generic
+// /transactions workspace endpoint: the report needs a stricter capability and
+// must never present the first 200 rows as the complete transaction trail.
+const WORKFLOW_REPORT_MAX_ROWS = 5000;
+router.get('/reports/transaction-log', requireCapability('workflow.audit.view'), async (req, res) => {
+  try {
+    const { status, importance, typeId, startDate, endDate } = req.query;
+    const validDate = (value) => !value || /^\d{4}-\d{2}-\d{2}$/.test(String(value));
+    if (!validDate(startDate) || !validDate(endDate)) {
+      return res.status(400).json({ success: false, code: 'INVALID_DATE', error: 'صيغة التاريخ غير صحيحة' });
+    }
+    if (startDate && endDate && startDate > endDate) {
+      return res.status(400).json({ success: false, code: 'INVALID_DATE_RANGE', error: 'تاريخ البداية يجب ألا يكون بعد تاريخ النهاية' });
+    }
+
+    let sql = _txnSelectSQL() + ' WHERE t.deleted_at IS NULL';
+    const params = [];
+    if (status)     { sql += ' AND t.status = ?'; params.push(status); }
+    if (importance) { sql += ' AND t.importance = ?'; params.push(importance); }
+    if (typeId)     { sql += ' AND t.transaction_type_id = ?'; params.push(typeId); }
+    if (startDate)  { sql += ' AND DATE(t.created_at) >= ?'; params.push(startDate); }
+    if (endDate)    { sql += ' AND DATE(t.created_at) <= ?'; params.push(endDate); }
+    sql += " ORDER BY FIELD(t.importance,'critical','high','medium','low'), t.created_at DESC LIMIT " + (WORKFLOW_REPORT_MAX_ROWS + 1);
+
+    const [rows] = await db.query(sql, params);
+    if (rows.length > WORKFLOW_REPORT_MAX_ROWS) {
+      return res.status(413).json({
+        success: false,
+        code: 'REPORT_TOO_LARGE',
+        error: 'التقرير أكبر من حد الطباعة والتصدير، ضيّق الفترة أو المرشّحات',
+        maxRows: WORKFLOW_REPORT_MAX_ROWS,
+      });
+    }
+    res.json(rows.map((r) => Object.assign(_mapTxn(r), {
+      subject: r.subject || r.title,
+      dueDate: r.due_date,
+      isOverdue: !!(r.due_date && new Date(r.due_date) < new Date() && (r.status === 'pending' || r.status === 'in_progress')),
+    })));
+  } catch (e) {
+    console.error('[workflow/report/transaction-log] failed:', e && e.message);
+    res.status(500).json({ success: false, code: 'SERVER_ERROR', error: 'تعذّر تحميل سجل المعاملات' });
+  }
+});
+
 // DASHBOARD — importance-based card listing for management
 router.get('/dashboard-cards', async (req, res) => {
   try {

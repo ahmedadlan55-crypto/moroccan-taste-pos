@@ -140,7 +140,7 @@ export function StocktakeWizard() {
               <div className="flex flex-wrap gap-2">
                 {chosenItems.map((r) => (
                   <span key={r.id} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{r.name}
-                    <button type="button" aria-label={t("inventoryRest.stocktakes.wizard.removeAria")} onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-3.5 w-3.5 text-slate-400 hover:text-rose-600" /></button>
+                    <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-100" aria-label={t("inventoryRest.stocktakes.wizard.removeAria")} onClick={() => setChosenItems((s) => s.filter((x) => x.id !== r.id))}><Trash2 className="h-4 w-4" /></button>
                   </span>
                 ))}
               </div>

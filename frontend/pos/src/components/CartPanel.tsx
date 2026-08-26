@@ -325,7 +325,7 @@ function CartLineRow({
                         }
                         applyPreset(p);
                       }}
-                      className="btn-press flex min-h-9 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="btn-press flex min-h-11 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 text-[11px] font-extrabold text-slate-600 transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {locked ? (
                         <Lock className="h-3 w-3 text-amber-600" aria-hidden />
@@ -359,7 +359,7 @@ function CartLineRow({
                       aria-label={t("cartPanel.line.presetCodeLabel", { name: codeFor.name })}
                       aria-invalid={codeError}
                       placeholder={t("cartPanel.line.presetCodePlaceholder")}
-                      className={cn("field min-h-9 text-xs", codeError && "border-red-400 text-red-700")}
+                      className={cn("field min-h-11 text-xs", codeError && "border-red-400 text-red-700")}
                       maxLength={50}
                     />
                   </label>

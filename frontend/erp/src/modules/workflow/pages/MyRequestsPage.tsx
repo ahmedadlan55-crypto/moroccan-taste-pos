@@ -11,6 +11,7 @@ export function MyRequestsPage() {
   return (
     <TxnListScreen
       icon={FileClock}
+      title={t("nav.items.wf-my-requests")}
       description={t("workflow.myRequests.description")}
       tableId="wf-my-requests"
       peopleColumn={{ id: "holder", header: t("workflow.myRequests.holderNow"), value: (r) => r.assigneeName || r.currentAssignee || "" }}

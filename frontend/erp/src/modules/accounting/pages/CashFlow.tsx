@@ -25,7 +25,7 @@ function Section({ title, section }: { title: string; section: CashFlowSection }
           {section.lines.map((l, i) => (
             <tr key={i} className="border-b border-slate-50 last:border-0">
               <td className="px-5 py-2 font-semibold text-slate-700">{l.label}</td>
-              <td className="px-5 py-2 text-left">
+              <td className="px-5 py-2 text-end">
                 <Num value={l.amount} signed />
               </td>
             </tr>
@@ -34,7 +34,7 @@ function Section({ title, section }: { title: string; section: CashFlowSection }
         <tfoot>
           <tr className="border-t border-slate-200 bg-slate-50 text-sm font-extrabold">
             <td className="px-5 py-2.5 text-slate-900">{t("accounting.cashFlow.netPrefix", { title })}</td>
-            <td className="px-5 py-2.5 text-left">
+            <td className="px-5 py-2.5 text-end">
               <Num value={section.total} signed strong />
             </td>
           </tr>

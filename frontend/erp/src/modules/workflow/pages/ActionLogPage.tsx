@@ -17,7 +17,11 @@ export function ActionLogPage() {
   const GoIcon = rtl ? ArrowLeft : ArrowRight;
   return (
     <div className="space-y-5">
-      <ScreenIntro icon={ScrollText} description={t("workflow.actionLog.description")} />
+      <ScreenIntro
+        icon={ScrollText}
+        title={t("nav.items.wf-action-log")}
+        description={t("workflow.actionLog.description")}
+      />
 
       <div className="surface grid place-items-center gap-3 p-12 text-center">
         <div className="grid h-14 w-14 place-items-center rounded-2xl bg-teal-50 text-teal-700">

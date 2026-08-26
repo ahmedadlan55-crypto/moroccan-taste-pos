@@ -73,11 +73,11 @@ export function ReceiveDialog({
               {/* Mode toggle */}
               <div className="flex gap-2 rounded-2xl bg-slate-100 p-1.5">
                 <button type="button" onClick={() => setMode("all")}
-                  className={`min-h-10 flex-1 rounded-xl border px-3 text-xs font-extrabold transition ${mode === "all" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>
+                  className={`min-h-11 flex-1 rounded-xl border px-3 text-xs font-extrabold transition ${mode === "all" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>
                   {t("inventoryRest.transfers.receive.modeAll")}
                 </button>
                 <button type="button" onClick={() => setMode("partial")}
-                  className={`min-h-10 flex-1 rounded-xl border px-3 text-xs font-extrabold transition ${mode === "partial" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>
+                  className={`min-h-11 flex-1 rounded-xl border px-3 text-xs font-extrabold transition ${mode === "partial" ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>
                   {t("inventoryRest.transfers.receive.modePartial")}
                 </button>
               </div>
@@ -95,7 +95,7 @@ export function ReceiveDialog({
                           <div className="text-[11px] text-slate-400">{t("inventoryRest.transfers.receive.remaining", { qty: formatQty(l.qtyRemaining, l.item.unit) })}</div>
                         </div>
                         {mode === "partial" ? (
-                          <div className="text-left">
+                          <div className="text-end">
                             <input
                               type="number" min={0} max={l.qtyRemaining} step="any" disabled={processing}
                               className={`field h-9 w-24 text-center ${over ? "border-rose-400" : ""}`}

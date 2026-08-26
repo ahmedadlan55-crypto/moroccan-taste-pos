@@ -86,6 +86,9 @@ export const ALL_CAPS = [
   // Read grant enforced by procurement reports and the unified warehouse
   // intelligence center. Distinct from operational procurement.view.
   "procurement.reports",
+  // Sensitive anomaly report. Backend accepts this OR finance.reports.view;
+  // keeping it distinct prevents widening ordinary procurement-report access.
+  "procurement.data_quality",
   "procurement.manage",
   "procurement.approve",
   // ── Sales / order-to-cash (existing O2CCapability keys) ──
@@ -166,6 +169,7 @@ export const ALL_CAPS = [
   // gates on finance.gl.post — a different act from reading a report, and so
   // a different capability. routes/erp/sales-posting.js enforces it.
   "finance.gl.post",
+  "finance.gl.reverse",
   // Package H corrective gate — the SAME class of mismatch as
   // 'finance.reports.view' above, on the Chart of Accounts this time.
   //

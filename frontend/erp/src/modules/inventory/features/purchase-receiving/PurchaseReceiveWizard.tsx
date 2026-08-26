@@ -155,11 +155,11 @@ export function PurchaseReceiveWizard() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colItem")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colOrdered")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colReceivedBefore")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colOutstanding")}</th>
-                    <th className="px-3 py-2 text-left">{t("inventoryRest.purchaseReceiving.wizard.colUnitPrice")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colItem")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colOrdered")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colReceivedBefore")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colOutstanding")}</th>
+                    <th className="px-3 py-2 text-end">{t("inventoryRest.purchaseReceiving.wizard.colUnitPrice")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -173,7 +173,7 @@ export function PurchaseReceiveWizard() {
                       <td className="px-3 py-2 tabular-nums">{formatQty(l.ordered, l.unit)}</td>
                       <td className="px-3 py-2 tabular-nums text-slate-500">{formatQty(l.receivedV2)}</td>
                       <td className={`px-3 py-2 font-bold tabular-nums ${l.outstanding > 0 ? "text-amber-600" : "text-emerald-600"}`}>{formatQty(l.outstanding)}</td>
-                      <td className="px-3 py-2 text-left tabular-nums text-slate-600">{formatCurrency(l.unitPrice)}</td>
+                      <td className="px-3 py-2 text-end tabular-nums text-slate-600">{formatCurrency(l.unitPrice)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -218,11 +218,11 @@ export function PurchaseReceiveWizard() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-xs font-bold text-slate-500">
                   <tr>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colItem")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colOutstanding")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colReceiveQty")}</th>
-                    <th className="px-3 py-2 text-right">{t("inventoryRest.purchaseReceiving.wizard.colUnitCost")}</th>
-                    <th className="px-3 py-2 text-left">{t("inventoryRest.purchaseReceiving.wizard.colTotal")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colItem")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colOutstanding")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colReceiveQty")}</th>
+                    <th className="px-3 py-2 text-start">{t("inventoryRest.purchaseReceiving.wizard.colUnitCost")}</th>
+                    <th className="px-3 py-2 text-end">{t("inventoryRest.purchaseReceiving.wizard.colTotal")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -241,7 +241,7 @@ export function PurchaseReceiveWizard() {
                           <td className="px-3 py-2">
                             <input type="number" min={0} step="any" dir="ltr" className="field w-28 tabular-nums" value={s.unitCost} onChange={(e) => patchLine(l.itemId, { unitCost: e.target.value })} aria-label={t("inventoryRest.purchaseReceiving.wizard.costAria", { name: l.name })} />
                           </td>
-                          <td className="px-3 py-2 text-left tabular-nums text-slate-600">{formatCurrency(qty * (Number(s.unitCost) || 0))}</td>
+                          <td className="px-3 py-2 text-end tabular-nums text-slate-600">{formatCurrency(qty * (Number(s.unitCost) || 0))}</td>
                         </tr>
                         {l.trackingMode !== "none" && qty > 0 && (
                           <tr className="bg-slate-50/50">

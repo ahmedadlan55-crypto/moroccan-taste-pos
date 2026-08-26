@@ -74,18 +74,20 @@ export function FilterCard({
   onRun,
   running,
   runLabel,
+  runDisabled,
 }: {
   children: ReactNode;
   onRun: () => void;
   running?: boolean;
   runLabel?: string;
+  runDisabled?: boolean;
 }) {
   const t = useT();
   return (
     <div className="no-print surface mb-5 p-4">
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
         {children}
-        <Button variant="primary" onClick={onRun} loading={running}>
+        <Button className="w-full sm:w-auto" variant="primary" onClick={onRun} loading={running} disabled={runDisabled}>
           {runLabel ?? t("accounting.common.viewReport")}
         </Button>
       </div>
@@ -96,7 +98,7 @@ export function FilterCard({
 /** A single labelled filter control. */
 export function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex min-w-40 flex-col gap-1">
+    <label className="flex min-w-0 flex-col gap-1 sm:min-w-40">
       <span className="text-xs font-bold text-slate-600">{label}</span>
       {children}
     </label>

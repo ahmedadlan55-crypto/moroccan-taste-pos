@@ -73,6 +73,7 @@ const intelligenceSource = fs.readFileSync(require.resolve('../routes/warehouse-
 test('all warehouse report, analytics, catalog and export routes require report RBAC', () => {
   assert.match(legacyReportsSource, /router\.get\('\/analytics\/summary', READ/);
   assert.match(legacyReportsSource, /router\.get\('\/reports\/catalog', READ/);
+  assert.match(legacyReportsSource, /router\.get\('\/reports\/:reportType\/print', READ/);
   assert.match(legacyReportsSource, /router\.get\('\/reports\/:reportType', READ/);
   assert.match(legacyReportsSource, /router\.get\('\/reports\/:reportType\/export', READ/);
   assert.match(legacyReportsSource, /hasCapability\(req\.user, 'finance\.reports\.view'\)[\s\S]*hasCapability\(req\.user, 'procurement\.reports'\)/);

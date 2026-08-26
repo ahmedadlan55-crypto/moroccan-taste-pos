@@ -85,7 +85,7 @@ export function UnitPicker({
               }}
               placeholder={t("unitPicker.search.placeholder")}
               aria-label={t("unitPicker.search.aria")}
-              className="field h-9 pe-8 text-xs"
+              className="field min-h-11 pe-8 text-xs"
             />
           </div>
           <ul className="max-h-56 overflow-y-auto">

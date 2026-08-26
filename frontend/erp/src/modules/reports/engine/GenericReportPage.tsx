@@ -238,7 +238,12 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
   }
 
   return (
-    <PrintDocument title={title} subtitle={period} meta={t(section.titleKey)}>
+    <PrintDocument
+      title={title}
+      subtitle={period}
+      meta={t(section.titleKey)}
+      className={report.columns.length >= 7 ? "print-landscape print-long-report" : "print-long-report"}
+    >
       <PageHeader
         eyebrow={t(section.eyebrowKey)}
         title={title}
@@ -317,7 +322,8 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
           getRowId={(row) => row.id}
           columnMenu={false}
           paginate={false}
-          stackOnMobile={false}
+          stackOnMobile
+          mobileTitle={(row) => cellText(row[report.columns[0]?.key] ?? null, report.columns[0], t)}
           tableId={`report-${report.id}`}
         />
       </ReportState>

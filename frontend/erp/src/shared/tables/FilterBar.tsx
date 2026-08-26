@@ -32,7 +32,7 @@ export function FilterBar({
   const t = useTx();
   const searchPh = searchPlaceholder ?? t("table.searchPlaceholder");
   return (
-    <div className={cn("flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-center", className)}>
+    <div className={cn("no-print flex min-w-0 flex-col gap-3 p-4 lg:flex-row lg:items-center", className)}>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         {search !== undefined && onSearchChange && (
           <label className="relative w-full min-w-0 flex-1 sm:min-w-48 sm:max-w-xs">

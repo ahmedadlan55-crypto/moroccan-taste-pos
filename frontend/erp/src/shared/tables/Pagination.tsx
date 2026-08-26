@@ -73,7 +73,7 @@ export function Pagination({
   return (
     <div
       className={cn(
-        "flex flex-col items-stretch justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs font-semibold text-slate-500 sm:flex-row sm:flex-wrap sm:items-center",
+        "no-print flex flex-col items-stretch justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs font-semibold text-slate-500 sm:flex-row sm:flex-wrap sm:items-center",
         className,
       )}
     >

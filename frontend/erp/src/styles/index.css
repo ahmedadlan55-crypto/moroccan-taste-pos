@@ -1,3 +1,8 @@
+/* Runtime print/report variables live in the shared design-token sheet. The
+   Tailwind config reads the same file at build time, but that alone does not
+   inject CSS custom properties into the browser. */
+@import "../../../shared/design-tokens.css";
+
 /* Cairo (ADLAN design system) is self-hosted (fonts.css), with a graceful
    fallback to IBM Plex Sans Arabic / the system Arabic stack (Segoe UI / Tahoma). */
 @import "./fonts.css";
@@ -287,15 +292,16 @@
 
   /* A table header must repeat on every sheet — a continuation page of bare
      numbers with no column names is unreadable, and a reader cannot scroll
-     back up on paper. tfoot likewise carries the total onto each sheet. */
+     back up on paper. Final totals, however, appear ONCE; repeating them on
+     every sheet makes them look like page subtotals and invites double-counting. */
   .print-document thead {
     display: table-header-group;
   }
   .print-document tfoot {
-    display: table-footer-group;
-  }
-  .print-document.print-single-total tfoot {
     display: table-row-group;
+  }
+  .print-document.print-repeat-footer tfoot {
+    display: table-footer-group;
   }
   .print-document table {
     width: 100% !important;

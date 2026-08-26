@@ -350,14 +350,19 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [printAllRows, setPrintAllRows] = useState(false);
-  const virtualActive = virtualize || paged.length > VIRTUAL_ROW_THRESHOLD;
+  // Client-side tables already own the complete filtered/sorted result, so a
+  // printed report must use that full set rather than whichever screen page is
+  // open. Server mode cannot invent unloaded pages and therefore prints the
+  // rows explicitly supplied by its caller.
+  const renderedRows = printAllRows && !isServer ? sorted : paged;
+  const virtualActive = virtualize || renderedRows.length > VIRTUAL_ROW_THRESHOLD;
   const virtualRenderActive = virtualActive && !printAllRows;
   const vStart = virtualRenderActive ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0;
-  const vCount = virtualRenderActive ? Math.ceil(maxBodyHeight / rowHeight) + OVERSCAN * 2 : paged.length;
-  const vEnd = virtualRenderActive ? Math.min(paged.length, vStart + vCount) : paged.length;
-  const windowRows = virtualRenderActive ? paged.slice(vStart, vEnd) : paged;
+  const vCount = virtualRenderActive ? Math.ceil(maxBodyHeight / rowHeight) + OVERSCAN * 2 : renderedRows.length;
+  const vEnd = virtualRenderActive ? Math.min(renderedRows.length, vStart + vCount) : renderedRows.length;
+  const windowRows = virtualRenderActive ? renderedRows.slice(vStart, vEnd) : renderedRows;
   const padTop = virtualRenderActive ? vStart * rowHeight : 0;
-  const padBottom = virtualRenderActive ? Math.max(0, (paged.length - vEnd) * rowHeight) : 0;
+  const padBottom = virtualRenderActive ? Math.max(0, (renderedRows.length - vEnd) * rowHeight) : 0;
 
   // Virtualization is a screen optimization, never a print-data filter. Before
   // the browser snapshots the page for printing, synchronously materialize the
@@ -481,7 +486,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             style={virtualRenderActive ? { height: rowHeight } : undefined}
           >
             {selectable && (
-              <td className="w-10 px-3 py-3.5" onClick={(e) => e.stopPropagation()}>
+              <td className="no-print w-10 px-3 py-3.5" onClick={(e) => e.stopPropagation()}>
                 <Checkbox
                   checked={isSel}
                   onChange={() => toggleRow(id)}
@@ -524,7 +529,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               );
             })}
             {rowActions && (
-              <td className="w-px px-3 py-3.5 text-end" onClick={(e) => e.stopPropagation()}>
+              <td className="no-print w-px px-3 py-3.5 text-end" onClick={(e) => e.stopPropagation()}>
                 {rowActions(row)}
               </td>
             )}
@@ -543,7 +548,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
     <Thead className="sticky top-0 z-10">
       <tr>
         {selectable && (
-          <Th className="w-10">
+          <Th className="no-print w-10">
             <Checkbox
               checked={allPageSelected}
               indeterminate={!allPageSelected && somePageSelected}
@@ -578,7 +583,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   )}
                 >
                   {col.header}
-                  {sortIcon(col.id)}
+                  <span className="no-print">{sortIcon(col.id)}</span>
                 </button>
               ) : (
                 col.header
@@ -586,7 +591,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             </Th>
           );
         })}
-        {rowActions && <Th className="w-px" />}
+        {rowActions && <Th className="no-print w-px" />}
       </tr>
     </Thead>
   );

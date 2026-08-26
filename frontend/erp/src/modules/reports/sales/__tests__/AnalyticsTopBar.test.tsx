@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/i18n";
-import { AnalyticsTopBar } from "../components/AnalyticsTopBar";
+import { AnalyticsTopBar, type AnalyticsTopBarProps } from "../components/AnalyticsTopBar";
 import { analyticsFilterCodec, type AnalyticsFilters } from "../lib/filters";
 import { apiClient } from "@/shared/api";
 
@@ -37,7 +37,10 @@ vi.mock("@/shared/api", async (importOriginal) => {
 
 const DEFAULTS: AnalyticsFilters = analyticsFilterCodec.parse(new URLSearchParams());
 
-function renderBar(overrides: Partial<AnalyticsFilters> = {}) {
+function renderBar(
+  overrides: Partial<AnalyticsFilters> = {},
+  props: Pick<AnalyticsTopBarProps, "printDisabled"> = {},
+) {
   const patch = vi.fn();
   const reset = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -45,7 +48,7 @@ function renderBar(overrides: Partial<AnalyticsFilters> = {}) {
     <QueryClientProvider client={client}>
       <I18nProvider>
         <MemoryRouter initialEntries={["/reports/sales/executive"]}>
-          <AnalyticsTopBar filters={{ ...DEFAULTS, ...overrides }} patch={patch} reset={reset} />
+          <AnalyticsTopBar filters={{ ...DEFAULTS, ...overrides }} patch={patch} reset={reset} {...props} />
         </MemoryRouter>
       </I18nProvider>
     </QueryClientProvider>,
@@ -104,6 +107,13 @@ describe("AnalyticsTopBar — segmented toggles", () => {
   it("does not offer the unsupported custom comparison window", () => {
     renderBar();
     expect(screen.queryByRole("option", { name: /مخصص/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("AnalyticsTopBar — print integrity", () => {
+  it("disables printing while the visible report is stale", () => {
+    renderBar({}, { printDisabled: true });
+    expect(screen.getByRole("button", { name: "طباعة التقرير" })).toBeDisabled();
   });
 });
 

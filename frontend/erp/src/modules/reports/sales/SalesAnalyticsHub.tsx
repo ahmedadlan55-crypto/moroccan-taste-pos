@@ -288,6 +288,7 @@ export default function SalesAnalyticsHub() {
         showDateBasis={supportsDateBasisToggle(report)}
         showTaxBasis={supportsTaxToggle(report)}
         showExport={showExactExport}
+        printDisabled={stale}
       />
 
       {/* ── the work area: the report, and (only when the routed page publishes
@@ -353,9 +354,7 @@ export default function SalesAnalyticsHub() {
                   {t("salesReports.hub.updating")}
                 </div>
               )}
-              {/* `print:opacity-100` — the dimming is a screen affordance; a
-                  sheet printed mid-refetch must still be legible ink. */}
-              <div className={cn(stale && "pointer-events-none opacity-40 print:opacity-100")}>
+              <div className={cn(stale && "pointer-events-none opacity-40")}>
                 {segmentDenied ? (
                   <PermissionDenied />
                 ) : (

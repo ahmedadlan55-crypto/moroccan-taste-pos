@@ -115,6 +115,9 @@ export interface AnalyticsTopBarProps {
    * keep the historical default.
    */
   showExport?: boolean;
+  /** Prevents a print snapshot while the visible figures still belong to the
+   *  previous committed filter set. */
+  printDisabled?: boolean;
   /** Refetch handler for the refresh icon (hidden when absent). */
   onRefresh?: () => void;
   /** Page-owned actions (save view / export …) rendered at the end. */
@@ -357,6 +360,7 @@ export function AnalyticsTopBar({
   showDateBasis = true,
   showTaxBasis = true,
   showExport = true,
+  printDisabled = false,
 }: AnalyticsTopBarProps) {
   const t = useT();
   const location = useLocation();
@@ -604,7 +608,7 @@ export function AnalyticsTopBar({
         {/* Print is NOT export-gated: it puts the report the user is already
             reading on paper. The hub wraps the routed page in PrintArea, and
             this bar is .no-print, so the printout is the report alone. */}
-        <Button size="sm" variant="secondary" className="min-h-11" onClick={printReport}>
+        <Button size="sm" variant="secondary" className="min-h-11" onClick={printReport} disabled={printDisabled}>
           <Printer className="h-4 w-4" />
           {t("salesReports.topbar.print")}
         </Button>

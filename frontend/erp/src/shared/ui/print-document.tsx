@@ -46,7 +46,7 @@
 //   tens of KB whose failure mode on paper is a broken-image box where the
 //   issuer should be. Legal name + VAT number is what a statement is required to
 //   carry; the logo can follow once there is a print-time fallback for it.
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn, formatDateTime } from "@/shared/lib";
 import { useInvoiceIdentity } from "@/shared/hooks/useInvoiceIdentity";
 import { useT } from "@/i18n";
@@ -81,12 +81,26 @@ export interface PrintDocumentProps {
 
 export function PrintDocument({ title, subtitle, meta, printedAt, overlay, className, children }: PrintDocumentProps) {
   const t = useT();
-  const stamp = printedAt ?? new Date().toISOString();
+  const [liveStamp, setLiveStamp] = useState(() => printedAt ?? new Date().toISOString());
+  const stamp = printedAt ?? liveStamp;
   const { entityName, taxNumber } = useInvoiceIdentity();
   // Absent identity prints NO line, exactly as an absent subtitle prints no
   // line — an empty rule at the top of an accounting document reads as a
   // failure, and a half-filled letterhead reads as a wrong one.
   const hasIdentity = entityName !== "" || taxNumber !== "";
+
+  // A report can stay open for hours. Stamp the act of PRINTING, not the act of
+  // first rendering the page; an explicit stamp remains fixed for tests and
+  // frozen historical documents.
+  useEffect(() => {
+    if (printedAt) {
+      setLiveStamp(printedAt);
+      return undefined;
+    }
+    const refreshStamp = () => setLiveStamp(new Date().toISOString());
+    window.addEventListener("beforeprint", refreshStamp);
+    return () => window.removeEventListener("beforeprint", refreshStamp);
+  }, [printedAt]);
 
   return (
     <div
@@ -100,7 +114,8 @@ export function PrintDocument({ title, subtitle, meta, printedAt, overlay, class
               display: "flex",
               alignItems: "baseline",
               justifyContent: "space-between",
-              gap: "8mm",
+              gap: "4mm 8mm",
+              flexWrap: "wrap",
               marginBottom: "1.5mm",
               fontSize: "10pt",
               fontWeight: 700,
@@ -114,10 +129,10 @@ export function PrintDocument({ title, subtitle, meta, printedAt, overlay, class
             )}
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "8mm" }}>
-          <h1 style={{ fontSize: "13pt", fontWeight: 800, margin: 0 }}>{title}</h1>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "4mm 8mm", flexWrap: "wrap" }}>
+          <h1 style={{ minWidth: 0, overflowWrap: "anywhere", fontSize: "13pt", fontWeight: 800, margin: 0 }}>{title}</h1>
           {subtitle != null && (
-            <span style={{ fontSize: "9pt", fontWeight: 700 }} dir="ltr">
+            <span style={{ minWidth: 0, overflowWrap: "anywhere", fontSize: "9pt", fontWeight: 700 }} dir="auto">
               {subtitle}
             </span>
           )}
@@ -127,7 +142,8 @@ export function PrintDocument({ title, subtitle, meta, printedAt, overlay, class
             display: "flex",
             alignItems: "baseline",
             justifyContent: "space-between",
-            gap: "8mm",
+            gap: "4mm 8mm",
+            flexWrap: "wrap",
             marginTop: "1mm",
             paddingBottom: "1.5mm",
             borderBottom: "0.4mm solid var(--mt-print-strong)",
@@ -136,7 +152,7 @@ export function PrintDocument({ title, subtitle, meta, printedAt, overlay, class
           }}
         >
           <span>{t("common.printedAt", { time: formatDateTime(stamp) })}</span>
-          {meta != null && <span>{meta}</span>}
+          {meta != null && <span dir="auto">{meta}</span>}
         </div>
       </header>
       {children}

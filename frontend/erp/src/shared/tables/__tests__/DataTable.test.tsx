@@ -306,6 +306,28 @@ describe("DataTable", () => {
     expect(screen.queryByText("print-row-249")).not.toBeInTheDocument();
   });
 
+  it("prints the complete filtered client result instead of the current screen page", () => {
+    const many: Row[] = Array.from({ length: 80 }, (_, i) => ({
+      id: String(i),
+      name: `paged-print-row-${i}`,
+      amount: i,
+    }));
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={many}
+        getRowId={(r) => r.id}
+        initialPageSize={10}
+        stackOnMobile={false}
+      />,
+    );
+    expect(screen.queryByText("paged-print-row-79")).not.toBeInTheDocument();
+    fireEvent(window, new Event("beforeprint"));
+    expect(screen.getByText("paged-print-row-79")).toBeInTheDocument();
+    fireEvent(window, new Event("afterprint"));
+    expect(screen.queryByText("paged-print-row-79")).not.toBeInTheDocument();
+  });
+
   it("renders the saved-views control when savedViewsModule is set (localStorage fallback)", async () => {
     // Simulate A2's endpoint not being reachable → the control still renders and
     // degrades to localStorage rather than hard-breaking.

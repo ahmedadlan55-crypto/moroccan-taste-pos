@@ -214,3 +214,126 @@ export interface GrniReconciliation {
   };
   warnings: IntelligenceWarning[];
 }
+
+// ── Inventory performance ───────────────────────────────────────────────────
+// The measured half of the control centre. `null` is load-bearing throughout:
+// a metric whose denominator is missing is null, never 0, so the UI is forced
+// to render "—" instead of a number the reader cannot tell apart from a real
+// zero. Do not widen these to `number` "for convenience".
+
+export type AbcClass = "A" | "B" | "C";
+export type XyzClass = "X" | "Y" | "Z";
+export type AgeingBucket = "0_30" | "31_60" | "61_90" | "91_180" | "over_180" | "never";
+
+export interface InventoryPerformanceKpis {
+  consumptionValue: number;
+  consumptionQty: number;
+  consumedSkus: number;
+  openingValue: number;
+  closingValue: number;
+  onHandValue: number;
+  onHandQty: number;
+  averageInventoryValue: number;
+  /** null when there is no valued inventory at either end of the period. */
+  turnoverRatio: number | null;
+  annualizedTurnover: number | null;
+  daysOnHand: number | null;
+  deadStockValue: number;
+  deadStockItems: number;
+  deadStockPct: number | null;
+  /** null on an empty catalogue — 0% would read as a total stock-out. */
+  availabilityPct: number | null;
+  stockedPositions: number;
+  outOfStockPositions: number;
+  valuationBasis: string;
+}
+
+export interface ConsumedItemRow {
+  itemId: string;
+  name: string;
+  nameEn: string | null;
+  sku: string | null;
+  category: string;
+  unit: string;
+  qty: number;
+  value: number;
+  movements: number;
+  share: number;
+  cumulativeShare: number;
+  abcClass: AbcClass;
+  /** null below the minimum observations — one bucket is not a demand pattern. */
+  cv: number | null;
+  xyzClass: XyzClass | null;
+  onHandQty: number;
+  daysOfCover: number | null;
+}
+
+export interface AbcClassSummary {
+  abcClass: AbcClass;
+  items: number;
+  qty: number;
+  value: number;
+  sharePct: number;
+  itemSharePct: number;
+}
+
+export interface BestSellerRow {
+  key: string;
+  name: string;
+  category: string;
+  qty: number;
+  revenue: number;
+  cost: number;
+  grossProfit: number;
+  /** null on zero revenue — a margin needs something to be a margin OF. */
+  marginPct: number | null;
+  orders: number;
+  share: number;
+}
+
+export interface ConsumptionTrendPoint {
+  bucket: string;
+  inQty: number;
+  outQty: number;
+  inValue: number;
+  outValue: number;
+  netQty: number;
+}
+
+export interface CategoryMixRow {
+  category: string;
+  qty: number;
+  value: number;
+  items: number;
+  share: number;
+}
+
+export interface WarehouseMixRow {
+  warehouseId: string;
+  name: string;
+  code: string;
+  qty: number;
+  value: number;
+}
+
+export interface AgeingRow {
+  bucket: AgeingBucket;
+  items: number;
+  qty: number;
+  value: number;
+  sharePct: number;
+}
+
+export interface InventoryPerformance {
+  period: { from: string; to: string; days: number; bucket: "day" | "week" };
+  kpis: InventoryPerformanceKpis;
+  topConsumed: ConsumedItemRow[];
+  abcSummary: AbcClassSummary[];
+  abcItemCount: number;
+  topSelling: { state: string; rows: BestSellerRow[] };
+  consumptionTrend: ConsumptionTrendPoint[];
+  categoryMix: CategoryMixRow[];
+  warehouseMix: WarehouseMixRow[];
+  ageing: AgeingRow[];
+  warnings: IntelligenceWarning[];
+}

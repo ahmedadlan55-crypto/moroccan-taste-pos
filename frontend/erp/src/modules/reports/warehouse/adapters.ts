@@ -11,6 +11,10 @@ import type {
   SalesCostBridge,
   InventoryAccountingReconciliation,
   GrniReconciliation,
+  AbcClass,
+  AgeingBucket,
+  InventoryPerformance,
+  XyzClass,
 } from "./contracts";
 
 type Obj = Record<string, unknown>;
@@ -296,5 +300,135 @@ export function toGrniReconciliation(raw: unknown): GrniReconciliation {
       currentOnly: reconciliation.currentOnly === true,
     },
     warnings: warningsFrom(root.warnings),
+  };
+}
+
+// ── Inventory performance ───────────────────────────────────────────────────
+// `nullableNum` everywhere a metric can legitimately have no value. Reaching
+// for `num()` here would coerce every absent denominator to 0 and quietly turn
+// "there is no inventory to divide by" into "inventory that never turns" —
+// which is the opposite conclusion, on the same screen, with no way to tell.
+
+const ABC_CLASSES = new Set(["A", "B", "C"]);
+const XYZ_CLASSES = new Set(["X", "Y", "Z"]);
+const AGEING_BUCKETS = new Set(["0_30", "31_60", "61_90", "91_180", "over_180", "never"]);
+
+function abcClass(v: unknown): AbcClass {
+  const value = str(v).toUpperCase();
+  return (ABC_CLASSES.has(value) ? value : "C") as AbcClass;
+}
+
+function xyzClass(v: unknown): XyzClass | null {
+  const value = str(v).toUpperCase();
+  return XYZ_CLASSES.has(value) ? (value as XyzClass) : null;
+}
+
+export function toInventoryPerformance(raw: unknown): InventoryPerformance {
+  const root = obj(raw);
+  const data = obj(root.data);
+  const period = obj(data.period);
+  const k = obj(data.kpis);
+  const selling = obj(data.topSelling);
+  return {
+    period: {
+      from: str(period.from),
+      to: str(period.to),
+      days: num(period.days),
+      bucket: str(period.bucket) === "week" ? "week" : "day",
+    },
+    kpis: {
+      consumptionValue: num(k.consumptionValue),
+      consumptionQty: num(k.consumptionQty),
+      consumedSkus: num(k.consumedSkus),
+      openingValue: num(k.openingValue),
+      closingValue: num(k.closingValue),
+      onHandValue: num(k.onHandValue),
+      onHandQty: num(k.onHandQty),
+      averageInventoryValue: num(k.averageInventoryValue),
+      turnoverRatio: nullableNum(k.turnoverRatio),
+      annualizedTurnover: nullableNum(k.annualizedTurnover),
+      daysOnHand: nullableNum(k.daysOnHand),
+      deadStockValue: num(k.deadStockValue),
+      deadStockItems: num(k.deadStockItems),
+      deadStockPct: nullableNum(k.deadStockPct),
+      availabilityPct: nullableNum(k.availabilityPct),
+      stockedPositions: num(k.stockedPositions),
+      outOfStockPositions: num(k.outOfStockPositions),
+      valuationBasis: str(k.valuationBasis),
+    },
+    topConsumed: arr(data.topConsumed).map((row) => ({
+      itemId: str(row.itemId),
+      name: str(row.name),
+      nameEn: row.nameEn == null ? null : str(row.nameEn),
+      sku: row.sku == null ? null : str(row.sku),
+      category: str(row.category),
+      unit: str(row.unit),
+      qty: num(row.qty),
+      value: num(row.value),
+      movements: num(row.movements),
+      share: num(row.share),
+      cumulativeShare: num(row.cumulativeShare),
+      abcClass: abcClass(row.abcClass),
+      cv: nullableNum(row.cv),
+      xyzClass: xyzClass(row.xyzClass),
+      onHandQty: num(row.onHandQty),
+      daysOfCover: nullableNum(row.daysOfCover),
+    })),
+    abcSummary: arr(data.abcSummary).map((row) => ({
+      abcClass: abcClass(row.abcClass),
+      items: num(row.items),
+      qty: num(row.qty),
+      value: num(row.value),
+      sharePct: num(row.sharePct),
+      itemSharePct: num(row.itemSharePct),
+    })),
+    abcItemCount: num(data.abcItemCount),
+    topSelling: {
+      state: str(selling.state) || "unavailable",
+      rows: arr(selling.rows).map((row) => ({
+        key: str(row.key),
+        name: str(row.name),
+        category: str(row.category),
+        qty: num(row.qty),
+        revenue: num(row.revenue),
+        cost: num(row.cost),
+        grossProfit: num(row.grossProfit),
+        marginPct: nullableNum(row.marginPct),
+        orders: num(row.orders),
+        share: num(row.share),
+      })),
+    },
+    consumptionTrend: arr(data.consumptionTrend).map((row) => ({
+      bucket: str(row.bucket),
+      inQty: num(row.inQty),
+      outQty: num(row.outQty),
+      inValue: num(row.inValue),
+      outValue: num(row.outValue),
+      netQty: num(row.netQty),
+    })),
+    categoryMix: arr(data.categoryMix).map((row) => ({
+      category: str(row.category),
+      qty: num(row.qty),
+      value: num(row.value),
+      items: num(row.items),
+      share: num(row.share),
+    })),
+    warehouseMix: arr(data.warehouseMix).map((row) => ({
+      warehouseId: str(row.warehouseId),
+      name: str(row.name),
+      code: str(row.code),
+      qty: num(row.qty),
+      value: num(row.value),
+    })),
+    ageing: arr(data.ageing)
+      .map((row) => ({
+        bucket: str(row.bucket) as AgeingBucket,
+        items: num(row.items),
+        qty: num(row.qty),
+        value: num(row.value),
+        sharePct: num(row.sharePct),
+      }))
+      .filter((row) => AGEING_BUCKETS.has(row.bucket)),
+    warnings: warningsFrom(root.warnings, root.dataQualityWarnings),
   };
 }

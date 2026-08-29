@@ -66,4 +66,29 @@ describe("i18n dictionary structural parity (ar vs en)", () => {
     expect(Object.keys(ar).length).toBeGreaterThan(0);
     expect(Object.keys(en).length).toBeGreaterThan(0);
   });
+
+  it("uses single-brace placeholders, the only form the interpolator understands", () => {
+    // `format()` in ../interpolate replaces /\{(\w+)\}/ — SINGLE braces. A
+    // template written `{{count}}` therefore renders as `{5}`: the inner
+    // `{count}` is substituted and the outer braces survive as literal text.
+    //
+    // This was not hypothetical. The whole warehouse control centre shipped
+    // with `{{…}}` and had been printing "Across {2} stocked items" and
+    // "Page {1} of {3}" on a live screen — 52 placeholders across both
+    // languages. Nothing failed, because a stray brace is not an error; it is
+    // just wrong on the page, which is why a guard belongs here and not in a
+    // reviewer's eye.
+    const offenders: string[] = [];
+    const scan = (node: unknown, path: string): void => {
+      if (typeof node === "string") {
+        if (/\{\{\w+\}\}/.test(node)) offenders.push(`${path}: ${node.slice(0, 60)}`);
+        return;
+      }
+      if (!isPlainObject(node)) return;
+      for (const [key, value] of Object.entries(node)) scan(value, path ? `${path}.${key}` : key);
+    };
+    scan(ar as unknown as AnyDict, "ar");
+    scan(en as unknown as AnyDict, "en");
+    expect(offenders).toEqual([]);
+  });
 });

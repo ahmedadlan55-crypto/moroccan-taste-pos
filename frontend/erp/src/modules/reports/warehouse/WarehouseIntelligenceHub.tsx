@@ -54,10 +54,10 @@ import {
   INVENTORY_INTELLIGENCE_REPORTS,
   PURCHASING_INTELLIGENCE_REPORTS,
   REPORT_FAMILIES,
-  REPORT_READINESS_REQUIREMENTS,
   type IntelligenceReportLink,
   type ReportFamily,
 } from "./reportCatalog";
+import { InventoryPerformanceSection } from "./InventoryPerformance";
 import type { IntelligenceWarning, PurchaseIntelligenceRow } from "./contracts";
 import { ReportDirectory, type ReportDirectoryGroup, type ReportDirectoryTone } from "../components/ReportDirectory";
 import { PurchasingReportsDirectory } from "../purchasing/PurchasingReportsDirectory";
@@ -164,47 +164,6 @@ function ReportCatalog({ mode, range, scope }: { mode: WarehouseIntelligenceMode
         emptyLabel={t("misc.reports.directory.empty")}
       />
 
-    </section>
-  );
-}
-
-function ReportReadiness({ mode }: { mode: WarehouseIntelligenceMode }) {
-  const t = useT();
-  const requirements = REPORT_READINESS_REQUIREMENTS.filter((item) => item.modes.includes(mode));
-  const groups = REPORT_FAMILIES
-    .map((family) => ({ family, requirements: requirements.filter((item) => item.family === family.id) }))
-    .filter((group) => group.requirements.length > 0);
-  return (
-    <section className="surface overflow-hidden" aria-labelledby="report-readiness-title" data-testid="report-readiness">
-      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 id="report-readiness-title" className="text-sm font-extrabold text-slate-900">{t("warehouseIntelligence.readiness.title")}</h2>
-            <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{t("warehouseIntelligence.readiness.subtitle")}</p>
-          </div>
-          <Badge tone="warning">{t("warehouseIntelligence.readiness.notPublished")}</Badge>
-        </div>
-      </div>
-      <div className="space-y-px bg-slate-100">
-        {groups.map(({ family, requirements: familyRequirements }) => {
-          const Icon = family.icon;
-          return <section key={family.id} className="bg-white" aria-labelledby={`readiness-${mode}-${family.id}`}>
-            <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3"><Icon className="h-4 w-4 text-teal-700" /><h3 id={`readiness-${mode}-${family.id}`} className="text-xs font-extrabold text-slate-700">{t(family.labelKey)}</h3><Badge tone="neutral">{familyRequirements.length}</Badge></div>
-            <div className="grid gap-px bg-slate-100 lg:grid-cols-2">
-              {familyRequirements.map((requirement) => (
-                <div key={requirement.id} className="bg-white p-4" data-readiness-requirement={requirement.id}>
-                  <div className="flex items-start justify-between gap-2">
-                    <h4 className="text-sm font-extrabold text-slate-900">{t(`warehouseIntelligence.readiness.items.${requirement.id}.label`)}</h4>
-                    <Badge tone="neutral">{t("warehouseIntelligence.readiness.requiresLedger")}</Badge>
-                  </div>
-                  <p className="mt-1.5 text-xs font-medium leading-5 text-slate-500">{t(`warehouseIntelligence.readiness.items.${requirement.id}.reason`)}</p>
-                  <p className="mt-2 text-[11px] font-bold leading-5 text-amber-700">{t(`warehouseIntelligence.readiness.items.${requirement.id}.requirement`)}</p>
-                </div>
-              ))}
-            </div>
-          </section>;
-        })}
-      </div>
     </section>
   );
 }
@@ -550,6 +509,11 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
 
       <InventoryExceptionQueue exceptions={exceptions} />
 
+      {/* The measured layer. It sits directly under the exception queue — what
+          needs a decision now, then what the numbers say — and above the
+          reconciliations, which are a month-end concern rather than a daily one. */}
+      <InventoryPerformanceSection from={range.from} to={range.to} scope={scope} />
+
       <section className="grid gap-4 xl:grid-cols-2">
         <DecisionTable
           id="warehouse-value"
@@ -593,7 +557,6 @@ function InventoryDecisionView({ range, scope }: { range: DateRange; scope: stri
         </div>
       ) : <><CostCoveragePanel data={overview.data} /><FlowAndWastePanel data={overview.data} /><CostControlPanel data={overview.data} /></>}
       <InventoryAccountingClose scope={scope} range={range} canViewFinance={canViewFinance} />
-      <ReportReadiness mode="inventory" />
     </div>
   );
 }
@@ -906,7 +869,6 @@ function PurchasingDecisionView({ range, scope }: { range: DateRange; scope: str
         </>}
       </section>
       <GrniAccountingClose scope={scope} canViewFinance={canViewFinance} />
-      <ReportReadiness mode="purchasing" />
     </div>
   );
 }

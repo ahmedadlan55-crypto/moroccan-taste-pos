@@ -3,7 +3,6 @@ import {
   INVENTORY_INTELLIGENCE_REPORTS,
   PURCHASING_INTELLIGENCE_REPORTS,
   REPORT_FAMILIES,
-  REPORT_READINESS_REQUIREMENTS,
 } from "../reportCatalog";
 import { warehouseIntelligence as ar } from "@/i18n/dictionaries/ar/warehouseIntelligence";
 import { warehouseIntelligence as en } from "@/i18n/dictionaries/en/warehouseIntelligence";
@@ -26,18 +25,17 @@ describe("warehouse report governance catalog", () => {
     }
   });
 
-  it("does not publish unsupported historical valuation, turnover or inventory roll-forward as report links", () => {
+  it("does not publish an unbuilt report as a clickable link", () => {
+    // ABC/XYZ, turnover and days-on-hand used to sit in a "readiness register"
+    // — fifteen paragraphs explaining what the system could not measure. They
+    // are now COMPUTED, on the performance dashboard, from the movement ledger.
+    // What must never come back is a catalogue ENTRY that navigates to a page
+    // that does not exist: a dead link is worse than an absent one.
     const published = [...INVENTORY_INTELLIGENCE_REPORTS, ...PURCHASING_INTELLIGENCE_REPORTS].map((report) => report.id);
     expect(published).not.toContain("asOfValuation");
     expect(published).not.toContain("abcXyzTurnoverDoh");
     expect(published).not.toContain("inventoryRollForward");
-    expect(REPORT_READINESS_REQUIREMENTS.map((item) => item.id)).toEqual(expect.arrayContaining([
-      "asOfValuation", "abcXyzTurnoverDoh", "inventoryRollForward", "landedCost",
-    ]));
-    expect(REPORT_READINESS_REQUIREMENTS).toHaveLength(15);
-    expect(new Set(REPORT_READINESS_REQUIREMENTS.map((item) => item.id)).size).toBe(15);
   });
-
   it("marks valuation and lot-based reports as coverage-dependent", () => {
     expect(INVENTORY_INTELLIGENCE_REPORTS.find((report) => report.id === "valuation")).toMatchObject({ maturity: "conditional", standard: "ias2" });
     expect(INVENTORY_INTELLIGENCE_REPORTS.find((report) => report.id === "expiry")).toMatchObject({ maturity: "conditional", basis: "lotLayer" });
@@ -54,14 +52,38 @@ describe("warehouse report governance catalog", () => {
     }
   });
 
-  it("keeps Arabic and English governance copy complete for every readiness requirement", () => {
-    for (const requirement of REPORT_READINESS_REQUIREMENTS) {
-      for (const dictionary of [ar, en]) {
-        const item = dictionary.readiness.items[requirement.id];
-        expect(item.label).toBeTruthy();
-        expect(item.reason).toBeTruthy();
-        expect(item.requirement).toBeTruthy();
-      }
+  it("keeps the performance dashboard fully translated in both languages", () => {
+    // The dashboard reads ~60 keys. A key present in Arabic and missing in
+    // English renders the raw dotted path on screen — which looks like a bug
+    // in the metric, not in the copy. Compare the SHAPES, so a key added to
+    // one dictionary and forgotten in the other fails here.
+    const shape = (value: unknown): unknown => (
+      value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, shape(v)]))
+        : typeof value
+    );
+    expect(shape(en.performance)).toEqual(shape(ar.performance));
+
+    // Every ageing bucket the server can emit needs a label, including the one
+    // that is NOT a duration: stock never consumed is its own state, and
+    // folding it into "over 180 days" hides stock received yesterday.
+    for (const bucket of ["0_30", "31_60", "61_90", "91_180", "over_180", "never"] as const) {
+      expect(ar.performance.ageing[bucket]).toBeTruthy();
+      expect(en.performance.ageing[bucket]).toBeTruthy();
     }
+    for (const cls of ["X", "Y", "Z"] as const) {
+      expect(ar.performance.xyz[cls]).toBeTruthy();
+      expect(en.performance.xyz[cls]).toBeTruthy();
+    }
+  });
+
+  it("no longer ships a register of metrics the system cannot produce", async () => {
+    // The owner's objection, pinned: a control centre states numbers, not
+    // paragraphs about missing data. If someone reintroduces the register,
+    // this fails before it reaches a screen.
+    const catalog = await import("../reportCatalog");
+    expect(Object.keys(catalog)).not.toContain("REPORT_READINESS_REQUIREMENTS");
+    expect(ar).not.toHaveProperty("readiness");
+    expect(en).not.toHaveProperty("readiness");
   });
 });

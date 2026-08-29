@@ -19,6 +19,8 @@ const WI = require('../lib/warehouseIntelligence');
 const STRICT_SCOPE = require('../lib/warehouseIntelligenceScope');
 const IAR = require('../lib/inventoryAccountingReport');
 const { getAccountByRole, AccountRoleError } = require('../lib/accountRoles');
+const MOVEMENT = require('../lib/inventoryMovementSemantics');
+const PERF = require('../lib/inventoryPerformance');
 
 // The Reports Center is visible to the finance-report roles, while the
 // procurement module has its own purchasing-report grant.  Requiring only one
@@ -844,6 +846,431 @@ router.get('/purchases', READ, async (req, res) => {
         from: filters.from, to: filters.to, warehouseId: filters.warehouseId, supplierId: filters.supplierId,
         itemId: filters.itemId, q: filters.q, sort: filters.sortKey, dir: filters.dir.toLowerCase(),
       },
+      scope: scopeMeta(req, filters),
+      warnings,
+      generatedAt: now(),
+    });
+  } catch (error) { return handleError(res, error); }
+});
+
+// ── GET /performance ────────────────────────────────────────────────────────
+// The measured half of the control centre: what actually moved, what it cost,
+// which items carry the value, and what has stopped moving.
+//
+// ─── VALUATION BASIS, STATED ONCE ─────────────────────────────────────────
+// There is no immutable valued-movement ledger in this schema, so a quantity
+// that moved in June cannot be priced at June's cost. Everything valued here is
+// priced at the CURRENT unit cost (warehouse WAC, item cost as fallback) and
+// the payload says so in `valuationBasis`. That is the standard approximation
+// and it is disclosed rather than implied — what is NOT done is inventing a
+// historical cost and presenting it as fact.
+//
+// ─── WHY THE PERIOD ENDS ARE BACK-CAST ────────────────────────────────────
+// Turnover needs average inventory, and average inventory needs the balance at
+// both ends of the period. `warehouse_stock.qty` is TODAY's balance, not the
+// period's. Reading it as the closing balance silently makes every historical
+// period report today's stock — the mistake looks like a rounding difference
+// and grows with how far back you look. So the balance at each end is rebuilt
+// from today's balance minus the movements recorded since:
+//     closing(to)   = on_hand − Σ signed movements after `to`
+//     opening(from) = closing(to) − Σ signed movements within [from, to]
+// which is exact for quantity whenever inventory_movements is the only writer.
+//
+// RC / MOVEMENT / PERF are required at the TOP of this file, not here. A
+// `require` whose only use sits inside a route body passes `node --check` and
+// passes module load — the ReferenceError waits until someone opens the report.
+// This project has shipped that exact bug twice.
+
+// Warehouse WAC with the item-cost fallback — the SAME expression the overview
+// and the dashboard use, so a value here can be reconciled against those
+// screens instead of being a third opinion.
+const PERF_UNIT_COST = 'COALESCE(NULLIF(ws.avg_cost,0), i.cost, 0)';
+
+function perfRiyadhToday() {
+  // Riyadh is UTC+03:00 year-round (no DST), so the shift is a constant.
+  return new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function perfShiftDays(isoDate, days) {
+  return new Date(Date.parse(isoDate + 'T00:00:00Z') + days * 86400000).toISOString().slice(0, 10);
+}
+
+// Signed quantity: an inbound movement adds, an outbound subtracts.
+const PERF_SIGNED_QTY = "(CASE WHEN m.type='in' THEN m.qty ELSE -m.qty END)";
+
+router.get('/performance', READ, async (req, res) => {
+  try {
+    const filters = WI.parseFilters(req.query);
+    if (!guardRequestedWarehouse(req, res, filters)) return;
+    const schema = await capabilities();
+    WI.requireColumns(schema, {
+      warehouse_stock: ['warehouse_id', 'item_id', 'qty', 'avg_cost'],
+      inv_items: ['id', 'name', 'cost'],
+      inventory_movements: ['movement_date', 'item_id', 'type', 'qty', 'warehouse_id'],
+    });
+
+    const to = filters.to || perfRiyadhToday();
+    const from = filters.from || perfShiftDays(to, -29);
+    const days = PERF.rangeDays(from, to);
+    // Daily buckets stay readable to about a quarter; past that they become a
+    // hairline nobody can read, so the series switches to ISO weeks.
+    const bucketMode = days > 92 ? 'week' : 'day';
+    // DATE_FORMAT, not DATE(): mysql2 hands a DATE column back as a JS Date, and
+    // String(Date) is "Mon Aug 03 2026 …". The trend is sorted by bucket, so
+    // those strings sort ALPHABETICALLY — "Mon Aug 03" lands before "Mon Jul 27"
+    // and the chart's time axis silently runs out of order. Caught on live data.
+    const bucketSql = bucketMode === 'week'
+      ? "DATE_FORMAT(m.movement_date,'%x-W%v')"
+      : "DATE_FORMAT(m.movement_date,'%Y-%m-%d')";
+    const warnings = [];
+
+    const consumption = MOVEMENT.outboundConsumptionSql('m');
+
+    // Scope fragments. Each query gets its OWN arrays: pushing onto a shared
+    // one binds a warehouse id into whichever query happens to run first.
+    function movementScope() {
+      const where = [];
+      const params = [];
+      STRICT_SCOPE.append(req.warehouseScope, 'm.warehouse_id', where, params, filters.warehouseId);
+      return { where, params };
+    }
+    function stockScope() {
+      const where = [];
+      const params = [];
+      STRICT_SCOPE.append(req.warehouseScope, 'ws.warehouse_id', where, params, filters.warehouseId);
+      return { where, params };
+    }
+
+    const ACTIVE_ITEM = 'i.active = 1 AND i.deleted_at IS NULL';
+    // A movement row joins to the stock row of its OWN warehouse, so a transfer
+    // is valued at the cost of the warehouse it left — not at some global mean.
+    const MOVEMENT_JOIN =
+      `FROM inventory_movements m
+        JOIN inv_items i ON i.id = m.item_id
+        LEFT JOIN warehouse_stock ws ON ws.warehouse_id = m.warehouse_id AND ws.item_id = m.item_id`;
+
+    // ── 1. Consumption per item ────────────────────────────────────────────
+    const c1 = movementScope();
+    const consumedWhere = [consumption.sql, ACTIVE_ITEM].concat(c1.where);
+    const consumedParams = consumption.params.concat([from, to], c1.params);
+    const [consumedRows] = await db.query(
+      `SELECT m.item_id AS itemId, i.name AS name, i.name_en AS nameEn, i.sku AS sku,
+              COALESCE(NULLIF(i.category,''),'') AS category, COALESCE(i.unit,'') AS unit,
+              COALESCE(SUM(m.qty),0) AS qty,
+              COALESCE(SUM(m.qty * ${PERF_UNIT_COST}),0) AS value,
+              COUNT(*) AS movements
+         ${MOVEMENT_JOIN}
+        WHERE ${consumedWhere[0]}
+          AND m.movement_date >= ? AND m.movement_date < DATE_ADD(?, INTERVAL 1 DAY)
+          AND ${consumedWhere.slice(1).join(' AND ')}
+        GROUP BY m.item_id, i.name, i.name_en, i.sku, i.category, i.unit
+        ORDER BY value DESC, qty DESC`,
+      consumedParams);
+
+    // ── 2. Per-item demand series → the XYZ coefficient of variation ───────
+    const c2 = movementScope();
+    const seriesWhere = [consumption.sql].concat(c2.where);
+    const [seriesRows] = await db.query(
+      `SELECT m.item_id AS itemId, ${bucketSql} AS bucket, COALESCE(SUM(m.qty),0) AS qty
+         FROM inventory_movements m
+        WHERE ${seriesWhere[0]}
+          AND m.movement_date >= ? AND m.movement_date < DATE_ADD(?, INTERVAL 1 DAY)
+          ${c2.where.length ? 'AND ' + c2.where.join(' AND ') : ''}
+        GROUP BY m.item_id, bucket`,
+      consumption.params.concat([from, to], c2.params));
+
+    // ── 3. On-hand, last consumption, ageing ───────────────────────────────
+    const c3 = stockScope();
+    const c3sub = movementScope();
+    const onHandWhere = [ACTIVE_ITEM].concat(c3.where);
+    const [onHandRows] = await db.query(
+      `SELECT i.id AS itemId, i.name AS name, i.name_en AS nameEn, i.sku AS sku,
+              COALESCE(NULLIF(i.category,''),'') AS category, COALESCE(i.unit,'') AS unit,
+              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty,
+              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * ${PERF_UNIT_COST} ELSE 0 END),0) AS value,
+              MAX(lc.last_out) AS lastOut
+         FROM warehouse_stock ws
+         JOIN inv_items i ON i.id = ws.item_id
+         LEFT JOIN (
+           SELECT m.item_id, MAX(m.movement_date) AS last_out
+             FROM inventory_movements m
+            WHERE ${[consumption.sql].concat(c3sub.where).join(' AND ')}
+            GROUP BY m.item_id
+         ) lc ON lc.item_id = i.id
+        WHERE ${onHandWhere.join(' AND ')}
+        GROUP BY i.id, i.name, i.name_en, i.sku, i.category, i.unit`,
+      // Placeholders inside the derived table are bound BEFORE the outer WHERE.
+      MOVEMENT.subqueryFirstParams(consumption.params, c3sub.params, c3.params, []));
+
+    // ── 4. Movement trend, valued ──────────────────────────────────────────
+    const c4 = movementScope();
+    const [trendRows] = await db.query(
+      `SELECT ${bucketSql} AS bucket, m.type AS type,
+              COALESCE(SUM(m.qty),0) AS qty,
+              COALESCE(SUM(m.qty * ${PERF_UNIT_COST}),0) AS value
+         ${MOVEMENT_JOIN}
+        WHERE ${ACTIVE_ITEM}
+          AND m.movement_date >= ? AND m.movement_date < DATE_ADD(?, INTERVAL 1 DAY)
+          ${c4.where.length ? 'AND ' + c4.where.join(' AND ') : ''}
+        GROUP BY bucket, m.type
+        ORDER BY bucket`,
+      [from, to].concat(c4.params));
+
+    // ── 5. Period ends, back-cast (see the header note) ────────────────────
+    const c5 = stockScope();
+    const c5sub = movementScope();
+    const [[endsRow]] = await db.query(
+      `SELECT
+         COALESCE(SUM(GREATEST(pos.on_hand,0) * pos.unit_cost),0) AS onHandValue,
+         COALESCE(SUM(GREATEST(pos.on_hand,0)),0) AS onHandQty,
+         COALESCE(SUM(GREATEST(pos.on_hand - pos.net_after,0) * pos.unit_cost),0) AS closingValue,
+         COALESCE(SUM(GREATEST(pos.on_hand - pos.net_after - pos.net_in,0) * pos.unit_cost),0) AS openingValue,
+         SUM(CASE WHEN pos.on_hand > 0 THEN 1 ELSE 0 END) AS inStockPositions,
+         COUNT(*) AS stockedPositions
+       FROM (
+         SELECT ws.qty AS on_hand, ${PERF_UNIT_COST} AS unit_cost,
+                COALESCE(mv.net_in,0) AS net_in, COALESCE(mv.net_after,0) AS net_after
+           FROM warehouse_stock ws
+           JOIN inv_items i ON i.id = ws.item_id
+           LEFT JOIN (
+             SELECT m.warehouse_id, m.item_id,
+                    SUM(CASE WHEN m.movement_date >= ? AND m.movement_date < DATE_ADD(?, INTERVAL 1 DAY)
+                             THEN ${PERF_SIGNED_QTY} ELSE 0 END) AS net_in,
+                    SUM(CASE WHEN m.movement_date >= DATE_ADD(?, INTERVAL 1 DAY)
+                             THEN ${PERF_SIGNED_QTY} ELSE 0 END) AS net_after
+               FROM inventory_movements m
+              ${c5sub.where.length ? 'WHERE ' + c5sub.where.join(' AND ') : ''}
+              GROUP BY m.warehouse_id, m.item_id
+           ) mv ON mv.warehouse_id = ws.warehouse_id AND mv.item_id = ws.item_id
+          WHERE ${[ACTIVE_ITEM].concat(c5.where).join(' AND ')}
+       ) pos`,
+      [from, to, to].concat(c5sub.params, c5.params));
+
+    // ── 6. Value on hand by warehouse ──────────────────────────────────────
+    const c6 = stockScope();
+    const [warehouseRows] = await db.query(
+      `SELECT w.id AS warehouseId, w.name AS name, COALESCE(w.code,'') AS code,
+              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty ELSE 0 END),0) AS qty,
+              COALESCE(SUM(CASE WHEN ws.qty > 0 THEN ws.qty * ${PERF_UNIT_COST} ELSE 0 END),0) AS value
+         FROM warehouse_stock ws
+         JOIN warehouses w ON w.id = ws.warehouse_id
+         JOIN inv_items i ON i.id = ws.item_id
+        WHERE ${[ACTIVE_ITEM].concat(c6.where).join(' AND ')}
+        GROUP BY w.id, w.name, w.code
+        ORDER BY value DESC, qty DESC`,
+      c6.params);
+
+    // ── 7. Best sellers — what the CUSTOMER bought ─────────────────────────
+    // Deliberately a different question from "most consumed": consumption is
+    // raw material leaving a shelf, this is finished goods leaving the till,
+    // and on a kitchen one sold item consumes many stock items. Reporting one
+    // as the other is the classic restaurant-ERP mistake.
+    let topSelling = { state: 'unavailable', rows: [] };
+    const sellingColumns = ['document_id', 'base_qty', 'net_amount', 'cost_snapshot', 'description'];
+    const salesAvailable = sellingColumns.every((c) => WI.hasColumn(schema, 'ar_document_lines', c)) &&
+      ['id', 'document_type', 'status', 'issue_date'].every((c) => WI.hasColumn(schema, 'ar_documents', c));
+    if (!salesAvailable) {
+      warnings.push(warning('BEST_SELLERS_UNAVAILABLE', 'سجل سطور الفواتير غير متاح في هذه البنية، فلم تُعرض قائمة الأكثر مبيعًا.', 'warning'));
+    } else {
+      const c7 = [];
+      const c7params = [];
+      STRICT_SCOPE.append(req.warehouseScope, 'COALESCE(d.warehouse_id, doc.warehouse_id)', c7, c7params, filters.warehouseId);
+      // A credit note is a negative sale. Counting it as a positive one makes
+      // the most-REFUNDED item look like the best seller.
+      const SIGN = "(CASE WHEN doc.document_type='credit_note' THEN -1 ELSE 1 END)";
+      const [sellRows] = await db.query(
+        `SELECT COALESCE(NULLIF(d.menu_id,''), NULLIF(d.item_id,''), d.description) AS soldKey,
+                MAX(COALESCE(NULLIF(d.description,''),'')) AS name,
+                MAX(COALESCE(d.category_name_snapshot,'')) AS category,
+                COALESCE(SUM(${SIGN} * d.base_qty),0) AS qty,
+                COALESCE(SUM(${SIGN} * d.net_amount),0) AS revenue,
+                COALESCE(SUM(${SIGN} * d.cost_snapshot),0) AS cost,
+                COUNT(DISTINCT d.document_id) AS orders
+           FROM ar_document_lines d
+           JOIN ar_documents doc ON doc.id = d.document_id
+          WHERE doc.status NOT IN ('draft','cancelled')
+            AND doc.issue_date >= ? AND doc.issue_date <= ?
+            ${c7.length ? 'AND ' + c7.join(' AND ') : ''}
+          GROUP BY soldKey
+         HAVING qty <> 0 OR revenue <> 0
+          ORDER BY revenue DESC, qty DESC
+          LIMIT 15`,
+        [from, to].concat(c7params));
+      const revenueTotal = sellRows.reduce((sum, r) => sum + Math.max(Number(r.revenue) || 0, 0), 0);
+      topSelling = {
+        state: 'available',
+        rows: sellRows.map((r) => {
+          const revenue = PERF.round(r.revenue);
+          const cost = PERF.round(r.cost);
+          return {
+            key: String(r.soldKey || ''),
+            name: String(r.name || r.soldKey || ''),
+            category: String(r.category || ''),
+            qty: PERF.round(r.qty, 3),
+            revenue,
+            cost,
+            grossProfit: PERF.round(revenue - cost),
+            // Margin on zero revenue is not 0% — it is undefined. A 0 here
+            // sorts a refunded item alongside a break-even one.
+            marginPct: revenue > 0 ? PERF.round(((revenue - cost) / revenue) * 100, 2) : null,
+            orders: Number(r.orders) || 0,
+            share: revenueTotal > 0 ? PERF.round((Math.max(revenue, 0) / revenueTotal) * 100, 2) : 0,
+          };
+        }),
+      };
+    }
+
+    // ── Assemble ───────────────────────────────────────────────────────────
+    const seriesByItem = new Map();
+    seriesRows.forEach((row) => {
+      const key = String(row.itemId);
+      if (!seriesByItem.has(key)) seriesByItem.set(key, []);
+      seriesByItem.get(key).push(Number(row.qty) || 0);
+    });
+
+    const onHandByItem = new Map();
+    onHandRows.forEach((row) => onHandByItem.set(String(row.itemId), row));
+
+    const consumedBase = consumedRows.map((row) => ({
+      itemId: String(row.itemId),
+      name: String(row.name || ''),
+      nameEn: row.nameEn ? String(row.nameEn) : null,
+      sku: row.sku ? String(row.sku) : null,
+      category: String(row.category || ''),
+      unit: String(row.unit || ''),
+      qty: PERF.round(row.qty, 3),
+      value: PERF.round(row.value),
+      movements: Number(row.movements) || 0,
+    }));
+
+    const classified = PERF.classifyAbc(consumedBase).map((row) => {
+      const cv = PERF.coefficientOfVariation(seriesByItem.get(row.itemId) || []);
+      const onHand = onHandByItem.get(row.itemId);
+      const onHandQty = onHand ? PERF.round(onHand.qty, 3) : 0;
+      return Object.assign({}, row, {
+        cv,
+        xyzClass: PERF.xyzClass(cv),
+        onHandQty,
+        daysOfCover: PERF.daysOfCover(onHandQty, row.qty, days),
+      });
+    });
+
+    const trendMap = new Map();
+    trendRows.forEach((row) => {
+      const key = String(row.bucket);
+      if (!trendMap.has(key)) trendMap.set(key, { bucket: key, inQty: 0, outQty: 0, inValue: 0, outValue: 0 });
+      const point = trendMap.get(key);
+      if (row.type === 'in') { point.inQty = PERF.round(row.qty, 3); point.inValue = PERF.round(row.value); }
+      else { point.outQty = PERF.round(row.qty, 3); point.outValue = PERF.round(row.value); }
+    });
+    const consumptionTrend = [...trendMap.values()]
+      .sort((a, b) => (a.bucket < b.bucket ? -1 : a.bucket > b.bucket ? 1 : 0))
+      .map((point) => Object.assign({}, point, { netQty: PERF.round(point.inQty - point.outQty, 3) }));
+
+    const categoryMap = new Map();
+    consumedBase.forEach((row) => {
+      const key = row.category || '';
+      if (!categoryMap.has(key)) categoryMap.set(key, { category: key, qty: 0, value: 0, items: 0 });
+      const entry = categoryMap.get(key);
+      entry.qty = PERF.round(entry.qty + row.qty, 3);
+      entry.value = PERF.round(entry.value + row.value);
+      entry.items += 1;
+    });
+    const categoryTotal = [...categoryMap.values()].reduce((sum, e) => sum + Math.max(e.value, 0), 0);
+    const categoryMix = [...categoryMap.values()]
+      .sort((a, b) => b.value - a.value)
+      .map((entry) => Object.assign({}, entry, {
+        share: categoryTotal > 0 ? PERF.round((Math.max(entry.value, 0) / categoryTotal) * 100, 2) : 0,
+      }));
+
+    const ageingMap = new Map(PERF.AGING_BUCKETS.map((b) => [b, { bucket: b, items: 0, qty: 0, value: 0 }]));
+    let deadStockValue = 0;
+    let deadStockItems = 0;
+    const today = Date.parse(perfRiyadhToday() + 'T00:00:00Z');
+    onHandRows.forEach((row) => {
+      const qty = Number(row.qty) || 0;
+      if (!(qty > 0)) return;
+      const last = row.lastOut ? Date.parse(String(row.lastOut).slice(0, 10) + 'T00:00:00Z') : NaN;
+      const age = Number.isFinite(last) ? Math.max(0, Math.round((today - last) / 86400000)) : null;
+      const bucket = PERF.agingBucket(age);
+      const entry = ageingMap.get(bucket);
+      entry.items += 1;
+      entry.qty = PERF.round(entry.qty + qty, 3);
+      entry.value = PERF.round(entry.value + (Number(row.value) || 0));
+      // Dead stock: on the shelf, and nothing consumed it in the no-movement
+      // window. `never` counts — stock received and never issued is the purest
+      // form of dead stock, not a special case to exclude.
+      if (bucket === 'never' || bucket === 'over_180') {
+        deadStockValue = PERF.round(deadStockValue + (Number(row.value) || 0));
+        deadStockItems += 1;
+      }
+    });
+    const ageingTotal = [...ageingMap.values()].reduce((sum, e) => sum + Math.max(e.value, 0), 0);
+    const ageing = [...ageingMap.values()].map((entry) => Object.assign({}, entry, {
+      sharePct: ageingTotal > 0 ? PERF.round((Math.max(entry.value, 0) / ageingTotal) * 100, 2) : 0,
+    }));
+
+    const consumptionValue = PERF.round(consumedBase.reduce((sum, r) => sum + r.value, 0));
+    const consumptionQty = PERF.round(consumedBase.reduce((sum, r) => sum + r.qty, 0), 3);
+    const openingValue = PERF.round(endsRow && endsRow.openingValue);
+    const closingValue = PERF.round(endsRow && endsRow.closingValue);
+    const onHandValue = PERF.round(endsRow && endsRow.onHandValue);
+    const turns = PERF.turnover({ consumptionValue, openingValue, closingValue, days });
+    const stockedPositions = Number(endsRow && endsRow.stockedPositions) || 0;
+    const inStockPositions = Number(endsRow && endsRow.inStockPositions) || 0;
+
+    if (turns.turnoverRatio == null) {
+      warnings.push(warning('TURNOVER_NO_AVERAGE_INVENTORY', 'لا يوجد رصيد مخزون مقيَّم في طرفي الفترة، فلم يُحتسب معدل الدوران بدل عرض صفر مضلل.', 'info'));
+    }
+
+    // NOT RC.envelope: it renames `warnings` to `dataQualityWarnings` and drops
+    // anything passed under the other name — the probe returned an empty
+    // warnings array while the handler had genuinely pushed one. Every sibling
+    // endpoint in this file emits `warnings`, and the client adapter reads it.
+    return res.json({
+      success: true,
+      data: {
+        period: { from, to, days, bucket: bucketMode },
+        kpis: {
+          consumptionValue,
+          consumptionQty,
+          consumedSkus: consumedBase.length,
+          openingValue,
+          closingValue,
+          onHandValue,
+          onHandQty: PERF.round(endsRow && endsRow.onHandQty, 3),
+          averageInventoryValue: turns.averageInventoryValue,
+          turnoverRatio: turns.turnoverRatio,
+          annualizedTurnover: turns.annualizedTurnover,
+          daysOnHand: turns.daysOnHand,
+          deadStockValue,
+          deadStockItems,
+          deadStockPct: onHandValue > 0 ? PERF.round((deadStockValue / onHandValue) * 100, 2) : null,
+          // Availability: stocked positions actually carrying stock. Null on an
+          // empty catalogue — 0% would read as a total stock-out.
+          availabilityPct: stockedPositions > 0 ? PERF.round((inStockPositions / stockedPositions) * 100, 2) : null,
+          stockedPositions,
+          outOfStockPositions: stockedPositions - inStockPositions,
+          valuationBasis: 'current_unit_cost',
+        },
+        topConsumed: classified.slice(0, 15),
+        abcSummary: PERF.summarizeAbc(classified),
+        abcItemCount: classified.length,
+        topSelling,
+        consumptionTrend,
+        categoryMix: categoryMix.slice(0, 10),
+        warehouseMix: warehouseRows.map((row) => ({
+          warehouseId: String(row.warehouseId),
+          name: String(row.name || ''),
+          code: String(row.code || ''),
+          qty: PERF.round(row.qty, 3),
+          value: PERF.round(row.value),
+        })),
+        ageing,
+      },
+      totals: { consumptionValue, consumptionQty, onHandValue, turnoverRatio: turns.turnoverRatio, daysOnHand: turns.daysOnHand },
+      pagination: null,
+      filters: { from, to, warehouseId: filters.warehouseId },
       scope: scopeMeta(req, filters),
       warnings,
       generatedAt: now(),

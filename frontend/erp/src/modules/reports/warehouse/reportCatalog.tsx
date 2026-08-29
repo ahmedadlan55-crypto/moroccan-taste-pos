@@ -95,31 +95,3 @@ export const PURCHASING_INTELLIGENCE_REPORTS: IntelligenceReportLink[] = [
   { id: "tax", labelKey: "warehouseIntelligence.reports.inputTax.label", descriptionKey: "warehouseIntelligence.reports.inputTax.description", to: "/reports/purchasing/tax", icon: ReceiptText, family: "reconciliation", maturity: "conditional", basis: "supplierLedger", standard: "zatca" },
   { id: "purchase-data-quality", labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label", descriptionKey: "warehouseIntelligence.reports.purchaseDataQuality.description", to: "/reports/purchasing/data-quality", icon: ScanSearch, family: "reconciliation", maturity: "operational", basis: "p2pDocument", standard: "internalControl" },
 ];
-
-export interface ReadinessRequirement {
-  id:
-    | "ias2Classification" | "nrvWriteDown" | "writeDownReversal" | "pledgedInventory"
-    | "valuedStockCard" | "asOfValuation" | "inventoryRollForward" | "inventoryAging"
-    | "abcXyzTurnoverDoh" | "replenishmentServiceLevel" | "landedCost" | "supplierPerformance"
-    | "inputVatGl" | "productionWipYield" | "recipeStandardActual";
-  family: ReportFamily;
-  modes: Array<"inventory" | "purchasing">;
-}
-
-export const REPORT_READINESS_REQUIREMENTS: ReadinessRequirement[] = [
-  { id: "ias2Classification", family: "valuation", modes: ["inventory"] },
-  { id: "nrvWriteDown", family: "valuation", modes: ["inventory"] },
-  { id: "writeDownReversal", family: "valuation", modes: ["inventory"] },
-  { id: "pledgedInventory", family: "valuation", modes: ["inventory"] },
-  { id: "valuedStockCard", family: "movement", modes: ["inventory"] },
-  { id: "asOfValuation", family: "valuation", modes: ["inventory"] },
-  { id: "inventoryRollForward", family: "reconciliation", modes: ["inventory", "purchasing"] },
-  { id: "inventoryAging", family: "valuation", modes: ["inventory"] },
-  { id: "abcXyzTurnoverDoh", family: "productionCost", modes: ["inventory"] },
-  { id: "replenishmentServiceLevel", family: "stock", modes: ["inventory"] },
-  { id: "landedCost", family: "productionCost", modes: ["purchasing"] },
-  { id: "supplierPerformance", family: "procurement", modes: ["purchasing"] },
-  { id: "inputVatGl", family: "reconciliation", modes: ["purchasing"] },
-  { id: "productionWipYield", family: "productionCost", modes: ["inventory", "purchasing"] },
-  { id: "recipeStandardActual", family: "productionCost", modes: ["inventory", "purchasing"] },
-];

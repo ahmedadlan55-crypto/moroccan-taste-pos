@@ -3,6 +3,7 @@ import { apiClient } from "@/shared/api";
 import {
   toGrniReconciliation,
   toInventoryAccountingReconciliation,
+  toInventoryPerformance,
   toPurchaseIntelligenceResult,
   toWarehouseIntelligenceOverview,
 } from "./adapters";
@@ -29,6 +30,23 @@ export function useWarehouseIntelligenceOverview(filters: WarehouseIntelligenceF
     queryFn: ({ signal }) => apiClient
       .get<unknown>("/inventory/intelligence/overview", { signal, params: params(filters) })
       .then(toWarehouseIntelligenceOverview),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+  });
+}
+
+export function useInventoryPerformance(filters: WarehouseIntelligenceFilters) {
+  return useQuery({
+    queryKey: ["warehouse-intelligence", "performance", filters.from, filters.to, filters.warehouseId ?? "all"] as const,
+    queryFn: ({ signal }) => apiClient
+      .get<unknown>("/inventory/intelligence/performance", {
+        signal,
+        params: { from: filters.from, to: filters.to, warehouseId: filters.warehouseId },
+      })
+      .then(toInventoryPerformance),
+    // Keep the previous period's charts on screen while the next one loads, so
+    // changing the date range does not blank the whole dashboard.
+    placeholderData: (previous) => previous,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
   });

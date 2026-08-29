@@ -19,6 +19,7 @@ import { posAdmin } from "./posAdmin";
 import { production } from "./production";
 import { purchasing } from "./purchasing";
 import { receivablesReports } from "./receivablesReports";
+import { reportsHome } from "./reportsHome";
 import { recipes } from "./recipes";
 import { sales } from "./sales";
 import { salesReports } from "./salesReports";
@@ -62,6 +63,8 @@ export const ar = {
   production,
   purchasing,
   receivablesReports,
+
+  reportsHome,
   recipes,
   sales,
   salesReports,

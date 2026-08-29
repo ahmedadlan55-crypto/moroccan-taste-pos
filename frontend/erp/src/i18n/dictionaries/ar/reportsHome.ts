@@ -1,0 +1,25 @@
+// مركز التقارير (/reports) — الصفحة التي كانت تُرجع NotFound.
+export const reportsHome = {
+  title: "مركز التقارير",
+  subtitle: "كل تقارير المشروع في مكان واحد: ابحث، ثبّت المفضّلة، وافتح ما استعملته آخر مرة.",
+  searchLabel: "ابحث في التقارير",
+  searchPlaceholder: "ابحث باسم التقرير أو موضوعه…",
+  clearSearch: "مسح البحث",
+  results: "نتائج البحث",
+  resultCount: (n: number) => `${n} تقريرًا`,
+  noResults: "لا يوجد تقرير مطابق",
+  noResultsBody: "جرّب كلمة أخرى، أو تصفّح الأقسام أدناه.",
+  favourites: "المفضّلة",
+  favourite: "أضف إلى المفضّلة",
+  unfavourite: "أزل من المفضّلة",
+  recents: "آخر ما فتحت",
+  openSection: "فتح القسم",
+  sections: {
+    sales: { title: "المبيعات والتحصيل", description: "ما بِعناه، وما حصّلناه، وما بقي في الذمم." },
+    inventory: { title: "المخزون والتكاليف", description: "الأرصدة والحركة والقيمة والأداء والمخاطر." },
+    purchasing: { title: "المشتريات والموردون", description: "أوامر الشراء والاستلام والأسعار وذمم الموردين." },
+    financial: { title: "المالية والمحاسبة", description: "القوائم المالية والأستاذ والأرصدة والمطابقات." },
+    people: { title: "الموظفون", description: "الرواتب والحضور والإجازات والعُهد." },
+    operations: { title: "التشغيل والرقابة", description: "الورديات وسجل الإجراءات وأثر التدقيق." },
+  },
+} as const;

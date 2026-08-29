@@ -24,16 +24,11 @@ import {
   type AnalyticsSavedView,
 } from "@/modules/reports/sales/lib/api";
 import { SchedulesPanel } from "@/modules/reports/sales/components/SchedulesPanel";
+import { savedViewModules } from "../registry";
 
 const PREFIX = "adlan.views.";
 const ANALYTICS_PREFIX = "analytics:";
 
-/** The 16 hub segments (mirrors SALES_HUB_SEGMENTS without importing the hub). */
-const ANALYTICS_SEGMENTS = [
-  "executive", "explorer", "items", "modifiers", "payments", "cashiers",
-  "branches", "hours", "orders", "discounts", "voids", "shifts", "taxes",
-  "profitability", "reconciliation", "builder",
-] as const;
 
 interface SavedEntry {
   /** Stable list key. */
@@ -114,9 +109,14 @@ export default function SavedReportsPage() {
   const serverViews = useQuery({
     queryKey: ["saved-views", "all", localModules],
     queryFn: async ({ signal }) => {
-      const modules = [
-        ...new Set([...ANALYTICS_SEGMENTS.map((s) => `${ANALYTICS_PREFIX}${s}`), ...localModules]),
-      ];
+      // DERIVED, never listed. This used to be a hand-written array of 16
+      // segment names with a comment claiming it mirrored the hub. The hub
+      // has 17. The missing one was `channels`, and because there is no
+      // "list all modules" endpoint, this page only ever queried the names in
+      // that array — so a view saved on the Channels report was written
+      // successfully and then never appeared here, and could not be deleted.
+      // A list that must be kept in sync by hand eventually is not.
+      const modules = [...new Set([...savedViewModules(), ...localModules])];
       const lists = await Promise.all(
         modules.map((m) => fetchSavedViews(m, signal).catch(() => [] as AnalyticsSavedView[])),
       );
@@ -150,7 +150,11 @@ export default function SavedReportsPage() {
   const moduleLabel = (module: string) => {
     if (module.startsWith(ANALYTICS_PREFIX)) {
       const segment = module.slice(ANALYTICS_PREFIX.length);
-      return (ANALYTICS_SEGMENTS as readonly string[]).includes(segment)
+      // Ask the catalogue whether this segment is a real report. The old check
+      // consulted the hand-written 16-name array, so a view on `channels`
+      // rendered as the raw fallback "Sales — channels" even on the rare path
+      // that surfaced it at all.
+      return savedViewModules().includes(module)
         ? t(`salesReports.pages.${segment}.title`)
         : `${t("salesReports.hub.title")} — ${segment}`;
     }

@@ -1,0 +1,25 @@
+// The reports home (/reports) — the page that used to answer NotFound.
+export const reportsHome = {
+  title: "Reports",
+  subtitle: "Every report in one place: search, pin the ones you use, and pick up where you left off.",
+  searchLabel: "Search reports",
+  searchPlaceholder: "Search by report name or subject…",
+  clearSearch: "Clear search",
+  results: "Search results",
+  resultCount: (n: number) => `${n} reports`,
+  noResults: "No matching report",
+  noResultsBody: "Try another word, or browse the sections below.",
+  favourites: "Favourites",
+  favourite: "Add to favourites",
+  unfavourite: "Remove from favourites",
+  recents: "Recently opened",
+  openSection: "Open section",
+  sections: {
+    sales: { title: "Sales and collection", description: "What we sold, what we collected, and what is still owed." },
+    inventory: { title: "Inventory and cost", description: "Balances, movement, value, performance and risk." },
+    purchasing: { title: "Purchasing and suppliers", description: "Purchase orders, receipts, prices and payables." },
+    financial: { title: "Finance and accounting", description: "Statements, the ledger, balances and reconciliations." },
+    people: { title: "People", description: "Payroll, attendance, leave and custody." },
+    operations: { title: "Operations and control", description: "Shifts, action log and the audit trail." },
+  },
+} as const;

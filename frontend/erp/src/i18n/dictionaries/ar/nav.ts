@@ -113,6 +113,8 @@ export const nav = {
     "wf-action-log": "سجل الإجراءات",
     // reports
     "rp-sales": "مركز قرار المبيعات",
+    "rp-home": "مركز التقارير",
+
     "rp-inventory": "تقارير المخزون",
     "rp-purchasing": "تقارير المشتريات",
     "rp-financial": "التقارير المالية",

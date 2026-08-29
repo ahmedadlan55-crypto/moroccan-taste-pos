@@ -22,6 +22,7 @@ import { normalizeRoutePath } from "@/shared/lib";
 import { LoadingState } from "@/shared/ui";
 import { NotFound } from "@/app/shell/NotFound";
 import SavedReportsPage from "./pages/SavedReports";
+import ReportsHome from "./pages/ReportsHome";
 import { usePermissions } from "@/shared/permissions";
 import { renderFinancialReport } from "./financial/registry";
 
@@ -99,5 +100,9 @@ export default function ReportsModule() {
   }
 
   if (key === "/reports/saved") return <SavedReportsPage />;
+  // The reports HOME. Every section had a home; the address they all hang
+  // off answered NotFound, so nothing in the product could list what reports
+  // exist. Kept last so no section prefix is shadowed by it.
+  if (key === "/reports") return <ReportsHome />;
   return <NotFound />;
 }

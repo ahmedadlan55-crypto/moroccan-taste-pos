@@ -1980,7 +1980,10 @@ router.get('/payroll-runs/:id/export', async (req, res) => {
       totals.totalD += Number(i.total_deductions)||0;
       totals.net += Number(i.net_salary)||0;
       rows.push([
-        i.employee_number||'', '"'+(i.employee_name||'').replace(/"/g,'""')+'"',
+        // Employee number and name are user-controlled and were emitted with
+        // no formula guard — the number wasn't even quoted. Excel evaluates a
+        // leading `=`/`+`/`@` whether or not the cell is quoted.
+        CSVC.csvCell(i.employee_number||''), CSVC.csvCell(i.employee_name||''),
         (Number(i.basic_salary)||0).toFixed(2), (Number(i.housing_allowance)||0).toFixed(2),
         (Number(i.transport_allowance)||0).toFixed(2), (Number(i.other_allowance)||0).toFixed(2),
         (Number(i.overtime_amount)||0).toFixed(2), (Number(i.gross_salary)||0).toFixed(2),
@@ -3381,6 +3384,7 @@ router.get('/my-hours-summary', async (req, res) => {
 // v5.11.1 — OFFICIAL HOLIDAYS (الإجازات الرسمية)
 // ═══════════════════════════════════════════════════════════════════
 const { findHolidayForDate, holidaysInMonth } = require('../lib/hr-holidays');
+const CSVC = require('../lib/csvContract');
 
 // GET /api/hr/holidays?year=YYYY&scope=all|brand|branch&brandId=&branchId=&includeInactive=1
 // v5.11.8 — Admin views send includeInactive=1 so disabled holidays can

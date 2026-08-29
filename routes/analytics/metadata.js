@@ -132,6 +132,10 @@ router.get('/', async (req, res) => {
           maxRangeDays: planner.MAX_RANGE_DAYS,
           defaultLimit: planner.DEFAULT_LIMIT,
           maxLimit: planner.MAX_LIMIT,
+          // The real ceiling on how deep paging can reach. Publishing only
+          // maxLimit (the per-page cap) left a client unable to learn that
+          // a second, lower ceiling on the TOTAL exists at all.
+          maxFetchRows: planner.MAX_FETCH_ROWS,
         },
       },
       generatedAt: new Date().toISOString(),

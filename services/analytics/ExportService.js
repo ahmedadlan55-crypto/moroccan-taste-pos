@@ -19,8 +19,8 @@
  *                 throws — a worker loop must survive any single bad job.
  *
  * PAGINATION HONESTY
- *   The planner clamps `limit` to planner.MAX_LIMIT (500) and — more
- *   fundamentally — fetches at most `fetchN` (= MAX_LIMIT) rows PER FACT
+ *   The planner clamps `limit` to planner.MAX_LIMIT (500) per page and — more
+ *   fundamentally — fetches at most planner.MAX_FETCH_ROWS rows PER FACT
  *   before the cross-fact merge, so rows beyond that cap are unreachable no
  *   matter the offset. The export therefore pages in MAX_LIMIT chunks up to
  *   HARD_ROW_CAP and, whenever a page reports rowCountCapped (or the hard cap
@@ -60,7 +60,14 @@ const AuditService = require('../AuditService');
 
 const EXPORT_DIR_REL = path.join('uploads', 'exports');
 const ROOT = path.join(__dirname, '..', '..');
-const HARD_ROW_CAP = 100000;
+// The reachable ceiling, not an aspiration. `collectRows` pages through
+// QueryService, and the planner clamps every fetch to MAX_FETCH_ROWS, so an
+// export can never return more than that no matter what number is written
+// here. The old value (100000) advertised a capacity the planner could not
+// deliver: at offset 10000 the page comes back empty and the loop simply
+// ends, so every export stopped at 10,000 rows while the file claimed a
+// 100,000 limit. One truth, taken from the planner itself.
+const HARD_ROW_CAP = planner.MAX_FETCH_ROWS;
 const FORMATS = new Set(['csv', 'xlsx']);
 
 // Client-supplied header labels (see normalizeColumnLabels). The ceiling is
@@ -387,7 +394,11 @@ function metadataPairs(job, request, collected) {
     ['row_count', String(collected.flatRows.length)],
   ];
   if (collected.truncated) {
-    pairs.push(['truncated', `true — result capped (planner per-fact fetch cap ${planner.MAX_LIMIT} rows, hard cap ${HARD_ROW_CAP})`]);
+    // MAX_FETCH_ROWS is the clamp that actually bites. The message used to
+    // name MAX_LIMIT (500, the per-PAGE ceiling) and a 100,000 hard cap,
+    // so a reader chasing a short file was given two numbers, neither of
+    // which was the reason.
+    pairs.push(['truncated', `true — result capped at ${HARD_ROW_CAP} rows (planner fetch clamp; pages of ${planner.MAX_LIMIT})`]);
   }
   return pairs;
 }

@@ -21,6 +21,7 @@ const events = require('../../lib/order-to-cash/events');
 const { runTransition } = require('./TransitionExecutor');
 const Zatca = require('./ZatcaDocumentService');
 const CreditLimitService = require('./CreditLimitService');
+const SNAP = require('../../lib/reportSnapshot');
 
 const money = calc.money;
 function genId() { return 'AR-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
@@ -399,8 +400,15 @@ function _multi(value) {
 
 async function list(params = {}) {
   const page = Math.max(1, Number(params.page) || 1);
-  const pageSize = Math.min(200, Math.max(1, Number(params.pageSize) || 25));
-  const offset = (page - 1) * pageSize;
+  // Snapshot mode returns the WHOLE filtered set for print/export. Without
+  // it, printing this report printed the 200-row page on screen under a
+  // totals row describing every matching invoice — a document that is wrong
+  // in a way the reader cannot see.
+  const snapshot = SNAP.wantsSnapshot(params);
+  const pageSize = snapshot
+    ? SNAP.probeSize(SNAP.REPORT_SNAPSHOT_LIMIT)
+    : Math.min(200, Math.max(1, Number(params.pageSize) || 25));
+  const offset = snapshot ? 0 : (page - 1) * pageSize;
   const sortCol = SORTABLE[params.sort] || 'd.issue_date';
   const dir = String(params.dir).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   const where = ["d.document_type <> 'credit_note' OR ? = 1"];
@@ -555,9 +563,20 @@ async function list(params = {}) {
     args,
   );
   const total = Number(cnt[0].total);
+  // Overflow is decided AFTER the count so the refusal can state the real
+  // number. "Too large, narrow the filters" without a figure is not something
+  // a user can act on. The probe row proves overflow; the count sizes it.
+  if (snapshot && SNAP.overflowed(rows, SNAP.REPORT_SNAPSHOT_LIMIT)) {
+    return { tooLarge: true, total, limit: SNAP.REPORT_SNAPSHOT_LIMIT, data: [], pagination: null, totals: null };
+  }
   return {
     data: rows,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    pagination: snapshot
+      // A snapshot IS the report — it has no pages. Saying so explicitly
+      // stops a caller rendering a pager over a complete document.
+      ? Object.assign({ page: 1, pageSize: rows.length, total, totalPages: 1 },
+                      SNAP.meta(rows.length, SNAP.REPORT_SNAPSHOT_LIMIT))
+      : { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     totals: {
       orders: total,
       net_ex_vat: Number(cnt[0].net_ex_vat || 0),

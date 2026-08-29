@@ -34,6 +34,7 @@ const coaTree = require('../lib/coa/tree');
 const trialBalanceEngine = require('../lib/reports/trialBalance');
 const warehouseScopeLib = require('../lib/warehouseScope');
 const RE = require('../lib/reportErrors');
+const CSVC = require('../lib/csvContract');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -672,9 +673,12 @@ router.get('/price-lists/:id/template', async (req, res) => {
       const ex = existingMap[m.id];
       if (ex) prefilled++;
       const row = [
-        '"' + (m.name || '').replace(/"/g, '""') + '"',
-        '"' + (m.brand_name || '').replace(/"/g, '""') + '"',
-        '"' + (m.category || '').replace(/"/g, '""') + '"',
+        // csvCell, not hand-quoting: quoting alone does not stop formula
+        // injection — Excel still evaluates =cmd|'/C calc'!A0 inside a quoted
+        // cell. Item and brand names are user-controlled.
+        CSVC.csvCell(m.name || ''),
+        CSVC.csvCell(m.brand_name || ''),
+        CSVC.csvCell(m.category || ''),
         Number(m.default_price || 0).toFixed(2),
         ex ? ex.price.toFixed(2) : '',
         '',  // ★ user fills this — channelPrice

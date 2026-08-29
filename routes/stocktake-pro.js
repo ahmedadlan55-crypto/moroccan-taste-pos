@@ -28,6 +28,7 @@ const requireCapability = require('../middleware/requireCapability');
 // Phase 0 — shared workflow + variance helpers (tests/stocktakeWorkflow.test.js
 // validates the exact same functions the route uses, so they can never drift).
 const STK = require('../lib/stocktakeWorkflow');
+const CSVC = require('../lib/csvContract');
 
 function _id(p){ return p+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,7); }
 
@@ -494,7 +495,9 @@ router.get('/:id/export', async (req, res) => {
         REASON_CODES[i.reason_code] || i.reason_code || '',
         (i.notes || '').replace(/"/g,'""')
       ];
-      csv += row.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',') + '\n';
+      // Quoting every cell does NOT neutralize a formula — Excel evaluates it
+      // inside quotes too. item_name and notes are user-controlled.
+      csv += row.map(v => CSVC.csvCell(v)).join(',') + '\n';
     });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=stocktake_'+req.params.id+'.csv');

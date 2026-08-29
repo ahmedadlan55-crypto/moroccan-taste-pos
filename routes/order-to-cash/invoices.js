@@ -14,6 +14,7 @@ const events = require('../../lib/order-to-cash/events');
 const Zqr = require('../../lib/zatca-qr-image');
 const SalesScope = require('../../lib/salesScope');
 const InvoiceService = require('../../services/order-to-cash/InvoiceService');
+const SNAP = require('../../lib/reportSnapshot');
 
 router.get('/', requireCapability('invoices.view'), async (req, res) => {
   try {
@@ -27,6 +28,11 @@ router.get('/', requireCapability('invoices.view'), async (req, res) => {
     // .list appends the branch predicate to its own WHERE, this becomes a no-op
     // rather than a second thing to remember.
     const out = await InvoiceService.list(Object.assign({}, req.query, { scope }));
+    // `?snapshot=1` asks for the whole filtered report for print/export. It is
+    // COMPLETE or REFUSED — a partial snapshot printed under a totals row that
+    // describes the full set is a document that is wrong in a way the reader
+    // cannot see. See lib/reportSnapshot.js.
+    if (out.tooLarge) return SNAP.tooLarge(res, out.total, out.limit);
     const page = await SalesScope.filterPage(db, scope, 'ar_documents', out.data);
     return H.sendData(res, page.rows, {
       pagination: Object.assign({}, out.pagination, page.dropped ? { scopeFiltered: true } : {}),

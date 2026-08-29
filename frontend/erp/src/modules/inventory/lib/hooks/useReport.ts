@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/shared/api";
 import { queryKeys } from "@/modules/inventory/lib/query-keys";
-import { toReportResult, toReportCatalog, type ReportResult, type ReportCatalogEntry } from "@/modules/inventory/lib/adapters/reports.adapter";
+import { toReportResult, type ReportResult } from "@/modules/inventory/lib/adapters/reports.adapter";
 import { ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 
 export interface ReportFilters {
@@ -63,11 +63,3 @@ export function useReport(reportType: string, scope: string, filters: ReportFilt
   });
 }
 
-export function useReportCatalog() {
-  return useQuery<ReportCatalogEntry[]>({
-    queryKey: queryKeys.reportCatalog(),
-    queryFn: ({ signal }) => apiClient.get<unknown>("/inventory/reports/catalog", { signal }).then(toReportCatalog),
-    staleTime: 5 * 60_000,
-    gcTime: 10 * 60_000,
-  });
-}

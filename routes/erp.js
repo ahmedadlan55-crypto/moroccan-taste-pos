@@ -132,7 +132,6 @@ router.use(require('./erp/dashboard'));
 router.use(require('./erp/cost-centers'));
 router.use(require('./erp/projects'));
 router.use(require('./erp/audit-logs'));
-router.use(require('./erp/purchase-reports'));
 router.use(require('./erp/branches-full'));
 router.use(require('./erp/menu-options'));
 router.use(require('./erp/vat'));

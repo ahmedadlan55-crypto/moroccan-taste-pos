@@ -12,7 +12,7 @@ import { ar } from "@/i18n/dictionaries/ar";
 import { en } from "@/i18n/dictionaries/en";
 import { ReceivablesReportPage } from "../ReceivablesReportPage";
 import { ReceivablesReportsDirectory } from "../ReceivablesReportsDirectory";
-import { RECEIVABLES_GROUPS, RECEIVABLES_REPORTS, receivablesReportPath } from "../registry";
+import { RECEIVABLES_GROUPS, RECEIVABLES_REPORTS, receivablesReportPath, type ReceivablesReportId } from "../registry";
 
 const payloads: Record<string, unknown> = {
   "ar-aging": {
@@ -66,10 +66,37 @@ function renderIn(node: React.ReactNode) {
 }
 
 describe("receivables registry", () => {
-  it("covers the thirteen backed reports exactly once, all grouped", () => {
+  const DELISTED: ReceivablesReportId[] = ["sales-summary", "sales-by-product", "sales-by-channel", "sales-by-cashier"];
+
+  it("still BACKS all thirteen reports — the four sales cards were delisted, not deleted", () => {
+    // Delisting is not deletion. The definitions and routes stay so an old
+    // bookmark resolves instead of 404ing; they are simply no longer offered
+    // in the catalogue, because the Sales Analytics hub owns those questions.
     expect(RECEIVABLES_REPORTS).toHaveLength(13);
+    for (const id of DELISTED) {
+      expect(RECEIVABLES_REPORTS.some((r) => r.id === id), id).toBe(true);
+      expect(receivablesReportPath(id)).toBe(`/reports/receivables/${id}`);
+    }
+  });
+
+  it("no longer OFFERS the four reports the sales hub already owns", () => {
+    // They restated hub reports under the same names from a DIFFERENT source:
+    // these read ar_documents, the hub reads analytics_order_facts on a
+    // business-day, tax-basis footing. Two official answers to one question,
+    // with neither screen stating its basis, is worse than one imperfect one.
     const grouped = RECEIVABLES_GROUPS.flatMap((g) => g.reports);
-    expect([...grouped].sort()).toEqual(RECEIVABLES_REPORTS.map((r) => r.id).sort());
+    for (const id of DELISTED) expect(grouped, id).not.toContain(id);
+    // `sales-by-customer` stays: the analytics registry has no `customer`
+    // dimension, so the hub genuinely cannot answer it.
+    expect(grouped).toContain("sales-by-customer");
+  });
+
+  it("groups every report it does offer, exactly once", () => {
+    const grouped = RECEIVABLES_GROUPS.flatMap((g) => g.reports);
+    expect(new Set(grouped).size).toBe(grouped.length);
+    for (const id of grouped) {
+      expect(RECEIVABLES_REPORTS.some((r) => r.id === id), id).toBe(true);
+    }
   });
 
   it("keeps every destination inside /reports/receivables and never anchors", () => {
@@ -104,7 +131,8 @@ describe("receivables directory", () => {
     expect(screen.getByText(ar.receivablesReports.reports.arAging.title)).toBeTruthy();
     expect(screen.queryByText(ar.receivablesReports.reports.dataQuality.title)).toBeNull();
     const links = screen.getAllByRole("link");
-    expect(links.length).toBe(12);
+    // 13 backed − 1 capability-gated (data-quality) − 4 delisted sales cards.
+    expect(links.length).toBe(8);
     for (const link of links) {
       expect(link.getAttribute("href")?.startsWith("/reports/receivables/")).toBe(true);
     }

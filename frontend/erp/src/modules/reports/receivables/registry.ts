@@ -380,7 +380,21 @@ export const RECEIVABLES_GROUPS: ReceivablesGroupDef[] = [
     id: "salesAnalysis",
     icon: BarChart3,
     tone: "teal",
-    reports: ["sales-summary", "sales-by-customer", "sales-by-product", "sales-by-channel", "sales-by-cashier"],
+    // ─── FOUR CARDS LEFT THIS GROUP ──────────────────────────────────────────
+    // `sales-summary`, `sales-by-product`, `sales-by-channel` and
+    // `sales-by-cashier` restated reports the Sales Analytics hub already owns
+    // — under the same names, from a DIFFERENT source. These read
+    // `ar_documents`; the hub reads `analytics_order_facts` on a business-day,
+    // tax-basis footing. So the two screens answered the same question with
+    // different numbers, and neither said which basis it used: the hub prints
+    // `BasisOfPreparation`, these printed nothing. Two official answers is
+    // worse than one imperfect one, because the reader cannot tell them apart.
+    //
+    // The DEFINITIONS and ROUTES stay — an old bookmark still resolves rather
+    // than 404s. They are simply no longer offered here; the hub is where they
+    // are found. `sales-by-customer` remains because it has no hub equivalent:
+    // `customer` is not a dimension the analytics registry can group by.
+    reports: ["sales-by-customer"],
   },
   {
     id: "receivables",

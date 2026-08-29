@@ -52,7 +52,7 @@ import {
 import type { Capability } from "@/shared/permissions";
 import { FINANCIAL_REPORTS } from "./financial/registry";
 import { PURCHASING_REPORTS, PURCHASING_REPORT_IDS } from "./purchasing/registry";
-import { RECEIVABLES_REPORTS, RECEIVABLES_VIEW_CAP } from "./receivables/registry";
+import { RECEIVABLES_GROUPS, RECEIVABLES_REPORTS, RECEIVABLES_VIEW_CAP } from "./receivables/registry";
 import { PEOPLE_REPORTS_SECTION } from "./people/registry";
 import { OPERATIONS_REPORTS_SECTION } from "./operations/registry";
 import { CENTERS, REPORT_BY_ID } from "./sales/lib/reportRegistry";
@@ -174,7 +174,14 @@ function fromSales(): CatalogEntry[] {
 }
 
 function fromReceivables(): CatalogEntry[] {
-  return RECEIVABLES_REPORTS.map((report) => ({
+  // OFFERED, not merely backed. Four sales cards were delisted from the
+  // receivables catalogue because the Sales Analytics hub already owns those
+  // questions from a different source; their definitions and routes stay so
+  // old bookmarks resolve. Deriving from RECEIVABLES_REPORTS would put them
+  // straight back on the hub and reinstate the two-official-answers problem
+  // one screen further along — which is exactly what the live check caught.
+  const offered = new Set(RECEIVABLES_GROUPS.flatMap((group) => group.reports));
+  return RECEIVABLES_REPORTS.filter((report) => offered.has(report.id)).map((report) => ({
     key: `receivables:${report.id}`,
     id: report.id,
     section: "sales" as const,

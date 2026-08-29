@@ -23,7 +23,7 @@ import {
 } from "../registry";
 import { FINANCIAL_REPORTS } from "../financial/registry";
 import { PURCHASING_REPORT_IDS } from "../purchasing/registry";
-import { RECEIVABLES_REPORTS } from "../receivables/registry";
+import { RECEIVABLES_GROUPS } from "../receivables/registry";
 import { PEOPLE_REPORTS_SECTION } from "../people/registry";
 import { OPERATIONS_REPORTS_SECTION } from "../operations/registry";
 import { CENTERS } from "../sales/lib/reportRegistry";
@@ -44,7 +44,7 @@ describe("report catalogue", () => {
     // sides of this assertion at once and it keeps meaning something.
     const expected =
       CENTERS.reduce((n, c) => n + c.views.length, 0) +
-      RECEIVABLES_REPORTS.length +
+      RECEIVABLES_GROUPS.flatMap((g) => g.reports).length +
       INVENTORY_INTELLIGENCE_REPORTS.length +
       PURCHASING_REPORT_IDS.length +
       FINANCIAL_REPORTS.length +
@@ -77,7 +77,12 @@ describe("report catalogue", () => {
 
   it("files receivables under sales — six sections, not seven", () => {
     const receivables = REPORT_CATALOG.filter((e) => e.route.startsWith("/reports/receivables/"));
-    expect(receivables.length).toBe(RECEIVABLES_REPORTS.length);
+    // What the catalogue OFFERS, not what the module backs: the four
+    // delisted sales cards stay routable but must not reappear on the hub.
+    expect(receivables.length).toBe(RECEIVABLES_GROUPS.flatMap((g) => g.reports).length);
+    for (const id of ["sales-summary", "sales-by-product", "sales-by-channel", "sales-by-cashier"]) {
+      expect(receivables.some((e) => e.id === id), id).toBe(false);
+    }
     for (const entry of receivables) expect(entry.section).toBe("sales");
   });
 

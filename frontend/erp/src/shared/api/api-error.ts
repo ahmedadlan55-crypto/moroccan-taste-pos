@@ -92,6 +92,13 @@ export function toApiError(status: number, body: unknown): ApiError {
       if (typeof b.message === "string") message = b.message;
       if (typeof b.code === "string") code = b.code;
       if (typeof b.field === "string") details = { field: b.field };
+      // The flat contract carries the reference under `correlationId`
+      // (analytics) or `requestId` (report endpoints) — the same id the server
+      // logged the stack under and echoed on `X-Request-Id`. Without this the
+      // id reached the browser and was dropped one line before the screen,
+      // leaving the user a generic apology and support nothing to search.
+      if (typeof b.correlationId === "string") requestId = b.correlationId;
+      else if (typeof b.requestId === "string") requestId = b.requestId;
       if (b.details && typeof b.details === "object")
         details = { ...(details ?? {}), ...(b.details as object) };
     }

@@ -7,6 +7,8 @@ export const states = {
   loading: "جارٍ التحميل…",
   emptyDefault: "لا توجد بيانات بعد",
   errorDefault: "تعذّر تحميل البيانات",
+
+  reference: "رقم المرجع:",
   permissionDenied: "لا تملك صلاحية لعرض هذا القسم",
   permissionDeniedBody: "هذه العملية تتطلب صلاحية أعلى. تواصل مع المدير إن كنت تظن أن هذا خطأ.",
   sessionExpired: "انتهت الجلسة",

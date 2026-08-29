@@ -30,6 +30,7 @@ const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
 const glBoundaries = require('../../../lib/reports/glBoundaries');
 const { todayYmd } = require('../../../lib/expiryPolicy');
+const RE = require('../../../lib/reportErrors');
 
 // PACKAGE G — this report no longer decides where an account belongs. It ASKS
 // lib/coa/classify.js, which reads the stored gl_accounts metadata added by
@@ -1038,24 +1039,10 @@ router.get('/reports/balance-sheet-ifrs', requireCapability('finance.reports.vie
       change: change                   // v5.10.79 — deltas (or null)
     });
   } catch (e) {
-    // LOG, always. This catch answering 200 with an all-zero balance sheet is
-    // precisely why a `ReferenceError` on the line above lived on main
-    // undetected: the endpoint never failed, it just quietly reported that the
-    // company owns nothing. A financial statement that silently zeroes itself is
-    // worse than one that errors — nothing downstream can tell the difference
-    // between "no data" and "the report is broken".
-    //
-    // The zeroed shape is kept so existing callers do not crash, but it now
-    // carries `degraded: true` and the request id, so the UI and the logs can
-    // both say so instead of presenting zeros as fact.
-    console.error('[erp/reports/balance-sheet-ifrs]', req.requestId || '-', (e && e.stack) || e);
-    res.json({
-      currentAssets: [], nonCurrentAssets: [], currentLiab: [], nonCurrentLiab: [], equityItems: [],
-      totCA: 0, totNCA: 0, totCL: 0, totNCL: 0, totEq: 0,
-      totalAssets: 0, totalLiabilities: 0, netIncome: 0,
-      isBalanced: false, groups: {}, unclassified: [], unmapped: [],
-      degraded: true, requestId: req.requestId || null,
-    });
+    // The comment that used to sit here described this exact defect — an
+    // all-zero balance sheet answered 200 — and kept it anyway. A company that
+    // owns nothing and owes nothing is not a plausible reading of a crash.
+    return RE.sendReportError(res, e, 'erp/reports/balance-sheet-ifrs', req);
   }
 });
 

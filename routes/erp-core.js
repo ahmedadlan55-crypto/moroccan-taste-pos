@@ -33,6 +33,7 @@ const requireCapability = require('../middleware/requireCapability');
 const coaTree = require('../lib/coa/tree');
 const trialBalanceEngine = require('../lib/reports/trialBalance');
 const warehouseScopeLib = require('../lib/warehouseScope');
+const RE = require('../lib/reportErrors');
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -2577,7 +2578,7 @@ router.get('/reports/pnl', requireCapability('finance.reports.view'), async (req
         grossMargin: totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 10000) / 100 : 0
       }
     });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) { return RE.sendReportError(res, e, 'erp/reports/pnl', req); }
 });
 
 /**
@@ -2651,7 +2652,7 @@ router.get('/reports/balance-sheet', requireCapability('finance.reports.view'), 
         isBalanced: Math.abs(difference) < 0.01
       }
     });
-  } catch(e) { res.json({ success: false, error: e.message }); }
+  } catch(e) { return RE.sendReportError(res, e, 'erp/reports/balance-sheet', req); }
 });
 
 /**

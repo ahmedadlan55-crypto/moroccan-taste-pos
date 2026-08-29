@@ -17,6 +17,7 @@
 const router = require('express').Router();
 const db = require('../../db/connection');
 const glPosting = require('../../lib/glPosting');
+const RE = require('../../lib/reportErrors');
 
 /**
  * GET /api/erp/vat/transactions — the VAT return's working set.
@@ -254,7 +255,7 @@ router.get('/vat/reports', async (req, res) => {
       totalOutputVat: Number(r.total_output_vat), totalInputVat: Number(r.total_input_vat),
       netVat: Number(r.net_vat), status: r.status, createdBy: r.created_by
     })));
-  } catch(e) { res.json([]); }
+  } catch(e) { return RE.sendReportError(res, e, 'erp/vat/reports', req); }
 });
 
 // Close VAT quarter

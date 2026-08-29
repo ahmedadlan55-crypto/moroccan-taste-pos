@@ -285,11 +285,12 @@ export function IncomeStatementPage() {
         title={t("accounting.incomeStatement.title")}
         subtitle={t("accounting.incomeStatement.subtitle")}
         onPrint={printReport}
+        printDisabled={query.isError}
         extraActions={
           <button
             type="button"
             onClick={exportCsv}
-            disabled={!data}
+            disabled={!data || query.isError}
             className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />

@@ -27,6 +27,7 @@ const router = require('express').Router();
 const db = require('../../../db/connection');
 const requireCapability = require('../../../middleware/requireCapability');
 const glBoundaries = require('../../../lib/reports/glBoundaries');
+const RE = require('../../../lib/reportErrors');
 
 function _bucket(days) {
   if (days <= 30)  return '0-30';
@@ -250,7 +251,7 @@ router.get('/reports/ar-aging', requireCapability('finance.reports.view'), async
         : 0
     });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    return RE.sendReportError(res, e, 'erp/reports/ar-aging', req);
   }
 });
 

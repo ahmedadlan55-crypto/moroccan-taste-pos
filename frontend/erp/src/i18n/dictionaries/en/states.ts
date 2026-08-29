@@ -7,6 +7,8 @@ export const states = {
   loading: "Loading…",
   emptyDefault: "No data yet",
   errorDefault: "Couldn't load the data",
+
+  reference: "Reference:",
   permissionDenied: "You don't have access to this section",
   permissionDeniedBody: "This area requires a higher permission level. Contact your manager if you believe this is a mistake.",
   sessionExpired: "Session expired",

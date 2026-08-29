@@ -36,6 +36,7 @@ const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
 const glBoundaries = require('../../../lib/reports/glBoundaries');
+const RE = require('../../../lib/reportErrors');
 
 router.get('/reports/income', requireCapability('finance.reports.view'), async (req, res) => {
   try {
@@ -224,10 +225,10 @@ router.get('/reports/income', requireCapability('finance.reports.view'), async (
       period: { startDate: startDate || null, endDate: endDate || null }
     });
   } catch (e) {
-    console.error('[erp/reports/income]', req.requestId || '-', (e && e.stack) || e);
-    res.json({ revenue:[], cogs:[], opex:[], gAndA:[], otherIncome:[], otherExpense:[], unmapped:[],
-      totalRevenue:0, totalCOGS:0, grossProfit:0, totalOpex:0, totalGAndA:0, operatingIncome:0,
-      totalOtherInc:0, totalOtherExp:0, netIncome:0, degraded: true });
+    // A zero-filled 200 here reads as "the company earned nothing". See
+    // lib/reportErrors.js for why the flag that used to accompany it is not a
+    // substitute for a status code.
+    return RE.sendReportError(res, e, 'erp/reports/income', req);
   }
 });
 

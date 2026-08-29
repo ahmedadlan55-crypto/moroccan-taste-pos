@@ -34,6 +34,8 @@ export function StateShell(props: {
   body?: string;
   action?: ReactNode;
   state: PageState;
+  /** Support reference (the server request id). Rendered LTR and selectable. */
+  reference?: string;
 }) {
   return <Shell {...props} />;
 }
@@ -44,18 +46,31 @@ function Shell({
   body,
   action,
   state,
+  reference,
 }: {
   icon: ReactNode;
   title: string;
   body?: string;
   action?: ReactNode;
   state: PageState;
+  /** Support reference (the server request id). Rendered LTR and selectable. */
+  reference?: string;
 }) {
+  const t = useTx();
   return (
     <div data-state={state} className="surface grid place-items-center gap-3 p-12 text-center">
       <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-500">{icon}</div>
       <div className="text-base font-extrabold text-slate-800">{title}</div>
       {body && <p className="max-w-md text-sm font-medium text-slate-500">{body}</p>}
+      {reference && (
+        // A user can read this aloud or copy it; support finds the stack by it.
+        // `dir="ltr"` because it is an identifier, not prose — in an RTL page a
+        // bare uuid renders with its segments reordered.
+        <p className="text-xs font-bold text-slate-400">
+          <span>{t("states.reference")}</span>{" "}
+          <span dir="ltr" className="select-all font-mono tabular-nums">{reference}</span>
+        </p>
+      )}
       {action}
     </div>
   );
@@ -221,6 +236,7 @@ export function ErrorState({
       icon={<AlertTriangle className="h-6 w-6 text-rose-600" />}
       title={title ?? t("states.errorDefault")}
       body={body ?? safeUserMessage(error, t)}
+      reference={error instanceof ApiError ? error.requestId : undefined}
       action={
         onRetry && (
           <Button variant="secondary" onClick={onRetry}>

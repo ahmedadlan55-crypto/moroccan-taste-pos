@@ -41,6 +41,7 @@ const requireCapability = require('../../../middleware/requireCapability');
 const coaTree = require('../../../lib/coa/tree');
 const classify = require('../../../lib/coa/classify');
 const glBoundaries = require('../../../lib/reports/glBoundaries');
+const RE = require('../../../lib/reportErrors');
 
 // Working-capital buckets that roll into Operating as an aggregated line.
 // Assets consume cash when they grow; liabilities provide it.
@@ -56,7 +57,9 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
   try {
     const { from, to, brandId, branchId, showZero } = req.query;
     const includeZero = showZero === '1' || showZero === 'true';
-    if (!from || !to) return res.json({ error: 'from + to required' });
+    // A validation failure is a 4xx. Returning it as 200 made every caller
+    // treat "you forgot the date range" as a cash-flow statement of zero.
+    if (!from || !to) return RE.badRequest(res, 'RANGE_REQUIRED', 'المدى الزمني (from + to) مطلوب.');
 
     // 0036 remap, resolved ONCE for every query in this handler. Degrades to a
     // plain `e.account_id = a.id` when the map table is absent — a database
@@ -276,11 +279,9 @@ router.get('/reports/cash-flow-ias7', requireCapability('finance.reports.view'),
       sectionCatalogGaps: classify.catalogGaps(),
     });
   } catch(e) {
-    console.error('[cash-flow]', req.requestId || '-', (e && e.stack) || e);
-    res.json({ error: e.message,
-      operating:{lines:[],total:0}, investing:{lines:[],total:0}, financing:{lines:[],total:0},
-      nonCash: [], unmapped: [],
-      netChange:0, cashOpening:0, cashClosing:0, actualMovement:0, reconciliationDiff:0, isReconciled:false });
+    // This one also leaked e.message — driver text, table and column names —
+    // straight to the browser, with no status code to mark it as a failure.
+    return RE.sendReportError(res, e, 'erp/reports/cash-flow-ias7', req);
   }
 });
 

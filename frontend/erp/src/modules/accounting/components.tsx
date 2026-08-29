@@ -40,11 +40,20 @@ export function ReportHeader({
   subtitle,
   onPrint,
   extraActions,
+  printDisabled = false,
 }: {
   title: string;
   subtitle?: string;
   onPrint?: () => void;
   extraActions?: ReactNode;
+  /**
+   * Block printing when the source failed. A statement whose query errored
+   * still has a page around it — header, filters, print button — and the
+   * printed sheet of an errored report is indistinguishable from a real one
+   * once it leaves the screen. The button is disabled, not hidden, so the
+   * reason stays visible.
+   */
+  printDisabled?: boolean;
 }) {
   const t = useT();
   return (
@@ -59,7 +68,7 @@ export function ReportHeader({
       <div className="flex flex-wrap items-center gap-2">
         {extraActions}
         {onPrint && (
-          <Button variant="secondary" onClick={onPrint}>
+          <Button variant="secondary" onClick={onPrint} disabled={printDisabled}>
             <Printer className="h-4 w-4" /> {t("accounting.common.print")}
           </Button>
         )}

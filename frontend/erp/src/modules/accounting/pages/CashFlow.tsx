@@ -66,6 +66,7 @@ export function CashFlowPage() {
         title={t("accounting.cashFlow.title")}
         subtitle={t("accounting.cashFlow.subtitle")}
         onPrint={printReport}
+        printDisabled={query.isError}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
         <FilterField label={t("accounting.common.fromDate")}>

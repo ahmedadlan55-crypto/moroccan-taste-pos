@@ -2,6 +2,15 @@
  *  these in a module's own namespace. Other agents extend the module
  *  namespaces; this shared set is meant to stay stable. */
 export const common = {
+  print: {
+    source: "Source:",
+    basis: "Basis:",
+    filters: "Filters:",
+    rowCount: "Rows:",
+    preparedBy: "Prepared by:",
+    runId: "Run:",
+    incomplete: "Warning: this report is incomplete — the figures below do not represent the full set.",
+  },
   printedAt: "Printed: {time}",
   /** Printed-document letterhead: the issuer's VAT registration number. */
   vatNumber: "VAT No.",

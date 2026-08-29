@@ -38,6 +38,7 @@ import {
 } from "@/shared/ui";
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { usePermissions } from "@/shared/permissions";
+import { useAuth } from "@/app/providers";
 import { formatDate, formatDateTime, formatNumber, formatAsAt, formatForPeriod } from "@/shared/lib";
 import { useT, type TFunction } from "@/i18n";
 import { FilterCard, FilterField, ReportState, exportRowsCsv, printReport } from "@/modules/accounting/components";
@@ -230,6 +231,15 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
   const remoteLabel = remote ? (remoteOptions.find((o) => o.value === applied[remote.id])?.label ?? "") : "";
   const title = t(report.labelKey);
   const period = periodLabel(report, applied, remoteLabel, t, now);
+  // Stable per RESULT, not per render. Reprinting the same figures must quote
+  // the same reference, or two identical sheets carry two different ids and
+  // neither can be traced.
+  const reportRunId = useMemo(
+    () => `${report.id}-${Date.now().toString(36)}`,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [report.id, query.dataUpdatedAt],
+  );
+  const userName = useAuth().user?.username ?? "";
   const invalidDateRange = Boolean(draft.from && draft.to && draft.from > draft.to);
 
   function onExport() {
@@ -246,6 +256,10 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
       subtitle={period}
       meta={t(section.titleKey)}
       className={report.columns.length >= 7 ? "print-landscape print-long-report" : "print-long-report"}
+      // This shell renders every row it loaded (paginate={false}), so the sheet
+      // it prints genuinely IS the whole report — which is what `complete`
+      // claims, and the reason it can honestly be claimed here.
+      provenance={{ reportRunId, rowCount: rows.length, complete: true, user: userName }}
     >
       <PageHeader
         eyebrow={t(section.eyebrowKey)}

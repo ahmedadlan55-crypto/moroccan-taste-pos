@@ -366,6 +366,10 @@ export default function SalesAnalyticsHub() {
                     title={t(`salesReports.pages.${report.id}.title`)}
                     subtitle={`${filters.from} — ${filters.to}`}
                     meta={`${filters.businessDay ? t("salesReports.topbar.businessDay") : t("salesReports.topbar.calendarDay")} · ${filters.taxIncl ? t("salesReports.topbar.taxIncl") : t("salesReports.topbar.taxExcl")}`}
+                    // The one report shell that never set this. Without it a long
+                    // sales report sits inside a `break-inside: avoid` surface,
+                    // so it cannot paginate across sheets.
+                    className="print-long-report"
                   >
                     <Suspense fallback={<LoadingState />}>
                       {(() => {

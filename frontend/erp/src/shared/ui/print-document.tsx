@@ -76,10 +76,32 @@ export interface PrintDocumentProps {
    * silently changes the screen layout while "only" fixing print.
    */
   className?: string;
+  /**
+   * What this sheet of paper is, once it leaves the screen.
+   *
+   * A printed report outlives its tab. Without this block a reader cannot
+   * tell whether the rows in front of them are the whole report or one page
+   * of it, which filters produced them, or who to ask — and the totals row at
+   * the bottom describes the full set either way. `complete: false` prints an
+   * explicit warning rather than letting the omission pass silently.
+   */
+  provenance?: {
+    /** Identifies THIS run when someone brings the paper back with a question. */
+    reportRunId?: string;
+    rowCount?: number;
+    /** false ⇒ the sheet says so, in words, on the page. */
+    complete?: boolean;
+    /** The filters that actually shaped the numbers. */
+    filters?: string;
+    /** Where the figures came from, and on what basis they were measured. */
+    source?: string;
+    basis?: string;
+    user?: string;
+  };
   children: ReactNode;
 }
 
-export function PrintDocument({ title, subtitle, meta, printedAt, overlay, className, children }: PrintDocumentProps) {
+export function PrintDocument({ title, subtitle, meta, printedAt, overlay, className, provenance, children }: PrintDocumentProps) {
   const t = useT();
   const [liveStamp, setLiveStamp] = useState(() => printedAt ?? new Date().toISOString());
   const stamp = printedAt ?? liveStamp;
@@ -154,8 +176,49 @@ export function PrintDocument({ title, subtitle, meta, printedAt, overlay, class
           <span>{t("common.printedAt", { time: formatDateTime(stamp) })}</span>
           {meta != null && <span dir="auto">{meta}</span>}
         </div>
+        {provenance && <PrintProvenance {...provenance} />}
       </header>
       {children}
+    </div>
+  );
+}
+
+/**
+ * The provenance strip. Print-only, small, and deliberately dense: it is
+ * reference material for someone holding the page, not part of the report.
+ */
+function PrintProvenance({
+  reportRunId, rowCount, complete, filters, source, basis, user,
+}: NonNullable<PrintDocumentProps["provenance"]>) {
+  const t = useT();
+  const parts: Array<[string, string]> = [];
+  if (source) parts.push([t("print.source"), source]);
+  if (basis) parts.push([t("print.basis"), basis]);
+  if (filters) parts.push([t("print.filters"), filters]);
+  if (rowCount != null) parts.push([t("print.rowCount"), String(rowCount)]);
+  if (user) parts.push([t("print.preparedBy"), user]);
+  if (!parts.length && complete !== false && !reportRunId) return null;
+  return (
+    <div style={{ marginTop: "1.5mm", fontSize: "7.5pt", fontWeight: 600, lineHeight: 1.5 }}>
+      {complete === false && (
+        // Said in words, on the paper. A short report that looks whole is the
+        // failure this whole block exists to prevent.
+        <div style={{ fontWeight: 800 }}>{t("print.incomplete")}</div>
+      )}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "1mm 4mm" }}>
+        {parts.map(([label, value]) => (
+          <span key={label}>
+            {label} <span dir="auto">{value}</span>
+          </span>
+        ))}
+        {reportRunId && (
+          // LTR: an identifier, not prose. In an RTL page its segments would
+          // otherwise render out of order and be unquotable over the phone.
+          <span>
+            {t("print.runId")} <span dir="ltr">{reportRunId}</span>
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -356,7 +356,7 @@ router.get('/overview', READ, async (req, res) => {
         COALESCE(SUM(${purchase.qty}),0) AS received_qty,
         COALESCE(SUM(${purchase.netAmount}),0) AS spend
       ${pFrom} WHERE ${pw.where.join(' AND ')}
-      GROUP BY pr.supplier_id, supplier_name ORDER BY spend DESC LIMIT 8`;
+      GROUP BY pr.supplier_id, ${purchase.supplierName} ORDER BY spend DESC LIMIT 8`;
     const trendSpanDays = filters.from && filters.to
       ? Math.max(0, Math.round((Date.parse(filters.to) - Date.parse(filters.from)) / 86400000))
       : 30;

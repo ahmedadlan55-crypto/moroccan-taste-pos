@@ -6,6 +6,8 @@
 export const operationalReports = {
   backToDirectory: "الرجوع إلى دليل التقارير",
   print: "طباعة",
+
+  downloadPdf: "تنزيل PDF",
   run: "عرض التقرير",
 
   unknown: {

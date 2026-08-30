@@ -24,7 +24,7 @@
 //     the server changes a filter.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Printer } from "lucide-react";
+import { Download, FileText, Printer } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   Button,
@@ -39,8 +39,8 @@ import {
 import { DataTable, type ColumnDef } from "@/shared/tables";
 import { usePermissions } from "@/shared/permissions";
 import { useAuth } from "@/app/providers";
-import { formatDate, formatDateTime, formatNumber, formatAsAt, formatForPeriod } from "@/shared/lib";
-import { useT, type TFunction } from "@/i18n";
+import { capturePrintDocument, downloadReportPdf, formatDate, formatDateTime, formatNumber, formatAsAt, formatForPeriod, pdfAvailable } from "@/shared/lib";
+import { useLang, useT, type TFunction } from "@/i18n";
 import { FilterCard, FilterField, ReportState, exportRowsCsv, printReport } from "@/modules/accounting/components";
 import type {
   ReportCell,
@@ -240,6 +240,40 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
     [report.id, query.dataUpdatedAt],
   );
   const userName = useAuth().user?.username ?? "";
+  const lang = useLang();
+
+  // Ask whether this deployment can render a PDF BEFORE offering the button.
+  // The browser binary is an OS package: showing an action that 503s when
+  // pressed is worse than not showing it.
+  const [canPdf, setCanPdf] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void pdfAvailable().then((ok) => { if (alive) setCanPdf(ok); });
+    return () => { alive = false; };
+  }, []);
+
+  const onPdf = async () => {
+    const html = capturePrintDocument();
+    if (!html) return;
+    setPdfBusy(true);
+    try {
+      const rendered = await downloadReportPdf({
+        html,
+        title,
+        filename: report.csvName,
+        landscape: report.columns.length >= 7,
+        direction: lang === "ar" ? "rtl" : "ltr",
+      });
+      // A host with no renderer is not an error the user caused — fall back
+      // to the print dialog, which produces the same document.
+      if (!rendered) printReport();
+    } catch {
+      printReport();
+    } finally {
+      setPdfBusy(false);
+    }
+  };
   const invalidDateRange = Boolean(draft.from && draft.to && draft.from > draft.to);
 
   function onExport() {
@@ -276,6 +310,11 @@ function ReportBody({ section, report }: { section: ReportSectionDef; report: Re
             <Button className="flex-1 sm:flex-none" variant="secondary" onClick={onExport} disabled={rows.length === 0 || query.isFetching}>
               <Download className="h-4 w-4" /> {t("table.exportCsv")}
             </Button>
+            {canPdf && (
+              <Button className="flex-1 sm:flex-none" variant="secondary" onClick={onPdf} disabled={rows.length === 0 || query.isFetching || pdfBusy}>
+                <FileText className="h-4 w-4" /> {t("operationalReports.downloadPdf")}
+              </Button>
+            )}
             <Button className="flex-1 sm:flex-none" variant="secondary" onClick={printReport} disabled={rows.length === 0 || query.isFetching}>
               <Printer className="h-4 w-4" /> {t("operationalReports.print")}
             </Button>

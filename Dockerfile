@@ -1,6 +1,24 @@
 FROM node:18-alpine
 WORKDIR /app
 
+# 0) Chromium + an Arabic font, for server-side report PDFs.
+#
+# WHY A BROWSER: Arabic is cursive and bidirectional. A JS PDF writer draws
+# glyphs at coordinates — no shaping, no bidi — so it renders Arabic as
+# disconnected letters in reverse order: a document that LOOKS like a report and
+# is unreadable, on paper somebody signs. Chromium already shapes correctly and
+# already renders this exact print stylesheet, so the PDF and the printed page
+# stay one artifact instead of two that drift.
+#
+# WHY `|| true`: this is an OS package fetched at build time. If the mirror is
+# down or the package is renamed, the DEPLOY MUST STILL SHIP — a report export
+# format is not worth a failed release of the whole ERP. services/reports/
+# PdfService.js probes for the binary at runtime and answers a coded 503 when it
+# is absent, and the browser print path (same document) never stops working.
+# So this line degrades one button; it can never break a deployment.
+RUN apk add --no-cache chromium font-noto-arabic ttf-freefont || true
+ENV PDF_CHROMIUM_PATH=/usr/bin/chromium-browser
+
 # 1) Backend production dependencies.
 COPY package*.json ./
 RUN npm install --production

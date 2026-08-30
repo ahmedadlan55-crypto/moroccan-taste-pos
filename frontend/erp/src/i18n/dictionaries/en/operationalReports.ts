@@ -6,6 +6,8 @@
 export const operationalReports = {
   backToDirectory: "Back to report directory",
   print: "Print",
+
+  downloadPdf: "Download PDF",
   run: "View report",
 
   unknown: {

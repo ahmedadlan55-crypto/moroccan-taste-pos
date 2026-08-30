@@ -625,6 +625,133 @@ router.get('/data-quality', DATA_QUALITY_RPT, async (req, res) => {
   } catch (e) { return H.sendErr(res, e); }
 });
 
+// ── GET /supplier-performance — the OTIF scorecard ──────────────────────────
+//
+// ─── WHY THIS EXISTS NOW ────────────────────────────────────────────────────
+// This report was previously declared unbuildable "because the source data does
+// not exist". That was wrong, and checking the schema rather than trusting the
+// note is what found it: `purchase_orders.expected_date` has always been there,
+// and `po_lines` carries both the ordered quantity and `received_qty`. On-Time
+// and In-Full were both computable the whole time.
+//
+// ─── WHAT OTIF IS, AND WHAT IT IS NOT ───────────────────────────────────────
+// OTIF is On-Time **and** In-Full, measured per PO line, then rolled up per
+// supplier. A line counts once:
+//   · ON TIME  — its last receipt landed on or before `expected_date`
+//   · IN FULL  — received quantity reached the ordered quantity
+//   · OTIF     — both, on the same line. NOT the product of two percentages:
+//                a supplier who is late on half its lines and short on the
+//                OTHER half scores 50% × 50% = 25% that way, when the truth is
+//                0% — no line was both.
+//
+// A supplier QUALITY rate (accepted vs rejected) is a separate scorecard
+// dimension and is genuinely absent: no accepted/rejected columns exist on any
+// receipt table. It is therefore not reported at all rather than approximated
+// from returns, which measure something else.
+//
+// ─── LINES WITH NO PROMISE ──────────────────────────────────────────────────
+// `expected_date` is nullable. A line with no promised date cannot be late —
+// there was nothing to be late against — so it is EXCLUDED from the on-time
+// denominator and counted in `lines_without_promise`. Treating it as on-time
+// would flatter every supplier the buyer forgot to give a date to; treating it
+// as late would punish them for the buyer's omission.
+router.get('/supplier-performance', RPT, async (req, res) => {
+  try {
+    const q = scopedParts(req, 'po.warehouse_id', 'po.po_date');
+    // EXCLUDE what was never a promise, rather than allow-list the states that
+    // are. A draft was never sent and a cancelled order was withdrawn — neither
+    // is something a supplier failed to deliver. Everything else counts,
+    // `fully_received` most of all: an allow-list that omitted it (the first
+    // version of this line did) silently scores zero deliveries, because the
+    // completed orders are exactly the ones with something to measure.
+    add(q.where, q.params, "po.status NOT IN ('draft','cancelled')");
+
+    const ORDERED = 'COALESCE(pl.base_qty, pl.qty, 0)';
+    const RECEIVED = 'COALESCE(pl.base_received_qty, pl.received_qty, 0)';
+    // The line is judged by its LAST receipt: a partial early delivery followed
+    // by a late remainder is a late line, not an on-time one.
+    const LAST_RECEIPT = `(SELECT MAX(pr2.receipt_date)
+                             FROM purchase_receipt_lines prl2
+                             JOIN purchase_receipts pr2 ON pr2.id ${C} = prl2.receipt_id ${C}
+                            WHERE prl2.po_line_id ${C} = pl.id ${C}
+                              AND pr2.status = 'posted')`;
+    const IN_FULL = `(${RECEIVED} >= ${ORDERED} - 0.0001)`;
+    const ON_TIME = `(${LAST_RECEIPT} IS NOT NULL AND po.expected_date IS NOT NULL
+                      AND DATE(${LAST_RECEIPT}) <= po.expected_date)`;
+    const HAS_PROMISE = '(po.expected_date IS NOT NULL)';
+
+    const [rows] = await db.query(
+      `SELECT po.supplier_id,
+              MAX(COALESCE(NULLIF(po.supplier_name,''), po.supplier_id)) AS supplier_name,
+              COUNT(*) AS lines_total,
+              SUM(CASE WHEN ${HAS_PROMISE} THEN 1 ELSE 0 END) AS lines_with_promise,
+              SUM(CASE WHEN ${HAS_PROMISE} THEN 0 ELSE 1 END) AS lines_without_promise,
+              SUM(CASE WHEN ${IN_FULL} THEN 1 ELSE 0 END) AS lines_in_full,
+              SUM(CASE WHEN ${ON_TIME} THEN 1 ELSE 0 END) AS lines_on_time,
+              SUM(CASE WHEN ${ON_TIME} AND ${IN_FULL} THEN 1 ELSE 0 END) AS lines_otif,
+              COUNT(DISTINCT po.id) AS orders,
+              COALESCE(SUM(${ORDERED}),0) AS ordered_qty,
+              COALESCE(SUM(${RECEIVED}),0) AS received_qty,
+              -- Average lateness over the lines that HAVE both a promise and a
+              -- receipt. Early deliveries carry a negative delay and are kept:
+              -- averaging only the late ones would report a supplier who is
+              -- three days early and three days late as three days late.
+              AVG(CASE WHEN ${HAS_PROMISE} AND ${LAST_RECEIPT} IS NOT NULL
+                       THEN DATEDIFF(DATE(${LAST_RECEIPT}), po.expected_date) END) AS avg_delay_days
+         FROM purchase_orders po
+         JOIN po_lines pl ON pl.po_id ${C} = po.id ${C}
+         ${sqlWhere(q.where)}
+        GROUP BY po.supplier_id
+        ORDER BY lines_otif / NULLIF(COUNT(*),0) ASC, lines_total DESC
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+
+    const pct = (n, d) => (Number(d) > 0 ? Math.round((Number(n) / Number(d)) * 10000) / 100 : null);
+    const data = rows.map((row) => ({
+      supplier_id: row.supplier_id,
+      supplier_name: row.supplier_name,
+      orders: Number(row.orders) || 0,
+      lines_total: Number(row.lines_total) || 0,
+      lines_with_promise: Number(row.lines_with_promise) || 0,
+      lines_without_promise: Number(row.lines_without_promise) || 0,
+      ordered_qty: calc.qty(row.ordered_qty),
+      received_qty: calc.qty(row.received_qty),
+      lines_in_full: Number(row.lines_in_full) || 0,
+      lines_on_time: Number(row.lines_on_time) || 0,
+      lines_otif: Number(row.lines_otif) || 0,
+      // On-time is a share of the lines that CARRIED a promise; in-full and
+      // OTIF are shares of every line. Different denominators on purpose — see
+      // the note above about lines with no promised date.
+      on_time_pct: pct(row.lines_on_time, row.lines_with_promise),
+      in_full_pct: pct(row.lines_in_full, row.lines_total),
+      otif_pct: pct(row.lines_otif, row.lines_total),
+      avg_delay_days: row.avg_delay_days == null ? null : Math.round(Number(row.avg_delay_days) * 10) / 10,
+    }));
+
+    const totals = data.reduce((acc, r) => ({
+      suppliers: acc.suppliers + 1,
+      lines_total: acc.lines_total + r.lines_total,
+      lines_with_promise: acc.lines_with_promise + r.lines_with_promise,
+      lines_otif: acc.lines_otif + r.lines_otif,
+      lines_on_time: acc.lines_on_time + r.lines_on_time,
+      lines_in_full: acc.lines_in_full + r.lines_in_full,
+    }), { suppliers: 0, lines_total: 0, lines_with_promise: 0, lines_otif: 0, lines_on_time: 0, lines_in_full: 0 });
+
+    return completeSnapshot(res, data, {
+      filters: q.filters,
+      totals: {
+        ...totals,
+        // Recomputed from the line counts, never averaged from the per-supplier
+        // percentages: a mean of percentages weights a supplier with 2 lines
+        // the same as one with 2,000.
+        otif_pct: pct(totals.lines_otif, totals.lines_total),
+        on_time_pct: pct(totals.lines_on_time, totals.lines_with_promise),
+        in_full_pct: pct(totals.lines_in_full, totals.lines_total),
+        qualityRateAvailable: false,
+      },
+    }, reportLang(req));
+  } catch (e) { return H.sendErr(res, e); }
+});
+
 module.exports = router;
 module.exports.PURCHASE_ANALYSIS_SQL = PURCHASE_ANALYSIS_SQL;
 module.exports.buildPurchaseAnalysisQuery = buildPurchaseAnalysisQuery;

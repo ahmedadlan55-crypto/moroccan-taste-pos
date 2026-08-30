@@ -18,6 +18,7 @@ export const operationalReports = {
   },
 
   groups: {
+      production: { title: "Production and cost", description: "Yield, work in progress, and standard recipe against actual consumption." },
     payroll: {
       title: "Payroll & entitlements",
       description: "Payroll registers, wage structure and staff advances.",
@@ -41,6 +42,8 @@ export const operationalReports = {
   },
 
   reports: {
+      productionYield: { label: "Production yield and WIP", description: "Planned against produced and scrapped per order, with the cost still in progress." },
+      recipeVariance: { label: "Recipe standard vs actual", description: "Quantity and cost variance per component between the recipe standard and actual consumption." },
     payrollRegister: {
       label: "Payroll register",
       description: "Entitlements, deductions and net pay per employee for one payroll run.",
@@ -98,6 +101,22 @@ export const operationalReports = {
   },
 
   col: {
+      orderNumber: "Order no.",
+      product: "Product",
+      component: "Component",
+      releasedAt: "Released",
+      qtyPlanned: "Planned qty",
+      qtyProduced: "Produced qty",
+      qtyScrap: "Scrap",
+      yieldPct: "Yield %",
+      totalCost: "Total cost",
+      wipCost: "WIP cost",
+      qtyStandard: "Standard qty",
+      qtyActual: "Actual qty",
+      qtyVariance: "Qty variance",
+      standardCost: "Standard cost",
+      actualCost: "Actual cost",
+      qtyVarianceCost: "Qty variance value",
     employeeNumber: "Employee no.",
     employeeName: "Employee",
     department: "Department",

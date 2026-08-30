@@ -368,6 +368,7 @@ export const warehouseIntelligence = {
     inputVat: "Input VAT", metric: "Control", value: "Result",
   },
   reports: {
+    supplierPerformance: { label: "Supplier performance (OTIF)", description: "On-time and in-full per supplier, counted per line rather than as the product of two percentages." },
     stockBalance: { label: "Stock balance", description: "Item quantities, WAC and value by warehouse with stock status." },
     valuation: { label: "Inventory valuation", description: "Warehouse valuation with actual and explicitly estimated cost." },
     movements: { label: "Movement ledger", description: "Every receipt, issue, sale consumption, production and adjustment." },
@@ -416,6 +417,13 @@ export const warehouseIntelligence = {
       warehouse: "Warehouse",
     },
     columns: {
+      orders: "Orders",
+      lines: "Lines",
+      onTimePct: "On time %",
+      inFullPct: "In full %",
+      otifPct: "OTIF %",
+      avgDelayDays: "Avg delay (days)",
+      linesNoPromise: "Lines without a promise",
       poNumber: "PO number",
       supplier: "Supplier",
       poDate: "Order date",

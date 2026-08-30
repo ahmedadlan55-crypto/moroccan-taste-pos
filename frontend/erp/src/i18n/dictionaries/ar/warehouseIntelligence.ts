@@ -367,6 +367,7 @@ export const warehouseIntelligence = {
     inputVat: "ضريبة المدخلات", metric: "عنصر الرقابة", value: "النتيجة",
   },
   reports: {
+    supplierPerformance: { label: "أداء الموردين (OTIF)", description: "الالتزام بالموعد والاكتمال لكل مورد، محسوبًا على مستوى السطر لا كحاصل ضرب نسبتين." },
     stockBalance: { label: "أرصدة المخزون", description: "كمية الصنف وتكلفته المتوسطة وقيمته حسب المستودع مع حالة المخزون." },
     valuation: { label: "تقييم المخزون", description: "قيمة كل مستودع مع فصل التكلفة الفعلية عن التقديرية بوضوح." },
     movements: { label: "دفتر حركة المخزون", description: "كل استلام وصرف واستهلاك بيع وإنتاج وتسوية." },
@@ -415,6 +416,13 @@ export const warehouseIntelligence = {
       warehouse: "المستودع",
     },
     columns: {
+      orders: "الأوامر",
+      lines: "السطور",
+      onTimePct: "في الموعد %",
+      inFullPct: "بالكامل %",
+      otifPct: "OTIF %",
+      avgDelayDays: "متوسط التأخير (يوم)",
+      linesNoPromise: "سطور بلا موعد",
       poNumber: "رقم أمر الشراء",
       supplier: "المورد",
       poDate: "تاريخ الأمر",

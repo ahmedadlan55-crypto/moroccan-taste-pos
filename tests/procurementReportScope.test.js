@@ -129,10 +129,16 @@ test('accountant/auditor have finance reports but cashier has neither report gra
 });
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'routes', 'procurement', 'reports.js'), 'utf8');
-test('all nine report handlers are present', () => {
+test('every declared report handler is present, and none has vanished', () => {
+  // An exact list, not a count: a handler that disappears leaves a catalogue
+  // row pointing at a 404, and one that appears undeclared is a report nobody
+  // reviewed. Both directions matter, so the list is stated in full.
   const routes = [...source.matchAll(/router\.get\('([^']+)'/g)].map((m) => m[1]);
   eq(routes, ['/open-orders', '/receiving-variance', '/three-way-match', '/ap-aging',
-    '/supplier-statement', '/purchase-analysis', '/price-variance', '/tax', '/data-quality']);
+    '/supplier-statement', '/purchase-analysis', '/price-variance', '/tax', '/data-quality',
+    // OTIF — added once the schema was checked instead of the note trusted:
+    // purchase_orders.expected_date and po_lines.received_qty were always there.
+    '/supplier-performance']);
 });
 test('supplier statement no longer redirects to an unscoped endpoint', () => {
   ok(!/res\.redirect/.test(source));

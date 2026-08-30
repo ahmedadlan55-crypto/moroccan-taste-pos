@@ -48,6 +48,7 @@ export const PURCHASING_REPORT_IDS = [
   "price-variance",
   "ap-aging",
   "supplier-statement",
+  "supplier-performance",
   "tax",
   "data-quality",
 ] as const;
@@ -335,6 +336,42 @@ export const PURCHASING_REPORTS: Record<PurchasingReportId, PurchasingReportDef>
     heading: "period",
   },
 
+  // ─── OTIF ────────────────────────────────────────────────────────────────
+  // Previously declared unbuildable "because the source data does not exist".
+  // `purchase_orders.expected_date` and `po_lines.received_qty` were there all
+  // along — which is On-Time and In-Full. A supplier QUALITY rate genuinely
+  // has no columns and is reported as unavailable rather than approximated.
+  "supplier-performance": {
+    id: "supplier-performance",
+    labelKey: "warehouseIntelligence.reports.supplierPerformance.label",
+    descriptionKey: "warehouseIntelligence.reports.supplierPerformance.description",
+    icon: Truck,
+    tone: "violet",
+    capsAny: READ_CAPS,
+    shape: "rows",
+    columns: [
+      { key: "supplier_name", labelKey: `${C}.supplier`, format: "text", align: "start" },
+      { key: "orders", labelKey: `${C}.orders`, format: "number", align: "end" },
+      { key: "lines_total", labelKey: `${C}.lines`, format: "number", align: "end" },
+      { key: "on_time_pct", labelKey: `${C}.onTimePct`, format: "number", align: "end" },
+      { key: "in_full_pct", labelKey: `${C}.inFullPct`, format: "number", align: "end" },
+      { key: "otif_pct", labelKey: `${C}.otifPct`, format: "number", align: "end" },
+      { key: "avg_delay_days", labelKey: `${C}.avgDelayDays`, format: "number", align: "end" },
+      { key: "lines_without_promise", labelKey: `${C}.linesNoPromise`, format: "number", align: "end" },
+    ],
+    filters: ["period", "warehouse"],
+    totals: [
+      { key: "lines_total", from: "totals", labelKey: `${C}.lines`, format: "number", column: "lines_total" },
+      { key: "on_time_pct", from: "totals", labelKey: `${C}.onTimePct`, format: "number", column: "on_time_pct" },
+      { key: "in_full_pct", from: "totals", labelKey: `${C}.inFullPct`, format: "number", column: "in_full_pct" },
+      { key: "otif_pct", from: "totals", labelKey: `${C}.otifPct`, format: "number", column: "otif_pct" },
+    ],
+    exportMode: "client-rows",
+    rowIdKeys: ["supplier_id", "supplier_name"],
+    heading: "period",
+    defaultSort: { columnKey: "otif_pct", dir: "asc" },
+  },
+
   "data-quality": {
     id: "data-quality",
     labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label",
@@ -369,7 +406,7 @@ const G = "warehouseIntelligence.purchasingReports.groups";
 export const PURCHASING_REPORT_GROUPS: PurchasingReportGroup[] = [
   { id: "orders", titleKey: `${G}.orders`, icon: ShoppingCart, reports: ["open-orders", "purchase-analysis"] },
   { id: "receiving", titleKey: `${G}.receiving`, icon: FileCheck2, reports: ["receiving-variance", "three-way-match", "price-variance"] },
-  { id: "payables", titleKey: `${G}.payables`, icon: Wallet, reports: ["ap-aging", "supplier-statement"] },
+  { id: "payables", titleKey: `${G}.payables`, icon: Wallet, reports: ["ap-aging", "supplier-statement", "supplier-performance"] },
   { id: "tax", titleKey: `${G}.tax`, icon: ReceiptText, reports: ["tax"] },
   { id: "dataQuality", titleKey: `${G}.dataQuality`, icon: ShieldCheck, reports: ["data-quality"] },
 ];

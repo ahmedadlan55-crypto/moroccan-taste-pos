@@ -18,6 +18,7 @@ export const operationalReports = {
   },
 
   groups: {
+      production: { title: "الإنتاج والتكلفة", description: "المردود والعمل تحت التشغيل والفرق بين الوصفة المعيارية والاستهلاك الفعلي." },
     payroll: {
       title: "الرواتب والاستحقاقات",
       description: "كشوف الرواتب وهيكل الأجور والسلف.",
@@ -41,6 +42,8 @@ export const operationalReports = {
   },
 
   reports: {
+      productionYield: { label: "مردود الإنتاج وتحت التشغيل", description: "المخطط مقابل المنتَج والهالك لكل أمر إنتاج، مع تكلفة ما زال تحت التشغيل." },
+      recipeVariance: { label: "الوصفة المعيارية مقابل الفعلي", description: "فرق الكمية والتكلفة لكل مكوّن بين معيار الوصفة والاستهلاك الفعلي." },
     payrollRegister: {
       label: "كشف رواتب الفترة",
       description: "استحقاقات وخصومات وصافي كل موظف في مسيّر رواتب محدد.",
@@ -98,6 +101,22 @@ export const operationalReports = {
   },
 
   col: {
+      orderNumber: "رقم الأمر",
+      product: "المنتج",
+      component: "المكوّن",
+      releasedAt: "تاريخ الإطلاق",
+      qtyPlanned: "الكمية المخططة",
+      qtyProduced: "الكمية المنتَجة",
+      qtyScrap: "الهالك",
+      yieldPct: "المردود %",
+      totalCost: "التكلفة الإجمالية",
+      wipCost: "تكلفة تحت التشغيل",
+      qtyStandard: "الكمية المعيارية",
+      qtyActual: "الكمية الفعلية",
+      qtyVariance: "فرق الكمية",
+      standardCost: "التكلفة المعيارية",
+      actualCost: "التكلفة الفعلية",
+      qtyVarianceCost: "قيمة فرق الكمية",
     employeeNumber: "الرقم الوظيفي",
     employeeName: "الموظف",
     department: "الإدارة",

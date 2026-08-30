@@ -28,7 +28,7 @@
 //   `administration.audit` — the capability on the screen that reads this very
 //   endpoint — which is STRICTER than the `workflow.audit.view` the deleted
 //   action-log card carried; nothing was widened.
-import { Clock, ScrollText, Workflow } from "lucide-react";
+import { Clock, Factory, GitCompareArrows, ScrollText, Workflow } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import { asRows, num, str, type ReportResult, type ReportSectionDef } from "../engine";
 
@@ -62,6 +62,77 @@ const YES_NO = {
 } as const;
 
 // ── loaders ─────────────────────────────────────────────────────────────────
+
+// ── production ─────────────────────────────────────────────────────────────
+// Both endpoints were built after checking the schema rather than trusting a
+// note that said the data did not exist. `production_orders` carries the plan,
+// the output, the scrap and the three cost buckets; `production_consumption`
+// carries qty_planned AND qty_actual on the same row.
+async function loadProductionYield(
+  filters: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+): Promise<ReportResult> {
+  const body = await apiClient.get<{ data?: unknown; totals?: Record<string, unknown> }>(
+    "/erp/reports/production-yield",
+    { params: { from: filters.from, to: filters.to }, signal },
+  );
+  const rows = asRows(body?.data);
+  const t = body?.totals ?? {};
+  return {
+    rows: rows.map((r) => ({
+      // The engine needs a stable row identity; the order number is it.
+      id: str(r.orderNumber),
+      orderNumber: str(r.orderNumber),
+      productName: str(r.productName),
+      status: str(r.status),
+      releasedAt: str(r.releasedAt),
+      qtyPlanned: num(r.qtyPlanned),
+      qtyProduced: num(r.qtyProduced),
+      qtyScrap: num(r.qtyScrap),
+      // A null yield stays null: "nothing was planned" is not "produced 0%".
+      yieldPct: r.yieldPct == null ? null : num(r.yieldPct),
+      totalCost: num(r.totalCost),
+    })),
+    totals: [
+      { labelKey: "operationalReports.col.qtyPlanned", value: num(t.qtyPlanned), format: "count" },
+      { labelKey: "operationalReports.col.qtyProduced", value: num(t.qtyProduced), format: "count" },
+      { labelKey: "operationalReports.col.wipCost", value: num(t.wipCost), format: "money" },
+      { labelKey: "operationalReports.col.totalCost", value: num(t.totalCost), format: "money" },
+    ],
+  };
+}
+
+async function loadRecipeVariance(
+  filters: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+): Promise<ReportResult> {
+  const body = await apiClient.get<{ data?: unknown; totals?: Record<string, unknown> }>(
+    "/erp/reports/recipe-variance",
+    { params: { from: filters.from, to: filters.to }, signal },
+  );
+  const rows = asRows(body?.data);
+  const t = body?.totals ?? {};
+  return {
+    rows: rows.map((r) => ({
+      // One order consumes many components, so neither alone is unique.
+      id: `${str(r.orderNumber)}:${str(r.componentName)}`,
+      orderNumber: str(r.orderNumber),
+      productName: str(r.productName),
+      componentName: str(r.componentName),
+      qtyStandard: num(r.qtyStandard),
+      qtyActual: num(r.qtyActual),
+      qtyVariance: num(r.qtyVariance),
+      standardCost: num(r.standardCost),
+      actualCost: num(r.actualCost),
+      qtyVarianceCost: num(r.qtyVarianceCost),
+    })),
+    totals: [
+      { labelKey: "operationalReports.col.standardCost", value: num(t.standardCost), format: "money" },
+      { labelKey: "operationalReports.col.actualCost", value: num(t.actualCost), format: "money" },
+      { labelKey: "operationalReports.col.totalVariance", value: num(t.totalVariance), format: "money" },
+    ],
+  };
+}
 
 async function loadShiftVariance(
   filters: Readonly<Record<string, string>>,
@@ -159,6 +230,12 @@ export const OPERATIONS_REPORTS_SECTION: ReportSectionDef = {
       icon: Clock,
     },
     {
+      id: "production",
+      titleKey: "operationalReports.groups.production.title",
+      descriptionKey: "operationalReports.groups.production.description",
+      icon: Factory,
+    },
+    {
       id: "governance",
       titleKey: "operationalReports.groups.governance.title",
       descriptionKey: "operationalReports.groups.governance.description",
@@ -166,6 +243,60 @@ export const OPERATIONS_REPORTS_SECTION: ReportSectionDef = {
     },
   ],
   reports: [
+    {
+      id: "production-yield",
+      groupId: "production",
+      labelKey: "operationalReports.reports.productionYield.label",
+      descriptionKey: "operationalReports.reports.productionYield.description",
+      icon: Factory,
+      tone: "lime",
+      // Production cost is financial data; this is the capability that already
+      // gates the cost side of the warehouse reports. Nothing is widened.
+      cap: "finance.reports.view",
+      csvName: "production-yield",
+      filters: [
+        { id: "from", labelKey: "operationalReports.filter.from", kind: "date" },
+        { id: "to", labelKey: "operationalReports.filter.to", kind: "date" },
+      ],
+      columns: [
+        { key: "orderNumber", labelKey: "operationalReports.col.orderNumber", format: "code" },
+        { key: "productName", labelKey: "operationalReports.col.product" },
+        { key: "status", labelKey: "operationalReports.col.status" },
+        { key: "releasedAt", labelKey: "operationalReports.col.releasedAt", format: "datetime" },
+        { key: "qtyPlanned", labelKey: "operationalReports.col.qtyPlanned", format: "count" },
+        { key: "qtyProduced", labelKey: "operationalReports.col.qtyProduced", format: "count" },
+        { key: "qtyScrap", labelKey: "operationalReports.col.qtyScrap", format: "count" },
+        { key: "yieldPct", labelKey: "operationalReports.col.yieldPct", format: "count" },
+        { key: "totalCost", labelKey: "operationalReports.col.totalCost", format: "money" },
+      ],
+      load: loadProductionYield,
+    },
+    {
+      id: "recipe-variance",
+      groupId: "production",
+      labelKey: "operationalReports.reports.recipeVariance.label",
+      descriptionKey: "operationalReports.reports.recipeVariance.description",
+      icon: GitCompareArrows,
+      tone: "amber",
+      cap: "finance.reports.view",
+      csvName: "recipe-variance",
+      filters: [
+        { id: "from", labelKey: "operationalReports.filter.from", kind: "date" },
+        { id: "to", labelKey: "operationalReports.filter.to", kind: "date" },
+      ],
+      columns: [
+        { key: "orderNumber", labelKey: "operationalReports.col.orderNumber", format: "code" },
+        { key: "productName", labelKey: "operationalReports.col.product" },
+        { key: "componentName", labelKey: "operationalReports.col.component" },
+        { key: "qtyStandard", labelKey: "operationalReports.col.qtyStandard", format: "count" },
+        { key: "qtyActual", labelKey: "operationalReports.col.qtyActual", format: "count" },
+        { key: "qtyVariance", labelKey: "operationalReports.col.qtyVariance", format: "count" },
+        { key: "standardCost", labelKey: "operationalReports.col.standardCost", format: "money" },
+        { key: "actualCost", labelKey: "operationalReports.col.actualCost", format: "money" },
+        { key: "qtyVarianceCost", labelKey: "operationalReports.col.qtyVarianceCost", format: "money" },
+      ],
+      load: loadRecipeVariance,
+    },
     {
       id: "shift-variance",
       groupId: "posControl",

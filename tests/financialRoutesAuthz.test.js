@@ -126,9 +126,29 @@ const GUARDED = [
       // The retired trial-balance stub exports an empty router on purpose
       // (routes/erp/reports/trial-balance.js) — it registers nothing, so this
       // loop never sees it. Any real registration must be guarded.
+      // A route is guarded by an INLINE `requireCapability(...)`, or by a named
+      // middleware in the same file that this test has PROVEN performs a
+      // capability check.
+      //
+      // The second form exists because some reports are readable by either of
+      // two grants (finance OR procurement), which `requireCapability` — one
+      // capability per call — cannot express. Accepting any bare identifier
+      // would gut this sweep, so the named guard is verified, not trusted: it
+      // must be declared in this file AND its body must call `hasCapability`.
+      const named = l.match(/router\.(?:get|post|put|patch|delete)\([^,]+,\s*([A-Z][A-Z0-9_]*)\s*,/);
+      let guardedByNamed = false;
+      if (named) {
+        const guard = named[1];
+        const declared = new RegExp(
+          `(?:async\\s+function\\s+${guard}\\s*\\(|(?:const|let)\\s+${guard}\\s*=)`,
+        ).test(src);
+        // The body must actually consult the capability layer.
+        const body = src.slice(src.search(new RegExp(`(?:function\\s+${guard}\\b|${guard}\\s*=)`)));
+        guardedByNamed = declared && /hasCapability\(/.test(body.slice(0, 1200));
+      }
       check(
         `${file}:${i + 1} route is guarded`,
-        l.includes('requireCapability('),
+        l.includes('requireCapability(') || guardedByNamed,
         l.trim().slice(0, 140),
       );
     });

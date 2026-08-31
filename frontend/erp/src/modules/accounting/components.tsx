@@ -3,10 +3,11 @@
 // money formatter.
 
 import { useState, type ReactNode } from "react";
-import { Printer } from "lucide-react";
+import { FileText, Printer } from "lucide-react";
 import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
-import { useT } from "@/i18n";
+import { useReportPdf } from "@/shared/lib";
+import { useLang, useT } from "@/i18n";
 
 // `Num` / `fmt` now live in the shared kit (`shared/ui/num.tsx`) — they are the
 // house money cell for the WHOLE product, not an accounting-module detail, and
@@ -41,11 +42,23 @@ export function ReportHeader({
   onPrint,
   extraActions,
   printDisabled = false,
+  pdf,
 }: {
   title: string;
   subtitle?: string;
   onPrint?: () => void;
   extraActions?: ReactNode;
+  /**
+   * Offer a server-rendered PDF beside the print button.
+   *
+   * Eleven statements render this header and every one of them could only
+   * print. Wiring PDF here rather than into each page is the difference
+   * between one implementation and eleven, and PDF shipped having reached
+   * exactly one report shell because it was wired per-page the first time.
+   *
+   * Omit it and nothing changes: no probe runs and no button appears.
+   */
+  pdf?: { filename?: string; landscape?: boolean };
   /**
    * Block printing when the source failed. A statement whose query errored
    * still has a page around it — header, filters, print button — and the
@@ -56,6 +69,13 @@ export function ReportHeader({
   printDisabled?: boolean;
 }) {
   const t = useT();
+  const lang = useLang();
+  const { canPdf, pdfBusy, renderPdf } = useReportPdf({
+    title,
+    filename: pdf?.filename,
+    landscape: pdf?.landscape,
+    direction: lang === "ar" ? "rtl" : "ltr",
+  });
   return (
     <div className="no-print mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div className="min-w-0">
@@ -67,6 +87,15 @@ export function ReportHeader({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {extraActions}
+        {pdf && canPdf && (
+          // Same `printDisabled` as print, deliberately. A statement whose
+          // source failed must not leave the screen by ANY route; a PDF
+          // button that ignored the block would reintroduce the defect the
+          // block exists to prevent, one button over.
+          <Button variant="secondary" onClick={renderPdf} loading={pdfBusy} disabled={printDisabled}>
+            <FileText className="h-4 w-4" /> {t("operationalReports.downloadPdf")}
+          </Button>
+        )}
         {onPrint && (
           <Button variant="secondary" onClick={onPrint} disabled={printDisabled}>
             <Printer className="h-4 w-4" /> {t("accounting.common.print")}

@@ -120,6 +120,7 @@ export function ProfitabilityPage() {
         title={t("accounting.profitability.title")}
         subtitle={t("accounting.profitability.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "profitability", landscape: true }}
         extraActions={
           rows.length > 0 && (
             <Button

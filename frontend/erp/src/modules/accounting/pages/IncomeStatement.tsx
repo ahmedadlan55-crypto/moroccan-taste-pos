@@ -285,6 +285,7 @@ export function IncomeStatementPage() {
         title={t("accounting.incomeStatement.title")}
         subtitle={t("accounting.incomeStatement.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "income-statement" }}
         printDisabled={query.isError}
         extraActions={
           <button

@@ -66,6 +66,7 @@ export function CashFlowPage() {
         title={t("accounting.cashFlow.title")}
         subtitle={t("accounting.cashFlow.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "cash-flow" }}
         printDisabled={query.isError}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>

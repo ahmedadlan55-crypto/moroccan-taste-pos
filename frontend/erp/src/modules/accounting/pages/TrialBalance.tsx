@@ -225,6 +225,7 @@ export function TrialBalancePage() {
         title={t("accounting.trialBalance.title")}
         subtitle={t("accounting.trialBalance.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "trial-balance", landscape: true }}
         extraActions={
           <Button variant="secondary" onClick={exportCsv} disabled={outputFlat.length === 0}>
             <Download className="h-4 w-4" /> {t("table.exportCsv")}

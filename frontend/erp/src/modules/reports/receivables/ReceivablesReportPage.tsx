@@ -17,6 +17,7 @@
 //     branch-scoped and FAIL CLOSED in SQL: a caller with no branch grants gets
 //     HTTP 200 with zero rows, on purpose. That is an EmptyState, never an error.
 import { useMemo, useState, type ReactNode } from "react";
+import { LANDSCAPE_COLUMN_THRESHOLD } from "@/modules/reports/shell/ReportExportActions";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { Download } from "lucide-react";
@@ -223,6 +224,10 @@ export function ReceivablesReportPage({ reportId }: { reportId?: string } = {}) 
         title={title}
         subtitle={t(`receivablesReports.reports.${def.i18nKey}.subtitle`)}
         onPrint={printReport}
+        // Orientation follows the report definition: these range from a
+        // two-column statement to a wide aging grid, so a fixed choice would
+        // cut columns off half of them.
+        pdf={{ filename: `o2c-${def.id}`, landscape: def.columns.length >= LANDSCAPE_COLUMN_THRESHOLD }}
         extraActions={
           can(RECEIVABLES_EXPORT_CAP) ? (
             <Button variant="secondary" onClick={onExport} loading={exporting} disabled={rows.length === 0}>

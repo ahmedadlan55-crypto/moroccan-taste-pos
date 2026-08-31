@@ -308,6 +308,7 @@ export function GeneralLedgerPage() {
         title={t("accounting.generalLedger.title")}
         subtitle={t("accounting.generalLedger.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "general-ledger", landscape: true }}
         extraActions={
           <Button variant="secondary" onClick={onExport} disabled={allSections.length === 0}>
             <Download className="h-4 w-4" /> {t("table.exportCsv")}

@@ -106,6 +106,7 @@ export function InventoryValuationPage() {
         title={t("accounting.invValuation.title")}
         subtitle={t("accounting.invValuation.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "inventory-valuation", landscape: true }}
         extraActions={
           items.length > 0 && (
             <Button variant="secondary" onClick={() => itemsCsv(t, items, filter.applied)}>

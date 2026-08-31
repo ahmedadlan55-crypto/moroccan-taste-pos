@@ -249,6 +249,7 @@ export function BalanceSheetPage() {
         title={t("accounting.balanceSheet.title")}
         subtitle={t("accounting.balanceSheet.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "balance-sheet" }}
         printDisabled={query.isError}
         extraActions={
           <button

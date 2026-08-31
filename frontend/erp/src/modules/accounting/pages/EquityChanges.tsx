@@ -169,6 +169,7 @@ export function EquityChangesPage() {
         title={t("accounting.equity.title")}
         subtitle={t("accounting.equity.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "equity-changes", landscape: true }}
         extraActions={
           data && (
             <Button variant="secondary" onClick={() => exportCsv(t, data)}>

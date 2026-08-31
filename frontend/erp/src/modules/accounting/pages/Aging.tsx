@@ -135,6 +135,7 @@ export function ArAgingPage() {
         title={t("accounting.aging.ar.title")}
         subtitle={t("accounting.aging.ar.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "ar-aging", landscape: true }}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
         <FilterField label={t("accounting.common.asOfDate")}>
@@ -187,6 +188,7 @@ export function ApAgingPage() {
         title={t("accounting.aging.ap.title")}
         subtitle={t("accounting.aging.ap.subtitle")}
         onPrint={printReport}
+        pdf={{ filename: "ap-aging", landscape: true }}
       />
       <FilterCard onRun={filter.run} running={query.isFetching}>
         <FilterField label={t("accounting.common.asOfDate")}>

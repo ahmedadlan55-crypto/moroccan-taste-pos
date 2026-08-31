@@ -33,6 +33,13 @@ const CHROMIUM_CANDIDATES = [
   '/usr/bin/google-chrome',
 ].filter(Boolean);
 
+/** CDP handshake budget. The library default is 180s — far too long to hold
+ *  a report request open just to learn that the browser never came up. */
+const PROTOCOL_TIMEOUT_MS = 25000;
+
+/** Hard ceiling on ONE render, whatever goes wrong inside it. */
+const RENDER_TIMEOUT_MS = Number(process.env.PDF_RENDER_TIMEOUT_MS) || 40000;
+
 /** Cache the resolved launcher, and the FAILURE too — probing on every request
  *  would spawn a process per call just to fail. */
 let _resolved;
@@ -114,7 +121,7 @@ function buildDocument({ html, title, baseUrl, direction }) {
  * @param {{html:string,title?:string,landscape?:boolean,baseUrl:string,direction?:string}} spec
  * @returns {Promise<Buffer>}
  */
-async function render(spec) {
+async function renderUnbounded(spec) {
   // VALIDATE FIRST. A malformed request is malformed on every host; checking
   // the browser first made the same empty payload answer 422 where Chromium was
   // installed and 503 where it was not — one request, two truths, and the
@@ -136,16 +143,32 @@ async function render(spec) {
   try {
     browser = await launcher.puppeteer.launch({
       executablePath: launcher.executablePath,
-      // Required in a container: no sandbox namespaces, and /dev/shm is tiny.
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--font-render-hinting=none'],
+      // Container flags. `--single-process` and `--no-zygote` matter most: on a
+      // small shared instance the default multi-process launch starves, and the
+      // CDP handshake dies with "Network.enable timed out" — which is exactly
+      // what production did on the first deploy of this feature.
+      args: [
+        '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+        '--single-process', '--no-zygote', '--disable-gpu',
+        '--disable-extensions', '--disable-background-networking',
+        '--font-render-hinting=none',
+      ],
+      // Default is 180s. A report request must not hold a connection open for
+      // three minutes to discover it failed.
+      protocolTimeout: PROTOCOL_TIMEOUT_MS,
     });
     const page = await browser.newPage();
-    // `setContent` with a <base> lets relative asset URLs resolve back to this
-    // server, so the document gets the real stylesheet and the real font.
-    await page.setContent(buildDocument(spec), { waitUntil: 'networkidle0', timeout: 20000 });
-    // Give webfonts a chance to land; without this the first page can render in
-    // a fallback face while later pages use Cairo.
-    await page.evaluateHandle('document.fonts.ready');
+    // `domcontentloaded`, not `networkidle0`: the document is self-contained
+    // apart from the stylesheet and font, and waiting for the network to fall
+    // idle means waiting out every asset that will never arrive.
+    await page.setContent(buildDocument(spec), { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // Let webfonts land so the whole document renders in one face — but BOUND
+    // it. `document.fonts.ready` never settling would hang the request, and a
+    // report in a fallback font is infinitely better than no report.
+    await Promise.race([
+      page.evaluateHandle('document.fonts.ready').catch(() => null),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
     return await page.pdf({
       format: 'A4',
       landscape: !!(spec && spec.landscape),
@@ -167,4 +190,32 @@ async function render(spec) {
   }
 }
 
-module.exports = { render, isAvailable, buildDocument, __resetForTests, CHROMIUM_CANDIDATES };
+/**
+ * The public entry point: `renderUnbounded` under a hard deadline.
+ *
+ * A hung render is worse than a failed one. It holds a connection, shows the
+ * user nothing, and on the first production deploy of this feature it did
+ * exactly that — Chromium came up, the CDP handshake stalled in a constrained
+ * container, and the request sat there until the client gave up with no
+ * message at all. A deadline converts that into a coded 503 the UI can fall
+ * back from, in seconds.
+ */
+async function render(spec) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      renderUnbounded(spec),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(unavailable(
+          `PDF rendering exceeded ${RENDER_TIMEOUT_MS}ms on this host.`,
+        )), RENDER_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+module.exports = {
+  render, isAvailable, buildDocument, __resetForTests,
+  CHROMIUM_CANDIDATES, RENDER_TIMEOUT_MS, PROTOCOL_TIMEOUT_MS,
+};

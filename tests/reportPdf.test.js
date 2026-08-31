@@ -22,6 +22,13 @@
  * route down with it would be a far worse bug than not having PDF at all.
  */
 
+// FAIL BY DEFAULT. Every assertion below lives inside one async IIFE, so if an
+// awaited promise never settles — exactly what a missing render deadline does —
+// and nothing is holding the event loop open, node simply LEAVES: exit code 0,
+// no output, a green run that asserted nothing. The last line of the file earns
+// the zero; reaching it is itself the final assertion.
+process.exitCode = 1;
+
 const path = require('path');
 const http = require('http');
 
@@ -94,6 +101,144 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
     const RE = require(path.join(ROOT, 'lib', 'reportErrors.js'));
     check('the report error contract passes 503 through', RE.KNOWN_HTTP.has(503));
 
+    // ── A render can never hang ────────────────────────────────────────
+    // Production proved this the hard way on the first deploy: Chromium came
+    // up, the CDP handshake stalled in a constrained container, and the
+    // request sat open until the client gave up — no status, no message,
+    // nothing in the UI. A hung request is worse than a failed one.
+    check('there is a hard render deadline', PdfService.RENDER_TIMEOUT_MS > 0 && PdfService.RENDER_TIMEOUT_MS <= 60000,
+      PdfService.RENDER_TIMEOUT_MS);
+    // And the CDP handshake gets its own, well under it — the library default
+    // is 180 seconds.
+    check('the CDP handshake is bounded well inside that',
+      PdfService.PROTOCOL_TIMEOUT_MS < PdfService.RENDER_TIMEOUT_MS, 
+      { protocol: PdfService.PROTOCOL_TIMEOUT_MS, render: PdfService.RENDER_TIMEOUT_MS });
+
+    // The deadline must FIRE, not merely be declared. A constant nobody
+    // enforces is documentation, and documentation does not end a hung
+    // request.
+    {
+      const savedTimeout = process.env.PDF_RENDER_TIMEOUT_MS;
+      process.env.PDF_RENDER_TIMEOUT_MS = "300";
+      // A launch that never settles IS the stalled-handshake case.
+      const corePath = require.resolve('puppeteer-core');
+      const savedCore = require.cache[corePath];
+      let launchOptions = null;
+      require.cache[corePath] = {
+        id: corePath, filename: corePath, loaded: true,
+        exports: { launch: (opts) => { launchOptions = opts; return new Promise(() => {}); } },
+      };
+      // Point at a path that exists so the launcher resolves and we reach the
+      // hang rather than the "no browser" branch.
+      process.env.PDF_CHROMIUM_PATH = __filename;
+      const freshPath = require.resolve(path.join(ROOT, 'services/reports/PdfService.js'));
+      const savedSelf = require.cache[freshPath];
+      delete require.cache[freshPath];
+      const Fresh = require(freshPath);
+
+      const startedAt = Date.now();
+      let hangError = null;
+      try {
+        await Fresh.render({ html: '<p>x</p>', baseUrl: 'http://127.0.0.1:3000' });
+      } catch (e) { hangError = e; }
+      const elapsed = Date.now() - startedAt;
+
+      check('a stalled browser rejects instead of hanging', hangError !== null);
+      eq('with the fallback code the UI understands', hangError && hangError.code, 'PDF_RENDERER_UNAVAILABLE');
+      check('and it gives up promptly', elapsed < 3000, elapsed);
+
+      // The flags that made this work AT ALL on the production container.
+      // Without --single-process/--no-zygote the default multi-process
+      // launch starves on a small instance and the CDP handshake dies with
+      // "Network.enable timed out" — the exact failure this feature shipped
+      // with on its first deploy. A future tidy-up that drops them would
+      // reintroduce a hang that only appears in production.
+      const args = (launchOptions && launchOptions.args) || [];
+      for (const flag of ['--single-process', '--no-zygote', '--no-sandbox', '--disable-dev-shm-usage']) {
+        check('launch keeps ' + flag, args.includes(flag), args);
+      }
+      check('the CDP handshake is bounded at launch',
+        launchOptions && launchOptions.protocolTimeout === PdfService.PROTOCOL_TIMEOUT_MS,
+        launchOptions && launchOptions.protocolTimeout);
+
+      if (savedCore) require.cache[corePath] = savedCore; else delete require.cache[corePath];
+      if (savedSelf) require.cache[freshPath] = savedSelf; else delete require.cache[freshPath];
+      if (savedTimeout === undefined) delete process.env.PDF_RENDER_TIMEOUT_MS;
+      else process.env.PDF_RENDER_TIMEOUT_MS = savedTimeout;
+      process.env.PDF_CHROMIUM_PATH = '/definitely/not/a/browser';
+    }
+
+    // ── A render that reaches the browser ──────────────────────────────
+    // Everything above stops at `launch`. This drives the whole path with a
+    // fake browser, because the things that only happen AFTER launch are the
+    // ones that cost real money when they are wrong: a leaked Chromium per
+    // request, and paper with no page numbers on it.
+    {
+      const corePath = require.resolve('puppeteer-core');
+      const savedCore = require.cache[corePath];
+      const savedChromium = process.env.PDF_CHROMIUM_PATH;
+
+      let pdfOptions = null, contentOptions = null, closed = 0, html = '';
+      const makeBrowser = (pdfImpl) => ({
+        newPage: async () => ({
+          setContent: async (doc, opts) => { html = doc; contentOptions = opts; },
+          // A webfont promise that NEVER settles. Real: a font request that
+          // hangs leaves `document.fonts.ready` pending forever.
+          evaluateHandle: () => new Promise(() => {}),
+          pdf: async (opts) => { pdfOptions = opts; return pdfImpl(); },
+        }),
+        close: async () => { closed += 1; },
+      });
+      const install = (pdfImpl) => {
+        require.cache[corePath] = { id: corePath, filename: corePath, loaded: true,
+          exports: { launch: async () => makeBrowser(pdfImpl) } };
+        process.env.PDF_CHROMIUM_PATH = __filename; // exists, so the launcher resolves
+        const fp = require.resolve(path.join(ROOT, 'services/reports/PdfService.js'));
+        delete require.cache[fp];
+        return require(fp);
+      };
+
+      const Ok = install(() => Buffer.from('%PDF-1.4 fake'));
+      const startedAt = Date.now();
+      const buf = await Ok.render({ html: '<p>تقرير</p>', title: 'ت', baseUrl: 'http://127.0.0.1:3000', landscape: true });
+      const elapsed = Date.now() - startedAt;
+
+      check('a render that reaches the browser returns a buffer', Buffer.isBuffer(buf));
+      // The webfont promise never settles, so ONLY the inner bound can end this.
+      // Unbounded, it would sit here until the 40s deadline — a report that
+      // takes 40 seconds to admit a font was slow is a report nobody waits for.
+      check('a webfont that never loads does not stall the render', elapsed < 8000, elapsed);
+      eq('the browser is closed', closed, 1);
+
+      // Page numbers belong ON the paper: a report that loses its pagination is
+      // a stack of sheets nobody can prove is complete.
+      check('the footer carries page x of y',
+        !!pdfOptions && pdfOptions.displayHeaderFooter === true
+        && /class="pageNumber"/.test(pdfOptions.footerTemplate || '')
+        && /class="totalPages"/.test(pdfOptions.footerTemplate || ''), pdfOptions);
+      check('landscape is honoured for wide reports', pdfOptions && pdfOptions.landscape === true);
+      check('the CSS page box wins over the format default', pdfOptions && pdfOptions.preferCSSPageSize === true);
+      check('backgrounds print, so shaded totals rows survive', pdfOptions && pdfOptions.printBackground === true);
+      // networkidle0 would wait out every asset that is never going to arrive.
+      eq('content waits on the document, not the network', contentOptions && contentOptions.waitUntil, 'domcontentloaded');
+      check('the report body reached the page', html.includes('<p>تقرير</p>'));
+
+      // THE LEAK. Without a finally, every failed render strands a Chromium
+      // process; a handful of those exhausts a small instance and the next
+      // request cannot launch at all — the report path dies of its own errors.
+      const Boom = install(() => { throw new Error('render exploded'); });
+      let boomError = null;
+      try {
+        await Boom.render({ html: '<p>x</p>', baseUrl: 'http://127.0.0.1:3000' });
+      } catch (e) { boomError = e; }
+      check('a failing render still surfaces the failure', boomError !== null);
+      eq('and the browser is closed anyway, so nothing leaks', closed, 2);
+
+      if (savedCore) require.cache[corePath] = savedCore; else delete require.cache[corePath];
+      delete require.cache[require.resolve(path.join(ROOT, 'services/reports/PdfService.js'))];
+      process.env.PDF_CHROMIUM_PATH = savedChromium === undefined ? '/definitely/not/a/browser' : savedChromium;
+    }
+
     // ── The route ──────────────────────────────────────────────────────────
     const capPath = require.resolve(path.join(ROOT, 'middleware/requireCapability.js'));
     require.cache[capPath] = {
@@ -154,5 +299,6 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
     }
     console.log('  ✅ PDF via Chromium; an absent browser degrades one button, not the server');
     console.log(pass + '/' + pass + ' passed');
+    process.exitCode = 0; // reached the end with everything asserted
   })();
 }

@@ -181,7 +181,7 @@ async function renderUnbounded(spec) {
       page.evaluateHandle('document.fonts.ready').catch(() => null),
       new Promise((resolve) => setTimeout(resolve, 3000)),
     ]);
-    return await page.pdf({
+    const output = await page.pdf({
       format: 'A4',
       landscape: !!(spec && spec.landscape),
       printBackground: true,
@@ -195,6 +195,14 @@ async function renderUnbounded(spec) {
         '<div style="width:100%;font-size:8pt;color:#52525b;padding:0 12mm;text-align:center;">' +
         '<span class="pageNumber"></span> / <span class="totalPages"></span></div>',
     });
+    // ALWAYS a Buffer. puppeteer 23 changed `page.pdf()` to return a
+    // Uint8Array, and Express's `res.send` takes any non-Buffer object down
+    // the JSON path: a 50KB PDF is re-emitted as {"0":37,"1":80,...}, one key
+    // per byte, megabytes of it, with Content-Type application/json. That is
+    // what the first deploy's "hang" actually was — not a stalled browser, a
+    // response being serialised a byte at a time. Normalising here fixes every
+    // consumer at once instead of each one rediscovering it.
+    return Buffer.isBuffer(output) ? output : Buffer.from(output);
   } finally {
     if (browser) {
       try { await browser.close(); } catch (_) { /* the process is going away anyway */ }

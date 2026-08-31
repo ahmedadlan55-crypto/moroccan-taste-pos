@@ -214,12 +214,21 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
         return require(fp);
       };
 
-      const Ok = install(() => Buffer.from('%PDF-1.4 fake'));
+      // puppeteer 23 returns a Uint8Array, NOT a Buffer. A fake that hands
+      // back a Buffer tests a wire shape the library stopped producing, and
+      // that gap is exactly what reached production.
+      const PDF_BYTES = () => new Uint8Array(Buffer.from('%PDF-1.4 fake'));
+      const Ok = install(PDF_BYTES);
       const startedAt = Date.now();
       const buf = await Ok.render({ html: '<p>تقرير</p>', title: 'ت', baseUrl: 'http://127.0.0.1:3000', landscape: true });
       const elapsed = Date.now() - startedAt;
 
-      check('a render that reaches the browser returns a buffer', Buffer.isBuffer(buf));
+      // Express sends a Buffer as bytes; ANY other object goes down the JSON
+      // path and the PDF is re-emitted as {"0":37,"1":80,...}, one key per
+      // byte. So the type here is not a detail — it is the difference between
+      // a PDF and megabytes of JSON claiming to be one.
+      check('a Uint8Array from the browser is normalised to a Buffer', Buffer.isBuffer(buf), buf && buf.constructor && buf.constructor.name);
+      eq('and it is really a PDF', buf && buf.slice(0, 4).toString('latin1'), '%PDF');
       // The webfont promise never settles, so ONLY the inner bound can end this.
       // Unbounded, it would sit here until the 40s deadline — a report that
       // takes 40 seconds to admit a font was slow is a report nobody waits for.
@@ -322,6 +331,70 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
       if (saved === undefined) delete process.env.PDF_CHROMIUM_PATH;
       else process.env.PDF_CHROMIUM_PATH = saved;
       PdfService.__resetForTests();
+    }
+
+    // ── The bytes that actually go over the wire ───────────────────────
+    // Every assertion so far checked a return value INSIDE the process. The
+    // defect that reached production lived in the gap between that value and
+    // the HTTP response: `page.pdf()` returns a Uint8Array, `res.send` takes
+    // any non-Buffer object down the JSON path, and the client received
+    // {"0":37,"1":80,...} — one key per byte, megabytes of it, with
+    // Content-Type application/json. Every in-process check passed while the
+    // download was garbage. So this drives the real route and reads the RAW
+    // BYTES back.
+    {
+      const corePath = require.resolve('puppeteer-core');
+      const savedCore = require.cache[corePath];
+      const savedChromium = process.env.PDF_CHROMIUM_PATH;
+      const svcPath = require.resolve(path.join(ROOT, 'services/reports/PdfService.js'));
+      const routePath = require.resolve(path.join(ROOT, 'routes/erp/reports/pdf.js'));
+
+      require.cache[corePath] = { id: corePath, filename: corePath, loaded: true,
+        exports: { launch: async () => ({
+          newPage: async () => ({
+            setContent: async () => {},
+            evaluateHandle: async () => null,
+            // The real library's return type, not a convenient one.
+            pdf: async () => new Uint8Array(Buffer.from('%PDF-1.4 ' + 'x'.repeat(400))),
+          }),
+          close: async () => {},
+        }) } };
+      process.env.PDF_CHROMIUM_PATH = __filename;
+      delete require.cache[svcPath];
+      delete require.cache[routePath];
+
+      const app2 = express();
+      app2.use(express.json({ limit: '5mb' }));
+      app2.use((req, _res, next) => { req.user = { username: 't' }; next(); });
+      app2.use('/api/erp', require(routePath));
+      const srv2 = app2.listen(0);
+      await new Promise((r) => srv2.once('listening', r));
+      const port2 = srv2.address().port;
+
+      const raw = await new Promise((res2, rej) => {
+        const data = JSON.stringify({ html: '<p>تقرير</p>', title: 'تقرير' });
+        const rq = http.request({ port: port2, path: '/api/erp/reports/pdf', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (r) => {
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => res2({ status: r.statusCode, headers: r.headers, body: Buffer.concat(chunks) }));
+        });
+        rq.on('error', rej); rq.write(data); rq.end();
+      });
+
+      eq('a successful render answers 200', raw.status, 200);
+      eq('as a PDF, not as JSON', raw.headers['content-type'], 'application/pdf');
+      check('and the bytes really are a PDF', raw.body.slice(0, 4).toString('latin1') === '%PDF',
+        raw.body.slice(0, 40).toString('latin1'));
+      // The JSON path inflates every byte into a key; the length alone exposes it.
+      eq('Content-Length matches the real document', Number(raw.headers['content-length']), raw.body.length);
+      check('the download is a file, not a page', /attachment/.test(raw.headers['content-disposition'] || ''),
+        raw.headers['content-disposition']);
+
+      srv2.close();
+      if (savedCore) require.cache[corePath] = savedCore; else delete require.cache[corePath];
+      delete require.cache[svcPath]; delete require.cache[routePath];
+      process.env.PDF_CHROMIUM_PATH = savedChromium === undefined ? '/definitely/not/a/browser' : savedChromium;
     }
 
     if (failures.length) {

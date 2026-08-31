@@ -50,14 +50,36 @@ async function READ(req, res, next) {
   }
 }
 
-router.get('/reports/pdf/capability', READ, (req, res) => {
-  const available = PdfService.isAvailable();
+router.get('/reports/pdf/capability', READ, async (req, res) => {
+  const installed = PdfService.isAvailable();
+
+  // `?selftest=1` actually renders one tiny page.
+  //
+  // The plain probe answers "is a browser binary on this box", and that is the
+  // question that shipped a working-looking button which hung: the binary was
+  // there, the probe said yes, and every real render died on the CDP handshake.
+  // The self-test costs a browser launch, so it is opt-in — the UI asks the
+  // cheap question, an operator diagnosing a broken export asks the true one.
+  if (installed && String(req.query.selftest || '') === '1') {
+    const result = await PdfService.selfTest();
+    return res.json({
+      success: true,
+      data: {
+        available: result.rendered,
+        reason: result.rendered ? null : (result.reason || 'PDF_RENDERER_UNAVAILABLE'),
+        selfTest: result,
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  }
+
   return res.json({
     success: true,
     data: {
-      available,
+      installed,
+      available: installed,
       // Named so the UI can explain rather than just grey a button out.
-      reason: available ? null : 'PDF_RENDERER_UNAVAILABLE',
+      reason: installed ? null : 'PDF_RENDERER_UNAVAILABLE',
     },
     generatedAt: new Date().toISOString(),
   });

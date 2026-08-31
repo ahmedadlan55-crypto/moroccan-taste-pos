@@ -97,6 +97,16 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
     // different and more useful statement than "something went wrong".
     eq('and a 503, not a generic failure', thrown && thrown.http, 503);
 
+    // The self-test must REPORT the failure, never become one — it is the
+    // thing an operator calls when the export is already broken.
+    {
+      let threw = null, st = null;
+      try { st = await PdfService.selfTest(); } catch (e) { threw = e; }
+      check('the self-test never throws', threw === null, threw && threw.message);
+      eq('and reports that nothing rendered', st && st.rendered, false);
+      eq('naming the reason', st && st.reason, 'PDF_RENDERER_UNAVAILABLE');
+    }
+
     // The shared error contract must PASS 503 through rather than flatten it.
     const RE = require(path.join(ROOT, 'lib', 'reportErrors.js'));
     check('the report error contract passes 503 through', RE.KNOWN_HTTP.has(503));
@@ -147,15 +157,21 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
       eq('with the fallback code the UI understands', hangError && hangError.code, 'PDF_RENDERER_UNAVAILABLE');
       check('and it gives up promptly', elapsed < 3000, elapsed);
 
-      // The flags that made this work AT ALL on the production container.
-      // Without --single-process/--no-zygote the default multi-process
-      // launch starves on a small instance and the CDP handshake dies with
-      // "Network.enable timed out" — the exact failure this feature shipped
-      // with on its first deploy. A future tidy-up that drops them would
-      // reintroduce a hang that only appears in production.
+      // The flags this container actually needs. No user namespaces, so the
+      // sandbox cannot start; and /dev/shm is 64MB, where Chromium puts its
+      // renderer heap and then dies silently when it fills.
       const args = (launchOptions && launchOptions.args) || [];
-      for (const flag of ['--single-process', '--no-zygote', '--no-sandbox', '--disable-dev-shm-usage']) {
+      for (const flag of ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']) {
         check('launch keeps ' + flag, args.includes(flag), args);
+      }
+      // And the two that must STAY OUT. They were added against the first
+      // deploy's hang and appeared to help — the request stopped hanging
+      // because the browser now died immediately instead, on
+      // Target.setAutoAttach with TargetCloseError: puppeteer attaches to a
+      // renderer target that single-process mode never creates. Turning a hang
+      // into a crash reads like progress in a log and is none.
+      for (const flag of ['--single-process', '--no-zygote']) {
+        check('launch does NOT pass ' + flag, !args.includes(flag), args);
       }
       check('the CDP handshake is bounded at launch',
         launchOptions && launchOptions.protocolTimeout === PdfService.PROTOCOL_TIMEOUT_MS,
@@ -223,6 +239,22 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
       eq('content waits on the document, not the network', contentOptions && contentOptions.waitUntil, 'domcontentloaded');
       check('the report body reached the page', html.includes('<p>تقرير</p>'));
 
+      // The probe that tells the truth. `isAvailable` only answers "is a binary
+      // on this box" — the question that shipped a button which hung: the
+      // binary WAS there, the probe said yes, and every render died on the CDP
+      // handshake. So the self-test must run a real render.
+      const stOk = await Ok.selfTest();
+      eq('a self-test on a working host reports rendered', stOk.rendered, true);
+      check('and times it', stOk.ms >= 0 && stOk.bytes > 0, stOk);
+
+      // A browser that returns bytes which are not a PDF is a DIFFERENT
+      // failure from a browser that will not start, and a probe that reports
+      // both as success is how a corrupt export reaches a user.
+      const Liar = install(() => Buffer.from('<html>not a pdf</html>'));
+      const stLie = await Liar.selfTest();
+      eq('output that is not a PDF is not a pass', stLie.rendered, false);
+      eq('and is named as its own failure', stLie.reason, 'PDF_OUTPUT_NOT_A_PDF');
+
       // THE LEAK. Without a finally, every failed render strands a Chromium
       // process; a handful of those exhausts a small instance and the next
       // request cannot launch at all — the report path dies of its own errors.
@@ -232,7 +264,7 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
         await Boom.render({ html: '<p>x</p>', baseUrl: 'http://127.0.0.1:3000' });
       } catch (e) { boomError = e; }
       check('a failing render still surfaces the failure', boomError !== null);
-      eq('and the browser is closed anyway, so nothing leaks', closed, 2);
+      eq('and the browser is closed anyway, so nothing leaks', closed, 4);
 
       if (savedCore) require.cache[corePath] = savedCore; else delete require.cache[corePath];
       delete require.cache[require.resolve(path.join(ROOT, 'services/reports/PdfService.js'))];

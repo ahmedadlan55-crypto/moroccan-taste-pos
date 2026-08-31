@@ -143,14 +143,26 @@ async function renderUnbounded(spec) {
   try {
     browser = await launcher.puppeteer.launch({
       executablePath: launcher.executablePath,
-      // Container flags. `--single-process` and `--no-zygote` matter most: on a
-      // small shared instance the default multi-process launch starves, and the
-      // CDP handshake dies with "Network.enable timed out" — which is exactly
-      // what production did on the first deploy of this feature.
+      // Container flags, each one earned on this host:
+      //
+      //   --no-sandbox / --disable-setuid-sandbox  no user namespaces in the container
+      //   --disable-dev-shm-usage                  /dev/shm is 64MB here; Chromium
+      //                                            writes its renderer heap there and
+      //                                            dies silently when it fills
+      //   --disable-gpu / --disable-extensions / --disable-background-networking
+      //                                            nothing to draw on, nothing to load
+      //   --font-render-hinting=none               deterministic glyph metrics, so the
+      //                                            PDF matches the printed page
+      //
+      // NOT here, deliberately: `--single-process` and `--no-zygote`. They were
+      // tried against the first deploy's hang and made it worse in a way that
+      // looked better — the browser came up, then died on `Target.setAutoAttach`
+      // with TargetCloseError. Puppeteer needs a real target hierarchy to attach
+      // to; single-process has no separate renderer target to attach TO. A fast
+      // failure is not a fix.
       args: [
         '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-        '--single-process', '--no-zygote', '--disable-gpu',
-        '--disable-extensions', '--disable-background-networking',
+        '--disable-gpu', '--disable-extensions', '--disable-background-networking',
         '--font-render-hinting=none',
       ],
       // Default is 180s. A report request must not hold a connection open for
@@ -215,7 +227,48 @@ async function render(spec) {
     if (timer) clearTimeout(timer);
   }
 }
+
+/**
+ * Render the smallest possible document, and report what actually happened.
+ *
+ * `isAvailable` only answers "is there a binary on this box" — and that is
+ * exactly the question that shipped a button which hung: the binary was
+ * present, the probe said yes, and every render died on the CDP handshake. A
+ * probe that cannot distinguish "installed" from "works" is not a probe.
+ *
+ * Never throws: the whole point is to report the failure, not to become one.
+ */
+async function selfTest() {
+  const startedAt = Date.now();
+  try {
+    const buffer = await render({
+      html: '<p>اختبار</p>',
+      title: 'selftest',
+      baseUrl: 'about:blank',
+    });
+    const ok = Buffer.isBuffer(buffer) && buffer.length > 0
+      && buffer.slice(0, 4).toString('latin1') === '%PDF';
+    return {
+      rendered: ok,
+      ms: Date.now() - startedAt,
+      bytes: Buffer.isBuffer(buffer) ? buffer.length : 0,
+      // A buffer that is not a PDF is a different failure from no buffer at all.
+      reason: ok ? null : 'PDF_OUTPUT_NOT_A_PDF',
+    };
+  } catch (error) {
+    return {
+      rendered: false,
+      ms: Date.now() - startedAt,
+      bytes: 0,
+      reason: (error && error.code) || 'PDF_RENDER_FAILED',
+      // The class name, not the message: enough to tell a launch failure from a
+      // protocol timeout without putting an internal string in an HTTP body.
+      detail: (error && error.constructor && error.constructor.name) || null,
+    };
+  }
+}
+
 module.exports = {
-  render, isAvailable, buildDocument, __resetForTests,
+  render, isAvailable, selfTest, buildDocument, __resetForTests,
   CHROMIUM_CANDIDATES, RENDER_TIMEOUT_MS, PROTOCOL_TIMEOUT_MS,
 };

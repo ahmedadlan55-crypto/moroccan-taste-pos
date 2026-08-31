@@ -65,6 +65,41 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
   check('a real page box is declared', /@page \{ size: A4/.test(doc));
   check('the report body is carried through verbatim', doc.includes('<td>قيمة</td>'));
 
+  // ── The stylesheet ───────────────────────────────────────────────────────
+  // The captured HTML is class names and nothing else. Without the page's own
+  // stylesheet the PDF is a wall of unstyled text that still says 'report' at
+  // the top — which is what shipped the first time, while the comment above
+  // buildDocument claimed the stylesheet was 'pulled over loopback'. A <base>
+  // resolves relative URLs in markup that HAS links; it does not add one.
+  {
+    const styled = PdfService.buildDocument({
+      html: '<p>x</p>', title: 't', baseUrl: 'http://127.0.0.1:3000', direction: 'rtl',
+      styles: ['/assets/index-abc123.css'],
+    });
+    check('the page stylesheet is linked into the document',
+      styled.includes(String.fromCharCode(60) + 'link rel="stylesheet" href="/assets/index-abc123.css"' + String.fromCharCode(62)), styled.slice(0, 400));
+
+    // These hrefs arrive in a REQUEST BODY and are linked into a page rendered
+    // by a real browser with real network access. Only same-origin paths.
+    const hostile = PdfService.buildDocument({
+      html: '<p>x</p>', title: 't', baseUrl: 'http://127.0.0.1:3000', direction: 'rtl',
+      styles: [
+        'https://evil.example/x.css',
+        // protocol-relative — the case a naive startsWith('/') check waves through
+        '//evil.example/x.css',
+        'assets/relative.css',
+        '/ok" onload="alert(1)',
+      ],
+    });
+    check('an absolute URL is not linked', !hostile.includes('evil.example'), hostile.slice(0, 400));
+    check('a protocol-relative URL is not linked', !hostile.includes('//evil'), hostile.slice(0, 400));
+    check('a relative path is not linked', !hostile.includes('assets/relative.css'));
+    check('an href cannot break out of the attribute', !hostile.includes('onload='), hostile.slice(0, 400));
+
+    eq('no styles means no links', PdfService.buildDocument({
+      html: '<p>x</p>', title: 't', baseUrl: 'http://x', direction: 'ltr',
+    }).includes(String.fromCharCode(60) + 'link'), false);
+  }
   // A title is interpolated into markup: it must not be able to open a tag.
   const injected = PdfService.buildDocument({
     html: '<p>x</p>', title: '</title><script>alert(1)</script>', baseUrl: 'http://x', direction: 'ltr',
@@ -244,8 +279,13 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
       check('landscape is honoured for wide reports', pdfOptions && pdfOptions.landscape === true);
       check('the CSS page box wins over the format default', pdfOptions && pdfOptions.preferCSSPageSize === true);
       check('backgrounds print, so shaded totals rows survive', pdfOptions && pdfOptions.printBackground === true);
-      // networkidle0 would wait out every asset that is never going to arrive.
-      eq('content waits on the document, not the network', contentOptions && contentOptions.waitUntil, 'domcontentloaded');
+      // `load`, not `domcontentloaded`: the document LINKS the page stylesheet,
+      // and DOMContentLoaded does not wait for one — rendering early gives an
+      // unstyled first paint, which is the exact thing linking it prevents.
+      // Not `networkidle0` either: that waits out every asset that is never
+      // going to arrive. The outer deadline bounds a stylesheet that hangs.
+      eq('content waits for the stylesheet, not for the network to fall idle',
+        contentOptions && contentOptions.waitUntil, 'load');
       check('the report body reached the page', html.includes('<p>تقرير</p>'));
 
       // The probe that tells the truth. `isAvailable` only answers "is a binary

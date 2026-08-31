@@ -22,6 +22,15 @@ export const PDF_UNAVAILABLE = "PDF_RENDERER_UNAVAILABLE";
 export interface PdfRequest {
   /** The `.print-document` subtree — the document, not the whole page. */
   html: string;
+  /**
+   * The stylesheets this page is using.
+   *
+   * The captured HTML is class names and nothing else, so without these
+   * the PDF is unstyled text that still calls itself a report. The server
+   * accepts only same-origin paths, because it links them into a page it
+   * renders in a real browser.
+   */
+  styles?: string[];
   title: string;
   filename?: string;
   landscape?: boolean;
@@ -51,6 +60,31 @@ export async function pdfAvailable(): Promise<boolean> {
  * because an uninstalled optional component is not an error the user caused.
  * Genuine failures (403, 5xx) still throw.
  */
+/**
+ * The same-origin stylesheets currently applied to this page.
+ *
+ * Paths only: an absolute URL would be pointless (the renderer resolves
+ * against its own loopback origin) and the server rejects it anyway. Vite
+ * emits hashed filenames, so reading them off the live document is the only
+ * way to name them correctly — a hard-coded path goes stale on the next
+ * build and takes the styling with it, silently.
+ */
+export function collectStyleHrefs(): string[] {
+  if (typeof document === "undefined") return [];
+  const out: string[] = [];
+  document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]').forEach((link) => {
+    // `link.href` is absolute; compare origins and keep the path.
+    try {
+      const url = new URL(link.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      out.push(url.pathname + url.search);
+    } catch {
+      /* an href the URL parser rejects is not one we can send */
+    }
+  });
+  return out;
+}
+
 export async function downloadReportPdf(request: PdfRequest): Promise<boolean> {
   const token = getToken();
   const res = await fetch("/api/erp/reports/pdf", {
@@ -60,7 +94,10 @@ export async function downloadReportPdf(request: PdfRequest): Promise<boolean> {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     credentials: "same-origin",
-    body: JSON.stringify(request),
+    // Default the stylesheets from the live document, so no caller has to
+      // remember — forgetting produces a PDF that renders fine and looks
+      // nothing like the report.
+    body: JSON.stringify({ styles: collectStyleHrefs(), ...request }),
   });
 
   if (res.status === 503) {

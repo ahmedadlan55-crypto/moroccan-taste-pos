@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Download, Printer, ArrowUpDown, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, FileText, Printer, ArrowUpDown, AlertTriangle } from "lucide-react";
 import { PageHeader,
   PrintDocument,
 } from "@/shared/ui";
@@ -12,7 +12,7 @@ import type { TFunction } from "@/i18n";
 import { useWarehouseScope, ALL_WAREHOUSES } from "@/modules/inventory/lib/warehouse-scope-provider";
 import { fetchReportPrintSnapshot, useReport, type ReportFilters } from "@/modules/inventory/lib/hooks/useReport";
 import { localizeReportWarning, type ReportResult } from "@/modules/inventory/lib/adapters/reports.adapter";
-import { downloadReportCsv } from "@/shared/lib";
+import { downloadReportCsv, useReportPdf } from "@/shared/lib";
 import { formatCurrency, formatNumber, formatQty, formatDate, formatDateTime } from "@/shared/lib";
 import { REPORTS, type ColFormat, type ReportColumn } from "@/modules/inventory/lib/reports-config";
 import { PageCounter } from "@/shared/tables";
@@ -166,7 +166,26 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
     }
   }
 
-  async function onPrint() {
+  // One implementation of the PDF probe, capture and 503 fallback, shared
+  // with every other report shell.
+  const { canPdf, pdfBusy, renderPdf } = useReportPdf({
+    title: t(config.label),
+    filename: `inventory-${reportType}`,
+    landscape: config.columns.length >= 7,
+    direction: lang === "ar" ? "rtl" : "ltr",
+  });
+
+  /**
+   * Run `emit` with the COMPLETE report committed to the DOM.
+   *
+   * The screen shows one server page. Printing — or rendering a PDF — from
+   * that DOM produces a sheet that looks like the report and silently stops
+   * partway. So both outputs go through here: fetch the whole snapshot,
+   * commit it in one flush, let the browser lay it out, and only then emit.
+   * Print and PDF therefore describe the same document by construction,
+   * rather than by two implementations agreeing today.
+   */
+  async function withPrintSnapshot(emit: () => void | Promise<void>) {
     if (!data || isFetching || printing) return;
     setPrintError(null);
     setPrinting(true);
@@ -184,7 +203,7 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
       // leave the currently visible server page on paper.
       flushSync(() => setPrintSnapshot(snapshot));
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      window.print();
+      await emit();
     } catch (e) {
       setPrintError(translateApiError(e, t));
     } finally {
@@ -192,6 +211,18 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
       setPrintContext(null);
       setPrinting(false);
     }
+  }
+
+  function onPrint() {
+    return withPrintSnapshot(() => { window.print(); });
+  }
+
+  // Same snapshot window, so the PDF is the whole report and not the page
+  // that happened to be on screen. `renderPdf` falls back to the print
+  // dialog on a host with no renderer — still inside the window, so the
+  // fallback prints the complete document too.
+  function onPdf() {
+    return withPrintSnapshot(renderPdf);
   }
 
   const reportData = printSnapshot ?? data;
@@ -228,6 +259,11 @@ export function ReportDetailPage({ reportType: reportTypeOverride }: { reportTyp
       <Button variant="secondary" onClick={onExport} disabled={exporting}>
         <Download className="h-4 w-4" /> {exporting ? t("inventoryRest.reports.exporting") : t("inventoryRest.reports.exportCsv")}
       </Button>
+      {canPdf && (
+        <Button variant="secondary" onClick={() => void onPdf()} loading={pdfBusy} disabled={!data || isFetching || printing}>
+          <FileText className="h-4 w-4" /> {t("operationalReports.downloadPdf")}
+        </Button>
+      )}
       <Button variant="secondary" onClick={() => void onPrint()} disabled={!data || isFetching || printing}>
         <Printer className="h-4 w-4" /> {printing ? t("inventoryRest.reports.preparingPrint") : t("inventoryRest.ui.print")}
       </Button>

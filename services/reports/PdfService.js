@@ -83,21 +83,58 @@ function __resetForTests() { _resolved = undefined; }
 /**
  * Wrap the client's report HTML in a printable document.
  *
- * The stylesheet and fonts are pulled from THIS server over loopback, so the
- * PDF uses Cairo and the same print rules as the screen. A missing asset must
- * not block rendering — Chromium falls back to a system Arabic face, which is
- * still correctly shaped; a hard failure here would trade a slightly different
- * font for no document at all.
+ * ─── THE STYLESHEET IS NOT OPTIONAL ────────────────────────────────────────
+ * The captured HTML is class names and nothing else — the product styles with
+ * utility classes, so without its stylesheet the PDF is a wall of unstyled
+ * text that still says "report" at the top. This shipped that way once: the
+ * comment here claimed the stylesheet was "pulled over loopback" while the
+ * document linked nothing at all. A `<base>` alone resolves relative URLs in
+ * markup that HAS links; it does not add one.
+ *
+ * So the client sends the stylesheets its own page is using, and they are
+ * linked here. Fonts follow, because the webfont lives in that stylesheet.
+ *
+ * ─── WHY ONLY SAME-ORIGIN PATHS ────────────────────────────────────────────
+ * These hrefs arrive in a request body, and the renderer is a real browser on
+ * the server with real network access. An absolute URL would let a caller aim
+ * it at any host they like and read the result through the PDF. Only
+ * path-only hrefs are accepted; everything else is dropped silently, because
+ * a report that renders unstyled is better than one that does not render.
  */
-function buildDocument({ html, title, baseUrl, direction }) {
+
+/** Same-origin, path-only stylesheet hrefs. Anything else is not ours. */
+function safeStyleHrefs(styles) {
+  if (!Array.isArray(styles)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of styles) {
+    const href = String(raw || '').trim();
+    // A single leading slash: "/assets/x.css" is ours, "//evil.example" is
+    // protocol-relative and is NOT, which is exactly the pair a naive
+    // startsWith("/") check gets wrong.
+    if (!/^\/[^\/]/.test(href)) continue;
+    if (href.includes('"') || href.includes('<') || href.includes('>')) continue;
+    if (seen.has(href)) continue;
+    seen.add(href);
+    out.push(href);
+    if (out.length >= 12) break; // a page has a handful, not a thousand
+  }
+  return out;
+}
+
+function buildDocument({ html, title, baseUrl, direction, styles }) {
   const dir = direction === 'ltr' ? 'ltr' : 'rtl';
   const lang = dir === 'rtl' ? 'ar' : 'en';
+  const links = safeStyleHrefs(styles)
+    .map((href) => '<link rel="stylesheet" href="' + href + '">')
+    .join('');
   return `<!doctype html>
 <html lang="${lang}" dir="${dir}">
 <head>
 <meta charset="utf-8">
 <title>${String(title || 'report').replace(/[<>]/g, '')}</title>
 <base href="${baseUrl}/">
+${links}
 <style>
   /* The page box. Chromium honours @page, which is what gives the PDF real
      margins and a paper size instead of a screenshot of a web page. */
@@ -173,7 +210,15 @@ async function renderUnbounded(spec) {
     // `domcontentloaded`, not `networkidle0`: the document is self-contained
     // apart from the stylesheet and font, and waiting for the network to fall
     // idle means waiting out every asset that will never arrive.
-    await page.setContent(buildDocument(spec), { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // `load`, not `domcontentloaded`: the document now LINKS a stylesheet,
+    // and DOMContentLoaded does not wait for one. Rendering early produced
+    // an unstyled first paint — the exact thing the stylesheet is here to
+    // prevent. The outer deadline still bounds a stylesheet that never
+    // arrives.
+    await page.setContent(buildDocument(spec), { waitUntil: 'load', timeout: 15000 });
+    // Evaluate PRINT media, so `.no-print` chrome stays off the paper and
+    // print-only blocks appear — the same rules the print dialog applies.
+    try { await page.emulateMediaType('print'); } catch (_) { /* older API */ }
     // Let webfonts land so the whole document renders in one face — but BOUND
     // it. `document.fonts.ready` never settling would hang the request, and a
     // report in a fallback font is infinitely better than no report.
@@ -277,6 +322,6 @@ async function selfTest() {
 }
 
 module.exports = {
-  render, isAvailable, selfTest, buildDocument, __resetForTests,
+  render, isAvailable, selfTest, buildDocument, safeStyleHrefs, __resetForTests,
   CHROMIUM_CANDIDATES, RENDER_TIMEOUT_MS, PROTOCOL_TIMEOUT_MS,
 };

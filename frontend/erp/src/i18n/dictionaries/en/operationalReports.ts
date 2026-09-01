@@ -20,6 +20,10 @@ export const operationalReports = {
   },
 
   groups: {
+    inventoryValue: {
+      title: "Inventory valuation",
+      description: "Inventory value from opening to closing balance, at the cost each movement carried when it happened.",
+    },
       production: { title: "Production and cost", description: "Yield, work in progress, and standard recipe against actual consumption." },
     payroll: {
       title: "Payroll & entitlements",
@@ -44,6 +48,10 @@ export const operationalReports = {
   },
 
   reports: {
+    inventoryValueRollForward: {
+      label: "Inventory value roll-forward",
+      description: "Opening + in − out = closing per item, from the immutable value ledger.",
+    },
       productionYield: { label: "Production yield and WIP", description: "Planned against produced and scrapped per order, with the cost still in progress." },
       recipeVariance: { label: "Recipe standard vs actual", description: "Quantity and cost variance per component between the recipe standard and actual consumption." },
     payrollRegister: {
@@ -103,6 +111,14 @@ export const operationalReports = {
   },
 
   col: {
+    item: "Item",
+    openingQuantity: "Opening quantity",
+    openingValue: "Opening value",
+    inValue: "Value in",
+    outValue: "Value out",
+    closingQuantity: "Closing quantity",
+    closingValue: "Closing value",
+    unknownCostRows: "Unknown-cost movements",
       orderNumber: "Order no.",
       product: "Product",
       component: "Component",

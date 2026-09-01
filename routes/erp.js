@@ -155,6 +155,7 @@ router.use(require('./erp/reports/balance-sheet'));
 router.use(require('./erp/reports/cash-flow'));
 router.use(require('./erp/reports/gl-ledger'));
 router.use(require('./erp/reports/production'));
+router.use(require('./erp/reports/inventoryValue'));
 router.use(require('./erp/reports/pdf'));
 
 // v5.17.1 — /dashboard moved to routes/erp/dashboard.js

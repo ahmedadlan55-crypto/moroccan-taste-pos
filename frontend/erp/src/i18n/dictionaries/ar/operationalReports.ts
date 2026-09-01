@@ -20,6 +20,10 @@ export const operationalReports = {
   },
 
   groups: {
+    inventoryValue: {
+      title: "تقييم المخزون",
+      description: "حركة قيمة المخزون من الرصيد الافتتاحي إلى الختامي، بتكلفة كل حركة وقت وقوعها.",
+    },
       production: { title: "الإنتاج والتكلفة", description: "المردود والعمل تحت التشغيل والفرق بين الوصفة المعيارية والاستهلاك الفعلي." },
     payroll: {
       title: "الرواتب والاستحقاقات",
@@ -44,6 +48,10 @@ export const operationalReports = {
   },
 
   reports: {
+    inventoryValueRollForward: {
+      label: "حركة قيمة المخزون",
+      description: "افتتاحي + وارد − منصرف = ختامي لكل صنف، من دفتر القيمة غير القابل للتعديل.",
+    },
       productionYield: { label: "مردود الإنتاج وتحت التشغيل", description: "المخطط مقابل المنتَج والهالك لكل أمر إنتاج، مع تكلفة ما زال تحت التشغيل." },
       recipeVariance: { label: "الوصفة المعيارية مقابل الفعلي", description: "فرق الكمية والتكلفة لكل مكوّن بين معيار الوصفة والاستهلاك الفعلي." },
     payrollRegister: {
@@ -103,6 +111,14 @@ export const operationalReports = {
   },
 
   col: {
+    item: "الصنف",
+    openingQuantity: "الكمية الافتتاحية",
+    openingValue: "القيمة الافتتاحية",
+    inValue: "قيمة الوارد",
+    outValue: "قيمة المنصرف",
+    closingQuantity: "الكمية الختامية",
+    closingValue: "القيمة الختامية",
+    unknownCostRows: "حركات بتكلفة غير معروفة",
       orderNumber: "رقم الأمر",
       product: "المنتج",
       component: "المكوّن",

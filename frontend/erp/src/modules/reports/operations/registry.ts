@@ -28,9 +28,56 @@
 //   `administration.audit` — the capability on the screen that reads this very
 //   endpoint — which is STRICTER than the `workflow.audit.view` the deleted
 //   action-log card carried; nothing was widened.
-import { Clock, Factory, GitCompareArrows, ScrollText, Workflow } from "lucide-react";
+import { Clock, Factory, GitCompareArrows, Layers, ScrollText, Workflow } from "lucide-react";
 import { apiClient } from "@/shared/api";
 import { asRows, num, str, type ReportResult, type ReportSectionDef } from "../engine";
+
+/**
+ * The inventory value roll-forward: opening + in − out = closing, per item.
+ *
+ * Read from `inventory_value_ledger`, which records the cost a movement
+ * carried WHEN IT HAPPENED. Every earlier attempt at a historical valuation
+ * applied today's average to an old quantity and called it history.
+ *
+ * The endpoint REFUSES a period starting before the ledger was activated,
+ * with `LEDGER_STARTS_LATER` and the earliest answerable date. That error is
+ * left to surface: a half-covered month looks exactly like a quiet month, and
+ * swallowing it here would put that ambiguity on the page.
+ */
+async function loadInventoryValueRollForward(
+  filters: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+): Promise<ReportResult> {
+  const body = await apiClient.get<{ data?: unknown; totals?: Record<string, unknown> }>(
+    "/erp/reports/inventory-value/roll-forward",
+    { params: { from: filters.from, to: filters.to }, signal },
+  );
+  const rows = asRows(body?.data);
+  const t = body?.totals ?? {};
+  return {
+    rows: rows.map((r) => ({
+      id: str(r.itemId),
+      itemName: str(r.itemName) || str(r.itemId),
+      openingQuantity: num(r.openingQuantity),
+      openingValue: num(r.openingValue),
+      inValue: num(r.inValue),
+      outValue: num(r.outValue),
+      closingQuantity: num(r.closingQuantity),
+      closingValue: num(r.closingValue),
+      // Surfaced as a COLUMN, not hidden in a footnote: a closing value that
+      // rests partly on movements whose cost could not be established is not
+      // the same number as one that does not, and the reader has to be able
+      // to see which rows those are.
+      unknownCostRows: num(r.unknownCostRows),
+    })),
+    totals: [
+      { labelKey: "operationalReports.col.openingValue", value: num(t.openingValue), format: "money" },
+      { labelKey: "operationalReports.col.inValue", value: num(t.inValue), format: "money" },
+      { labelKey: "operationalReports.col.outValue", value: num(t.outValue), format: "money" },
+      { labelKey: "operationalReports.col.closingValue", value: num(t.closingValue), format: "money" },
+    ],
+  };
+}
 
 const TXN_STATUS = {
   draft: "operationalReports.txnStatus.draft",
@@ -236,6 +283,12 @@ export const OPERATIONS_REPORTS_SECTION: ReportSectionDef = {
       icon: Factory,
     },
     {
+      id: "inventoryValue",
+      titleKey: "operationalReports.groups.inventoryValue.title",
+      descriptionKey: "operationalReports.groups.inventoryValue.description",
+      icon: Layers,
+    },
+    {
       id: "governance",
       titleKey: "operationalReports.groups.governance.title",
       descriptionKey: "operationalReports.groups.governance.description",
@@ -270,6 +323,33 @@ export const OPERATIONS_REPORTS_SECTION: ReportSectionDef = {
         { key: "totalCost", labelKey: "operationalReports.col.totalCost", format: "money" },
       ],
       load: loadProductionYield,
+    },
+    {
+      id: "inventory-value-roll-forward",
+      groupId: "inventoryValue",
+      labelKey: "operationalReports.reports.inventoryValueRollForward.label",
+      descriptionKey: "operationalReports.reports.inventoryValueRollForward.description",
+      icon: Layers,
+      tone: "teal",
+      // Inventory VALUE is financial data — the same capability that gates
+      // the cost side of every other report here. Nothing is widened.
+      cap: "finance.reports.view",
+      csvName: "inventory-value-roll-forward",
+      filters: [
+        { id: "from", labelKey: "operationalReports.filter.from", kind: "date" },
+        { id: "to", labelKey: "operationalReports.filter.to", kind: "date" },
+      ],
+      columns: [
+        { key: "itemName", labelKey: "operationalReports.col.item" },
+        { key: "openingQuantity", labelKey: "operationalReports.col.openingQuantity", format: "count" },
+        { key: "openingValue", labelKey: "operationalReports.col.openingValue", format: "money" },
+        { key: "inValue", labelKey: "operationalReports.col.inValue", format: "money" },
+        { key: "outValue", labelKey: "operationalReports.col.outValue", format: "money" },
+        { key: "closingQuantity", labelKey: "operationalReports.col.closingQuantity", format: "count" },
+        { key: "closingValue", labelKey: "operationalReports.col.closingValue", format: "money" },
+        { key: "unknownCostRows", labelKey: "operationalReports.col.unknownCostRows", format: "count" },
+      ],
+      load: loadInventoryValueRollForward,
     },
     {
       id: "recipe-variance",

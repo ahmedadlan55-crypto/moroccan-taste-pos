@@ -13,7 +13,7 @@
 //   columns, so they can never disagree about what a column means.
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { Download, Printer } from "lucide-react";
+import { Download, FileText, Printer } from "lucide-react";
 import {
   Button,
   DatePicker,
@@ -36,6 +36,7 @@ import {
   formatQty,
   normalizeRoutePath,
   todayISO,
+  useReportPdf,
 } from "@/shared/lib";
 import { downloadCsv } from "@/shared/lib/downloadCsv";
 import { useLang, useT, translateApiError, type TFunction } from "@/i18n";
@@ -272,6 +273,15 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
     ? formatAsAt(filter.applied.asOfDate)
     : formatForPeriod(filter.applied.from, filter.applied.to);
   const title = t(report.labelKey);
+
+  // One implementation of the PDF probe, capture and 503 fallback, shared
+  // with every other report shell.
+  const { canPdf, pdfBusy, renderPdf } = useReportPdf({
+    title,
+    filename: report.id,
+    landscape: report.columns.length >= 7,
+    direction: lang === "ar" ? "rtl" : "ltr",
+  });
   const selectedWarehouse = accessibleWarehouses.find((warehouse) => warehouse.id === scope);
   const scopeLabel = scope === ALL_WAREHOUSES
     ? t("purchasing.reports.allWarehouses")
@@ -332,6 +342,16 @@ export function PurchasingReportPage({ reportId }: { reportId?: string } = {}) {
               <Download className="h-4 w-4" />
               {t(exporting ? "warehouseIntelligence.actions.exporting" : "warehouseIntelligence.actions.export")}
             </Button>
+            {canPdf && (
+              // `!completeSnapshot` blocks this exactly as it blocks print.
+              // A truncated result must not reach paper by ANY route: the
+              // sheet carries no mark saying it stopped early, so a PDF of a
+              // partial snapshot is a report that is wrong and looks right.
+              <Button variant="secondary" onClick={() => void renderPdf()} loading={pdfBusy} disabled={!rows.length || !completeSnapshot}>
+                <FileText className="h-4 w-4" />
+                {t("operationalReports.downloadPdf")}
+              </Button>
+            )}
             <Button variant="secondary" onClick={printReport} disabled={!rows.length || !completeSnapshot}>
               <Printer className="h-4 w-4" />
               {t("accounting.common.print")}

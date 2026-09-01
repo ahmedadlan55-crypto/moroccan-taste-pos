@@ -29,6 +29,7 @@ import {
   Check,
   ChevronDown,
   Plus,
+  FileText,
   Printer,
   RefreshCw,
   SlidersHorizontal,
@@ -50,8 +51,9 @@ import { formatDate, formatDateTime, formatNumber } from "@/shared/lib";
 // the .print-document rules in styles/index.css); the hub reuses it verbatim
 // rather than growing a second, drifting copy.
 import { printReport } from "@/modules/accounting/components";
+import { useReportPdf } from "@/shared/lib";
 import { cn } from "@/shared/lib";
-import { useT } from "@/i18n";
+import { useLang, useT } from "@/i18n";
 import {
   analyticsFilterCodec,
   filterDiff,
@@ -363,6 +365,7 @@ export function AnalyticsTopBar({
   printDisabled = false,
 }: AnalyticsTopBarProps) {
   const t = useT();
+  const lang = useLang();
   const location = useLocation();
   /** `undefined` filterKeys = no report context → every control, as before. */
   const shows = (key: string) => !filterKeys || filterKeys.includes(key);
@@ -383,6 +386,16 @@ export function AnalyticsTopBar({
   // keyed by the active REPORT (orders/taxes/profitability). Standalone uses
   // retain the historical pathname fallback; the hub always passes reportId.
   const segment = reportId ?? location.pathname.split("/").filter(Boolean).pop() ?? "";
+
+  // One implementation of the PDF probe, capture and 503 fallback, shared
+  // with every other report shell. The bar is .no-print and the hub wraps the
+  // routed page in PrintArea, so the capture is the report alone.
+  const { canPdf, pdfBusy, renderPdf } = useReportPdf({
+    title: t(`salesReports.pages.${segment}.title`),
+    filename: `sales-${segment}`,
+    landscape: true,
+    direction: lang === "ar" ? "rtl" : "ltr",
+  });
   const canExport = useCan("analytics.export");
 
   const presetLabels = Object.fromEntries(
@@ -605,6 +618,17 @@ export function AnalyticsTopBar({
           </Button>
         )}
         <SaveViewControl />
+        {canPdf && (
+          // Same `printDisabled` as print. It is set while the visible
+          // figures still belong to the previous filter set, and a PDF of
+          // figures that do not match their own header is worse than print:
+          // it is a file, and it outlives the screen that would have
+          // corrected it.
+          <Button size="sm" variant="secondary" className="min-h-11" onClick={() => void renderPdf()} loading={pdfBusy} disabled={printDisabled}>
+            <FileText className="h-4 w-4" />
+            {t("operationalReports.downloadPdf")}
+          </Button>
+        )}
         {/* Print is NOT export-gated: it puts the report the user is already
             reading on paper. The hub wraps the routed page in PrintArea, and
             this bar is .no-print, so the printout is the report alone. */}

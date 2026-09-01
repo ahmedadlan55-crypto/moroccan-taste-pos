@@ -66,39 +66,35 @@ const PdfService = require(path.join(ROOT, 'services', 'reports', 'PdfService.js
   check('the report body is carried through verbatim', doc.includes('<td>قيمة</td>'));
 
   // ── The stylesheet ───────────────────────────────────────────────────────
-  // The captured HTML is class names and nothing else. Without the page's own
-  // stylesheet the PDF is a wall of unstyled text that still says 'report' at
-  // the top — which is what shipped the first time, while the comment above
-  // buildDocument claimed the stylesheet was 'pulled over loopback'. A <base>
-  // resolves relative URLs in markup that HAS links; it does not add one.
+  // The captured HTML is class names and nothing else, because the product
+  // styles with utility classes. Without the SPA stylesheet the PDF is a wall
+  // of unstyled text that still says 'report' at the top — which is exactly
+  // what shipped, twice:
+  //
+  //   1. buildDocument linked NOTHING, while the comment above it claimed the
+  //      stylesheet was 'pulled over loopback'. A <base> resolves relative
+  //      URLs in markup that HAS links; it does not add one.
+  //   2. Linking it and letting the renderer fetch it back over loopback
+  //      produced a byte-for-byte IDENTICAL PDF with and without the link —
+  //      the fetch never arrived, and `waitUntil: load` fires for a
+  //      subresource that failed, so the page rendered unstyled in silence.
+  //
+  // So the server reads the file it is already serving, off its own disk.
   {
-    const styled = PdfService.buildDocument({
-      html: '<p>x</p>', title: 't', baseUrl: 'http://127.0.0.1:3000', direction: 'rtl',
-      styles: ['/assets/index-abc123.css'],
-    });
-    check('the page stylesheet is linked into the document',
-      styled.includes(String.fromCharCode(60) + 'link rel="stylesheet" href="/assets/index-abc123.css"' + String.fromCharCode(62)), styled.slice(0, 400));
+    const css = PdfService.appStylesheet();
+    check('the built stylesheet is found on disk', css.length > 1000, css.length);
+    // If this class ever stops being defined there, `.no-print` chrome starts
+    // printing and nobody finds out from a passing test.
+    check('and it is the real SPA stylesheet', css.includes('no-print'));
 
-    // These hrefs arrive in a REQUEST BODY and are linked into a page rendered
-    // by a real browser with real network access. Only same-origin paths.
-    const hostile = PdfService.buildDocument({
-      html: '<p>x</p>', title: 't', baseUrl: 'http://127.0.0.1:3000', direction: 'rtl',
-      styles: [
-        'https://evil.example/x.css',
-        // protocol-relative — the case a naive startsWith('/') check waves through
-        '//evil.example/x.css',
-        'assets/relative.css',
-        '/ok" onload="alert(1)',
-      ],
+    const doc = PdfService.buildDocument({
+      html: '<div class="no-print">x</div>', title: 't',
+      baseUrl: 'http://127.0.0.1:3000', direction: 'rtl',
     });
-    check('an absolute URL is not linked', !hostile.includes('evil.example'), hostile.slice(0, 400));
-    check('a protocol-relative URL is not linked', !hostile.includes('//evil'), hostile.slice(0, 400));
-    check('a relative path is not linked', !hostile.includes('assets/relative.css'));
-    check('an href cannot break out of the attribute', !hostile.includes('onload='), hostile.slice(0, 400));
-
-    eq('no styles means no links', PdfService.buildDocument({
-      html: '<p>x</p>', title: 't', baseUrl: 'http://x', direction: 'ltr',
-    }).includes(String.fromCharCode(60) + 'link'), false);
+    check('the document carries the stylesheet inline, not as a link',
+      doc.includes('no-print') && doc.length > css.length, doc.length);
+    check('and fetches no stylesheet over the network',
+      !doc.includes('<link rel="stylesheet"'), doc.slice(0, 300));
   }
   // A title is interpolated into markup: it must not be able to open a tag.
   const injected = PdfService.buildDocument({

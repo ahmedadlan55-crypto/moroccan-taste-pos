@@ -96,10 +96,6 @@ router.post('/reports/pdf', READ, async (req, res) => {
       title: body.title,
       landscape: body.landscape === true || body.landscape === 'true',
       direction: body.direction,
-      // The page's own stylesheets. Filtered to same-origin paths inside the
-      // service — these arrive in a request body and the renderer is a real
-      // browser with real network access.
-      styles: body.styles,
       baseUrl: `http://127.0.0.1:${port}`,
     });
 

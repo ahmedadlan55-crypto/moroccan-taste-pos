@@ -94,40 +94,50 @@ function __resetForTests() { _resolved = undefined; }
  * So the client sends the stylesheets its own page is using, and they are
  * linked here. Fonts follow, because the webfont lives in that stylesheet.
  *
- * ─── WHY ONLY SAME-ORIGIN PATHS ────────────────────────────────────────────
- * These hrefs arrive in a request body, and the renderer is a real browser on
- * the server with real network access. An absolute URL would let a caller aim
- * it at any host they like and read the result through the PDF. Only
- * path-only hrefs are accepted; everything else is dropped silently, because
- * a report that renders unstyled is better than one that does not render.
+ * ─── WHY IT IS READ FROM DISK, NOT LINKED ──────────────────────────────────
+ * The first attempt linked the stylesheet and let the renderer fetch it back
+ * over loopback. It produced a byte-for-byte identical PDF with and without
+ * the link: the fetch did not arrive, and `waitUntil: load` fires for a
+ * subresource that failed, so the page rendered unstyled and said nothing.
+ *
+ * The server is already serving that exact file from its own filesystem, so
+ * it reads it and inlines it. No port to guess, no request to fail, and no
+ * caller-supplied URL for a browser with network access to follow.
  */
 
-/** Same-origin, path-only stylesheet hrefs. Anything else is not ours. */
-function safeStyleHrefs(styles) {
-  if (!Array.isArray(styles)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const raw of styles) {
-    const href = String(raw || '').trim();
-    // A single leading slash: "/assets/x.css" is ours, "//evil.example" is
-    // protocol-relative and is NOT, which is exactly the pair a naive
-    // startsWith("/") check gets wrong.
-    if (!/^\/[^\/]/.test(href)) continue;
-    if (href.includes('"') || href.includes('<') || href.includes('>')) continue;
-    if (seen.has(href)) continue;
-    seen.add(href);
-    out.push(href);
-    if (out.length >= 12) break; // a page has a handful, not a thousand
+/** Where the built SPA stylesheet lives — the same directory Express serves. */
+const ERP_ASSET_DIR = require('path').join(__dirname, '..', '..', 'frontend', 'erp', 'dist', 'assets');
+
+/** Read (once) the built stylesheet. A missing build styles nothing. */
+let _appCss;
+function appStylesheet() {
+  if (_appCss !== undefined) return _appCss;
+  try {
+    const fsMod = require('fs');
+    const pathMod = require('path');
+    const files = fsMod.readdirSync(ERP_ASSET_DIR).filter((f) => f.endsWith('.css'));
+    _appCss = files
+      .map((f) => fsMod.readFileSync(pathMod.join(ERP_ASSET_DIR, f), 'utf8'))
+      .join(String.fromCharCode(10));
+  } catch (_) {
+    // No build on this host (a dev box, a slim image). The document still
+    // renders — unstyled, but a report is better than an error.
+    _appCss = '';
   }
-  return out;
+  return _appCss;
 }
 
-function buildDocument({ html, title, baseUrl, direction, styles }) {
+/** TEST-ONLY: drop the cached stylesheet. */
+function __resetStylesForTests() { _appCss = undefined; }
+
+function buildDocument({ html, title, baseUrl, direction }) {
   const dir = direction === 'ltr' ? 'ltr' : 'rtl';
   const lang = dir === 'rtl' ? 'ar' : 'en';
-  const links = safeStyleHrefs(styles)
-    .map((href) => '<link rel="stylesheet" href="' + href + '">')
-    .join('');
+  // The product styles with utility classes, so the captured markup is class
+  // names and nothing else. Without this the PDF is unstyled text that still
+  // says "report" at the top.
+  const appCss = appStylesheet();
+  const links = appCss ? '<style>' + appCss + '</style>' : '';
   return `<!doctype html>
 <html lang="${lang}" dir="${dir}">
 <head>
@@ -322,6 +332,6 @@ async function selfTest() {
 }
 
 module.exports = {
-  render, isAvailable, selfTest, buildDocument, safeStyleHrefs, __resetForTests,
+  render, isAvailable, selfTest, buildDocument, appStylesheet, __resetStylesForTests, __resetForTests,
   CHROMIUM_CANDIDATES, RENDER_TIMEOUT_MS, PROTOCOL_TIMEOUT_MS,
 };

@@ -61,6 +61,7 @@ export const administration = {
       canChangeBranch: "Can change branch",
       employeePortal: "Employee portal (Self-Service)",
       custodyPortal: "Custody portal",
+      custodyHint: "A custody officer signs in with the custody portal alone — no attendance, no clock-in. Enable the employee portal too only if they also clock in.",
       developer: "Developer (full permissions)",
     },
     disableAccount: "Disable account",

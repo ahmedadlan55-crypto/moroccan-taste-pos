@@ -122,6 +122,7 @@ export function UserDialog({
     handleSubmit,
     reset,
     setError,
+    setValue,
     formState: { errors },
   } = useForm<UserFormValues>({
     resolver: zodResolver(schema),
@@ -318,7 +319,27 @@ export function UserDialog({
             )}
 
             <Field label={t("administration.users.field.role")} error={errors.role}>
-              {({ id, invalid }) => <Select id={id} invalid={invalid} options={roleOptions} {...register("role")} />}
+              {({ id, invalid }) => (
+                <Select
+                  id={id}
+                  invalid={invalid}
+                  options={roleOptions}
+                  {...register("role", {
+                    // Picking «عهدة» presets the portals to what a custody officer
+                    // actually is: custody ON, attendance OFF. Before, the only
+                    // way such an account could sign in to the portal was to be
+                    // given the EMPLOYEE portal too — which brought five
+                    // attendance tabs with it. The boxes stay editable: an
+                    // officer who also clocks in can have both.
+                    onChange: (e) => {
+                      if (e.target.value === "custody") {
+                        setValue("custodyPortal", true, { shouldDirty: true });
+                        setValue("employeePortal", false, { shouldDirty: true });
+                      }
+                    },
+                  })}
+                />
+              )}
             </Field>
 
             <Field label={t("administration.users.field.email")} error={errors.email}>
@@ -376,6 +397,7 @@ export function UserDialog({
             <Checkbox label={t("administration.users.gates.canChangeBranch")} {...register("canChangeBranch")} />
             <Checkbox label={t("administration.users.gates.employeePortal")} {...register("employeePortal")} />
             <Checkbox label={t("administration.users.gates.custodyPortal")} {...register("custodyPortal")} />
+            <p className="text-[11px] font-bold text-slate-400 sm:col-span-2">{t("administration.users.gates.custodyHint")}</p>
             {showDeveloper && <Checkbox label={t("administration.users.gates.developer")} {...register("isDeveloper")} />}
           </fieldset>
 

@@ -73,6 +73,7 @@ export const administration = {
       canChangeBranch: "يمكنه تغيير الفرع",
       employeePortal: "بوابة الموظف (Self-Service)",
       custodyPortal: "بوابة العهدة",
+      custodyHint: "مسؤول العهدة يدخل التطبيق ببوابة العهدة وحدها — بلا حضور ولا بصمة. فعّل بوابة الموظف أيضًا فقط إن كان يسجّل حضورًا.",
       developer: "مطوّر (صلاحيات كاملة)",
     },
     disableAccount: "تعطيل الحساب",

@@ -18,22 +18,47 @@ interface TabDef {
   Icon: typeof Home;
 }
 
-const TABS: TabDef[] = [
-  { id: "home", labelKey: "nav.home", Icon: Home },
+const HOME_TAB: TabDef = { id: "home", labelKey: "nav.home", Icon: Home };
+// Attendance: what an EMPLOYEE opens this app for.
+const ATTENDANCE_TABS: TabDef[] = [
   { id: "clock", labelKey: "nav.clock", Icon: Fingerprint },
   { id: "hours", labelKey: "nav.hours", Icon: Clock },
   { id: "leave", labelKey: "nav.leave", Icon: CalendarDays },
-  { id: "profile", labelKey: "nav.profile", Icon: User },
 ];
-
+const PROFILE_TAB: TabDef = { id: "profile", labelKey: "nav.profile", Icon: User };
 const CUSTODY_TAB: TabDef = { id: "custody", labelKey: "nav.custody", Icon: Wallet };
 
+/**
+ * The tab bar is BUILT from the two flags the server declared at login.
+ *
+ *   employee  → home · clock · hours · leave · profile
+ *   custody   → home · custody · profile
+ *   both      → home · clock · hours · leave · custody · profile
+ *
+ * Before, the five attendance tabs were unconditional and custody was a sixth
+ * bolted on — so a custody officer, who never clocks in, opened an app that
+ * led with a fingerprint button. The flags are the admin's decision about
+ * what this person does; the bar follows them.
+ *
+ * The custody tab still appears only for an account the SERVER says holds
+ * custody access — /api/custody is guarded by role OR the custody flag, and
+ * showing the tab to anyone else puts a 403 one tap away.
+ */
 export function visibleTabs(session: PortalSession | null): TabDef[] {
-  // The custody tab appears only for an account the SERVER says holds custody
-  // access. Rendering it optimistically would put a tab in the bar that 403s on
-  // first touch — /api/custody is mounted behind requireRole('admin','manager',
-  // 'custody') in server.js, and this portal does not get to relax that.
-  return session?.custodyPortal ? [...TABS, CUSTODY_TAB] : TABS;
+  if (!session) return [HOME_TAB, ...ATTENDANCE_TABS, PROFILE_TAB];
+  const attendance = session.employeePortal !== false;
+  const custody = session.custodyPortal === true;
+  return [
+    HOME_TAB,
+    ...(attendance ? ATTENDANCE_TABS : []),
+    ...(custody ? [CUSTODY_TAB] : []),
+    PROFILE_TAB,
+  ];
+}
+
+/** True for an account that holds custody but is NOT an attendance employee. */
+export function isCustodyOnly(session: PortalSession | null): boolean {
+  return !!session && session.custodyPortal === true && session.employeePortal === false;
 }
 
 export function Shell({

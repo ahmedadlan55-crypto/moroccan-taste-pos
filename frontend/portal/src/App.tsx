@@ -6,7 +6,7 @@
 // A route table would be ceremony around `useState<PageId>`.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
-import { Shell, visibleTabs, type PageId } from "@/components/Shell";
+import { Shell, visibleTabs, isCustodyOnly, type PageId } from "@/components/Shell";
 import { Login } from "@/components/Login";
 import { HomePage } from "@/pages/HomePage";
 import { ClockPage } from "@/pages/ClockPage";
@@ -14,6 +14,7 @@ import { HoursPage } from "@/pages/HoursPage";
 import { LeavePage } from "@/pages/LeavePage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { CustodyPage } from "@/pages/CustodyPage";
+import { CustodyHome } from "@/pages/CustodyHome";
 import { useT } from "@/i18n";
 import { getSession, type PortalSession } from "@/lib/api";
 import { logout } from "@/lib/auth";
@@ -78,7 +79,7 @@ export function App() {
         onDismiss={() => setInstallDismissed(true)}
       />
 
-      {page === "home" && <HomePage onNavigate={setPage} />}
+      {page === "home" && (isCustodyOnly(session) ? <CustodyHome session={session} onNavigate={setPage} /> : <HomePage onNavigate={setPage} />)}
       {page === "clock" && <ClockPage session={session} />}
       {page === "hours" && <HoursPage />}
       {page === "leave" && <LeavePage />}

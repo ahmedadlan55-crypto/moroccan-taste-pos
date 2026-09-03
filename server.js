@@ -883,7 +883,10 @@ try { app.use('/api/activity-log', require('./routes/activity-log')); } catch(e)
 try { app.use('/api/channel-menus', require('./routes/channel-menu')); } catch(e){ console.warn('[mod:channel-menu]', e.message); }
 try { app.use('/api/stocktake-pro', require('./routes/stocktake-pro')); } catch(e){ console.warn('[mod:stocktake-pro]', e.message); }
 app.use('/api/dashboard', require('./routes/dashboard'));
-app.use('/api/custody', requireRole('admin','manager','custody'), require('./routes/custody'));
+// The custody_portal FLAG opens this too, not only the custody ROLE. Login
+// already tells the portal to show the tab for the flag; refusing here made
+// that tab a 403 on first touch.
+app.use('/api/custody', require('./middleware/auth').requireRoleOrFlag(['admin','manager','custody'], 'custodyPortal'), require('./routes/custody'));
 app.use('/api/cash', requireRole('admin','manager'), require('./routes/cash'));
 // FC-P3 — bank reconciliation + cash-drawer closing (capability-gated inside).
 app.use('/api/bank-recon', requireRole('admin','manager'), require('./routes/bank-reconciliation'));

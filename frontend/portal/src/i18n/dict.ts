@@ -59,6 +59,7 @@ export const ar = {
   },
   home: {
     greeting: "أهلًا، {name}",
+    custodyIntro: "حساب مسؤول عهدة — لا حضور ولا بصمة على هذا الحساب.",
     todayStatus: "حالة اليوم",
     notClockedIn: "لم تسجّل حضورك بعد",
     clockedInAt: "سجّلت الحضور {time}",
@@ -261,6 +262,7 @@ export const en = {
   },
   home: {
     greeting: "Hello, {name}",
+    custodyIntro: "Custody officer account — no attendance or clock-in on this account.",
     todayStatus: "Today",
     notClockedIn: "You haven't clocked in yet",
     clockedInAt: "Clocked in at {time}",

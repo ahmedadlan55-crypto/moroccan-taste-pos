@@ -2374,6 +2374,17 @@ router.post('/my-clock', async (req, res) => {
   try {
     const username = (req.user && req.user.username) || null;
     if (!username) return res.status(401).json({ success:false, error:'غير مصرّح — يرجى تسجيل الدخول', code:'unauthorized' });
+    // A custody-only account can sign in to the portal now; it must not be
+    // able to punch a clock. The JWT carries the flag; an older token without
+    // the claim falls back to the row, and an absent column (pre-migration)
+    // reads as allowed — the gate is new, the schema may not be.
+    {
+      let allowed = req.user && req.user.employeePortal;
+      if (allowed === undefined || allowed === null) {
+        try { const [u] = await db.query('SELECT employee_portal FROM users WHERE username = ? LIMIT 1', [username]); allowed = !u.length || u[0].employee_portal == null || !!Number(u[0].employee_portal); } catch (_) { allowed = true; }
+      }
+      if (!allowed) return res.status(403).json({ success: false, code: 'attendance_not_enabled', error: 'حسابك ليس حساب حضور — البصمة غير مفعّلة لهذا الحساب' });
+    }
     const { geoLat, geoLng, geoAddress, deviceName, device } = req.body;
     const [emp] = await db.query('SELECT e.id, e.first_name, e.branch_id, e.work_start, e.work_end FROM hr_employees e WHERE e.linked_username = ?', [username]);
     if (!emp.length) return res.json({ success: false, error: 'لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الإدارة' });

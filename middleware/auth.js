@@ -41,5 +41,31 @@ function requireRole(...allowed) {
     };
 }
 
+/**
+ * Pass when the role is allowed OR the JWT carries the named capability flag.
+ *
+ * /api/custody was `requireRole(admin, manager, custody)`: an account with
+ * role=employee and custody_portal=1 was told at login it had custody
+ * access, shown the tab, and refused on first touch. The flag is the
+ * admin's explicit decision; the role is a coarser default. Both open the
+ * door. The flag is read from the JWT (stamped at login), so revoking it
+ * must bump token_version — routes/auth.js does, the same way a role
+ * change does — or the old token keeps the door open until it expires.
+ */
+function requireRoleOrFlag(roles, flag) {
+    const allow = roles.map((r) => String(r).toLowerCase());
+    return function (req, res, next) {
+        const role = String((req.user && req.user.role) || 'cashier').toLowerCase();
+        if (allow.indexOf(role) !== -1) return next();
+        if (req.user && req.user[flag] === true) return next();
+        return res.status(403).json({
+            success: false,
+            error: 'هذه العملية تتطلب صلاحية أعلى (مدير/مسؤول).',
+            code: 'forbidden_role'
+        });
+    };
+}
+
 module.exports = verifyToken;
 module.exports.requireRole = requireRole;
+module.exports.requireRoleOrFlag = requireRoleOrFlag;

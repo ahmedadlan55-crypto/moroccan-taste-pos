@@ -68,6 +68,21 @@ describe("the portal id is what arms the employee_portal flag", () => {
   });
 });
 
+describe("the employee flag reaches the session", () => {
+  it("stores employeePortal:false when the server says so — a custody officer", async () => {
+    mockFetch({ ...OK_BODY, role: "custody", custodyPortal: true, employeePortal: false });
+    const s = await login("sara", "pw");
+    expect(s.custodyPortal).toBe(true);
+    expect(s.employeePortal, "this is what removes the attendance tabs").toBe(false);
+  });
+
+  it("reads an ABSENT employee flag as true (older backend)", async () => {
+    mockFetch(OK_BODY); // no employeePortal field at all
+    const s = await login("sara", "pw");
+    expect(s.employeePortal).toBe(true);
+  });
+});
+
 describe("token namespace isolation", () => {
   it("writes emp_token and NEVER pos_token", async () => {
     mockFetch(OK_BODY);

@@ -24,6 +24,13 @@ export interface PortalSession {
   fullName?: string;
   /** Whether the account may open the standalone custody section. */
   custodyPortal?: boolean;
+  /**
+   * Whether the account is an ATTENDANCE employee — clock, hours, leave.
+   * A custody officer signs in with this false and sees none of those tabs.
+   * Absent (older backend) reads as true: that backend refused everyone
+   * without the employee flag, so anyone it let in was an employee.
+   */
+  employeePortal?: boolean;
 }
 
 function storage(): Storage | null {

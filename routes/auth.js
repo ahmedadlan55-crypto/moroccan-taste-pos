@@ -193,7 +193,12 @@ router.post('/login', async (req, res) => {
     // only when the user holds the matching capability flag. The main app login
     // sends no portal id and is unaffected (role still gates the UI inside).
     const portal = (req.body && req.body.portal || '').toLowerCase();
-    if (portal === 'employee' && !user.employee_portal) {
+    // The installable app at /employee is ONE app for two audiences: staff
+    // who clock in, and custody officers who do not. Either flag admits the
+    // account; the flags then decide which tabs exist. Requiring the
+    // employee flag for the door meant a custody officer could only sign in
+    // by being made an attendance employee too.
+    if (portal === 'employee' && !user.employee_portal && !user.custody_portal) {
       return res.json({ success: false, error: 'هذا الحساب لا يملك صلاحية الدخول إلى بوابة الموظف' });
     }
     if (portal === 'custody' && !user.custody_portal) {
@@ -217,6 +222,11 @@ router.post('/login', async (req, res) => {
       brandId: user.brand_id || '', branchId: user.branch_id || '',
       default_warehouse_id: user.default_warehouse_id || '',
       employeeId: user.employee_id || '',
+      // Portal capability flags, so a per-request guard can honour them
+      // without a DB read. Revoking either bumps token_version (below), so
+      // a stale claim cannot outlive the decision.
+      employeePortal: !!user.employee_portal,
+      custodyPortal: !!user.custody_portal,
       tokenVersion: Number(user.token_version) || 1
     }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
@@ -1050,6 +1060,23 @@ router.put('/users/:username', requireAdmin, async (req, res) => {
     }
     // v7.7 — portal-access capabilities. Enabling provisions the backing record;
     // disabling is NON-DESTRUCTIVE (keeps HR data; just deactivates custody login).
+    // A portal flag is carried in the JWT (see login). Changing one must
+    // end outstanding sessions exactly as a role change does, or a revoked
+    // custody flag keeps opening /api/custody until the token expires.
+    if (req.body.employeePortal !== undefined || req.body.custodyPortal !== undefined) {
+      try {
+        const [cur] = await db.query('SELECT id, employee_portal, custody_portal, token_version FROM users WHERE username = ? LIMIT 1', [username]);
+        if (cur.length) {
+          const epNext = req.body.employeePortal !== undefined ? (req.body.employeePortal ? 1 : 0) : Number(cur[0].employee_portal) ? 1 : 0;
+          const cpNext = req.body.custodyPortal !== undefined ? (req.body.custodyPortal ? 1 : 0) : Number(cur[0].custody_portal) ? 1 : 0;
+          const changed = epNext !== (Number(cur[0].employee_portal) ? 1 : 0) || cpNext !== (Number(cur[0].custody_portal) ? 1 : 0);
+          if (changed) {
+            await db.query('UPDATE users SET token_version = ? WHERE username = ?', [(Number(cur[0].token_version) || 1) + 1, username]);
+            sessionVersion.bump(cur[0].id);
+          }
+        }
+      } catch(e) { /* pre-migration schema: flags absent, nothing to bump */ }
+    }
     if (req.body.employeePortal !== undefined) {
       const ep = req.body.employeePortal ? 1 : 0;
       try { await db.query('UPDATE users SET employee_portal = ? WHERE username = ?', [ep, username]); } catch(e) {}

@@ -51,6 +51,8 @@ export async function login(username: string, password: string): Promise<PortalS
     // The server is the authority on this. Absent (older backend) → false, so
     // the tab stays hidden rather than rendering a section that will 403.
     custodyPortal: res.custodyPortal === true,
+    // Only an explicit false turns attendance OFF. See PortalSession.
+    employeePortal: res.employeePortal !== false,
   };
   setSession(res.token, session);
   return session;

@@ -99,6 +99,19 @@ export interface Invoice {
   previous_invoice_hash?: string | null;
   /** Seller identity decoded from the TLV — frozen at stamp time. */
   seller?: ZatcaSellerSnapshot | null;
+  /**
+   * The FULL seller block as frozen at issue (logo, CR, address, footer,
+   * language) — the same content-addressed snapshot the POS receipt prints.
+   * null for an invoice issued before the snapshot existed; the adapter then
+   * falls back to the thin TLV `seller`, exactly as before.
+   */
+  identity?: FrozenSellerIdentity | null;
+  identitySource?: "snapshot" | "tlv";
+  /** The buyer as frozen at issue, or the live customer record for a
+   *  pre-feature invoice (`source` says which). */
+  buyer?: InvoiceBuyer | null;
+  /** Owner's A4 layout choices — a print preference, resolved live. */
+  a4Options?: { showBuyer?: boolean; showSignature?: boolean; showBank?: boolean; bankDetails?: string; terms?: string } | null;
   gl_journal_id?: string | null;
   version: number;
   lines?: InvoiceLine[];
@@ -191,6 +204,25 @@ export interface SalesReturnLine {
 /** The seller block decoded from the persisted TLV — the identity frozen at
  *  stamp time. ar_documents has no seller columns; re-reading live settings at
  *  print time would drift after a company rename. */
+export interface InvoiceBuyer {
+  name?: string | null;
+  vatNumber?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  source?: "snapshot" | "live";
+}
+
+/** lib/invoiceIdentity emptyIdentity() shape (all strings; vatRate a number). */
+export interface FrozenSellerIdentity {
+  sellerName?: string; legalName?: string; taxNumber?: string; crNumber?: string;
+  address?: string; nationalAddress?: string; phone?: string; email?: string;
+  logo?: string; currency?: string; vatRate?: number; salesTaxName?: string;
+  language?: string; header?: string; footer?: string; thankYou?: string;
+  returnPolicy?: string; branchName?: string; branchNameEn?: string;
+  branchCompanyName?: string; brandName?: string;
+}
+
 export interface ZatcaSellerSnapshot {
   sellerName?: string;
   vatNumber?: string;

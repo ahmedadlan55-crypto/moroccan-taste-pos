@@ -95,6 +95,7 @@ router.get('/invoice-identity', verifyToken, MGR, async (req, res) => {
       showFields: invoiceIdentity.showFields(showFieldsRaw),
       showFieldsRaw,
       receiptSettings,
+      a4Options: await invoiceIdentity.loadA4Options(db),
     });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });

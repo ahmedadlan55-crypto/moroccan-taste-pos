@@ -14,6 +14,7 @@ const events = require('../../lib/order-to-cash/events');
 const Zqr = require('../../lib/zatca-qr-image');
 const SalesScope = require('../../lib/salesScope');
 const InvoiceService = require('../../services/order-to-cash/InvoiceService');
+const invoiceIdentity = require('../../lib/invoiceIdentity');
 const SNAP = require('../../lib/reportSnapshot');
 
 router.get('/', requireCapability('invoices.view'), async (req, res) => {
@@ -60,6 +61,26 @@ router.get('/:id', requireCapability('invoices.view'), async (req, res) => {
     if (out && out.zatca_qr_base64) {
       out.zatca_qr_data_url = await Zqr.zatcaQrDataUrl(out.zatca_qr_base64);
       out.seller = Zqr.decodeZatcaTlv(out.zatca_qr_base64);
+    }
+    if (out) {
+      // The FULL seller block as it stood at issue (logo, CR, address, footer,
+      // language) — the same snapshot the POS receipt prints. An invoice
+      // issued before the snapshot existed carries none and prints the thin
+      // TLV seller exactly as before; nothing is re-read live for it.
+      out.identity = await invoiceIdentity.loadIdentity(db, out.receipt_identity_id);
+      out.identitySource = out.identity ? 'snapshot' : 'tlv';
+      // The buyer as frozen at issue. Pre-feature invoices fall back to the
+      // customer's CURRENT record and say so — a live value is better than
+      // no buyer on a tax invoice, but the reader is told which it is.
+      if (out.buyer_name || out.buyer_vat_number) {
+        out.buyer = { name: out.buyer_name, vatNumber: out.buyer_vat_number, address: out.buyer_address, phone: out.buyer_phone, email: out.buyer_email, source: 'snapshot' };
+      } else if (out.customer_id) {
+        try {
+          const [c] = await db.query('SELECT name, vat_number, address, city, phone, email FROM customers WHERE id = ? LIMIT 1', [out.customer_id]);
+          if (c.length) out.buyer = { name: c[0].name || out.customer_name, vatNumber: c[0].vat_number || null, address: [c[0].address, c[0].city].filter(Boolean).join('، ') || null, phone: c[0].phone || null, email: c[0].email || null, source: 'live' };
+        } catch (_) { /* customers table predates the columns */ }
+      }
+      out.a4Options = await invoiceIdentity.loadA4Options(db);
     }
     return H.sendData(res, out);
   } catch (e) { return H.sendErr(res, e); }

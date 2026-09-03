@@ -483,6 +483,18 @@ export const administration = {
       customer: "Customer",
       qr: "QR code",
     },
+    a4: {
+      panelTitle: "A4 tax-invoice design",
+      panelSubtitle: "The system sales invoice for registered customers: seller and buyer blocks, per-line VAT, terms, bank details and signatures.",
+      showBuyer: "Show the buyer block (name, VAT number, address)",
+      showSignature: "Signature lines (seller / received by)",
+      showBank: "Show bank details",
+      hint: "Applies to A4 invoices only; the thermal till receipt is unaffected.",
+      bankDetails: "Bank details",
+      bankDetailsHint: "Bank name and IBAN — printed in the invoice footer when enabled.",
+      terms: "Terms & conditions",
+      termsHint: "Payment and delivery terms. Printed beside the QR code.",
+    },
     print: {
       panelTitle: "Printing",
       panelSubtitle: "Paper width, auto-print and invoice language — global settings for all branches.",
@@ -526,6 +538,8 @@ export const administration = {
     preview: {
       sellerFallback: "Preview",
       cashier: "Preview",
+      buyerName: "Example Trading Co.",
+      buyerAddress: "Riyadh — Olaya, King Fahd Road",
       line1: "Arabic coffee",
       line2: "Croissant",
     },

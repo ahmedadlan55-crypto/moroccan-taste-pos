@@ -293,6 +293,25 @@ async function apply(db, log = () => {}) {
   // invoicing. A cash/card restaurant has no B2B order pipeline, so the surface
   // and its tables are gone; POS checkouts project straight into ar_documents.
 
+  // ── 7d. ar_documents — what the printed tax invoice is made of, frozen at issue
+  //
+  // The ERP invoice printed only the seller name + VAT number decoded from the
+  // ZATCA TLV, because ar_documents had no identity snapshot and re-reading
+  // settings at print time is the post-issue drift the O2C side exists to
+  // prevent. A tax invoice also names its BUYER; that was never captured at
+  // all, so a customer renamed or re-registered after the fact silently
+  // rewrote every invoice ever issued to them.
+  //
+  // receipt_identity_id is the same content-addressed snapshot the POS pins
+  // on sales.receipt_identity_id (lib/invoiceIdentity). The buyer columns are
+  // copied from the customer row at issue and never touched again.
+  await H.addColumn(db, 'ar_documents', 'receipt_identity_id', 'VARCHAR(40) NULL', log);
+  await H.addColumn(db, 'ar_documents', 'buyer_name', 'VARCHAR(200) NULL', log);
+  await H.addColumn(db, 'ar_documents', 'buyer_vat_number', 'VARCHAR(30) NULL', log);
+  await H.addColumn(db, 'ar_documents', 'buyer_address', 'VARCHAR(400) NULL', log);
+  await H.addColumn(db, 'ar_documents', 'buyer_phone', 'VARCHAR(40) NULL', log);
+  await H.addColumn(db, 'ar_documents', 'buyer_email', 'VARCHAR(160) NULL', log);
+
   // ── 8. customers evolve (additive only; balance stays but is abandoned for the derived view)
   if (await H.tableExists(db, 'customers')) {
     await H.addColumn(db, 'customers', 'name_en', 'VARCHAR(200) NULL', log);

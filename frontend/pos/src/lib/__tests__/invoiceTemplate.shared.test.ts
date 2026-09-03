@@ -760,3 +760,90 @@ describe("printHtml — popup handling", () => {
     spy.mockRestore();
   });
 });
+
+// ── The A4 tax invoice ──────────────────────────────────────────────────────
+// Before, A4 was the thermal receipt stretched to 190mm: one centred column,
+// no buyer, a four-column item table with no VAT breakdown — a till receipt on
+// big paper, not a document a registered buyer can book. Thermal paper must
+// be byte-for-byte unaffected by any of this.
+describe("the A4 tax invoice", () => {
+  const BUYER = { name: "شركة المشتري", vatNumber: "300000000000003", address: "الرياض — العليا", phone: "0500000000" };
+
+  it("names the seller and the buyer as two parties", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", buyer: BUYER }));
+    expect(html).toContain('class="parties"');
+    expect(html).toContain("البائع");
+    expect(html).toContain('data-section="buyer"');
+    expect(html).toContain("شركة المشتري");
+    // The buyer's VAT number is what lets them book the invoice.
+    expect(html).toContain("300000000000003");
+    expect(html).toContain("الرقم الضريبي للمشتري");
+  });
+
+  it("omits the buyer block when the owner turned it off", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", buyer: BUYER, a4: { showBuyer: false } }));
+    expect(html).not.toContain('data-section="buyer"');
+    expect(html).not.toContain("300000000000003");
+  });
+
+  it("breaks VAT out per line — taxable and VAT columns exist", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", vatRate: 15 }));
+    expect(html).toContain('class="items a4"');
+    expect(html).toContain("الخاضع للضريبة");
+    expect(html).toContain("سعر الوحدة");
+    expect(html).toContain("إجمالي الخاضع للضريبة");
+  });
+
+  it("prints terms and bank details only when configured, and signature lines by default", () => {
+    const on = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", a4: { showBank: true, bankDetails: "IBAN SA00 0000", terms: "الدفع خلال 30 يومًا" } }));
+    expect(on).toContain('data-section="bank"');
+    expect(on).toContain("IBAN SA00 0000");
+    expect(on).toContain('data-section="terms"');
+    expect(on).toContain("الدفع خلال 30 يومًا");
+    expect(on).toContain('data-section="signatures"');
+
+    const off = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", a4: { showBank: false, bankDetails: "IBAN SA00 0000", showSignature: false } }));
+    // Bank details entered but switched OFF must not leak onto the paper.
+    expect(off).not.toContain("IBAN SA00 0000");
+    expect(off).not.toContain('data-section="signatures"');
+  });
+
+  it("shows a due date when the invoice has one", () => {
+    const html = buildSaleReceiptHtml(saleOpts({ paperWidth: "A4", dueDate: "2026-10-15T00:00:00.000Z" }));
+    expect(html).toContain("تاريخ الاستحقاق");
+    expect(html).toContain("2026-10-15");
+  });
+
+  it("escapes owner-entered terms and buyer text", () => {
+    const html = buildSaleReceiptHtml(saleOpts({
+      paperWidth: "A4",
+      buyer: { name: "<img src=x onerror=alert(1)>" },
+      a4: { terms: "<script>alert(1)</script>" },
+    }));
+    expect(html).not.toContain("<img src=x");
+    expect(html).not.toContain("<script>alert");
+  });
+
+  it("leaves thermal paper untouched — no parties block, no A4 columns", () => {
+    for (const paperWidth of ["58", "80"] as const) {
+      const html = buildSaleReceiptHtml(saleOpts({ paperWidth, buyer: BUYER, a4: { terms: "x" } }));
+      expect(html).not.toContain('class="parties"');
+      expect(html).not.toContain('class="items a4"');
+      expect(html).not.toContain('data-section="terms"');
+      // The thermal receipt still carries the plain customer line it always had.
+      expect(html).not.toContain("الرقم الضريبي للمشتري");
+    }
+  });
+
+  it("keeps the recorded totals as the money authority on A4", () => {
+    // Per-line VAT is derived for display; the totals block must print the
+    // caller's recorded figures, never a sum of those derivations.
+    const html = buildSaleReceiptHtml(saleOpts({
+      paperWidth: "A4",
+      totals: { subtotal: 230, lineDiscountTotal: 0, discountAmount: 0, vatTotal: 30, total: 230 },
+    }));
+    expect(html).toContain("230.00");
+    expect(html).toContain("30.00");
+    expect(html).toContain("200.00"); // taxable total = 230 − 30, the recorded net
+  });
+});

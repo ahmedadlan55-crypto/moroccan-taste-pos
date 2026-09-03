@@ -19,9 +19,42 @@ function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-/** The thin frozen seller (name + VAT number) → a DocumentIdentity whose other
- *  fields are intentionally empty (see file header). null when unstamped. */
+/**
+ * The seller block. Preference order:
+ *   1. the FULL identity frozen at issue (`inv.identity`) — logo, CR, address,
+ *      footer, language — the same snapshot the POS receipt prints;
+ *   2. the thin TLV seller (name + VAT number) for an invoice issued before
+ *      the snapshot existed. Nothing is re-read live: that is the post-issue
+ *      drift the O2C side exists to prevent.
+ */
 function toIdentity(inv: Invoice): DocumentIdentity | null {
+  const f = inv.identity;
+  if (f && (f.sellerName || f.taxNumber)) {
+    const lang = f.language === "en" || f.language === "both" ? f.language : "ar";
+    return {
+      sellerName: f.sellerName || inv.seller?.sellerName || "",
+      legalName: f.legalName || "",
+      taxNumber: f.taxNumber || inv.seller?.vatNumber || "",
+      crNumber: f.crNumber || "",
+      address: f.address || "",
+      nationalAddress: f.nationalAddress || "",
+      phone: f.phone || "",
+      email: f.email || "",
+      logo: f.logo || "",
+      currency: f.currency || "SAR",
+      vatRate: Number.isFinite(Number(f.vatRate)) ? Number(f.vatRate) : DEFAULT_VAT_RATE,
+      salesTaxName: f.salesTaxName || undefined,
+      language: lang,
+      header: f.header || "",
+      footer: f.footer || "",
+      thankYou: f.thankYou || "",
+      returnPolicy: f.returnPolicy || "",
+      branchName: f.branchName || "",
+      branchNameEn: f.branchNameEn || undefined,
+      branchCompanyName: f.branchCompanyName || "",
+      brandName: f.brandName || "",
+    };
+  }
   if (!inv.seller) return null;
   return {
     sellerName: inv.seller.sellerName || "",
@@ -52,6 +85,9 @@ export function toSaleReceiptOptions(inv: Invoice, t: TFunction): SaleReceiptOpt
   // document-level discount as the residual — keeps subtotal − discount = total
   // exact, and each line's gross_amount already equals base_qty × unit_price −
   // discount (inclusive), which is what the renderer shows per line.
+  // The recorded rate when the snapshot carries one; the historical default
+  // otherwise. Used for the per-line VAT breakdown on A4.
+  const vatRate = inv.identity && Number.isFinite(Number(inv.identity.vatRate)) ? Number(inv.identity.vatRate) : DEFAULT_VAT_RATE;
   const vat = round2(Number(inv.vat_amount) || 0);
   const total = round2(Number(inv.total_amount) || 0);
   const grossSubtotal = round2((Number(inv.subtotal) || 0) + vat);
@@ -75,12 +111,20 @@ export function toSaleReceiptOptions(inv: Invoice, t: TFunction): SaleReceiptOpt
     },
     invoiceNumber: inv.document_number || null,
     fallbackSellerName: inv.seller?.sellerName || t("sales.print.invoiceFallbackSeller"),
-    vatRate: DEFAULT_VAT_RATE,
+    vatRate,
     paperWidth: "A4",
     identity: toIdentity(inv),
     zatcaQrDataUrl: inv.zatca_qr_data_url ?? null,
     printedAt: inv.issue_date ? new Date(inv.issue_date) : undefined,
     stamp: inv.status === "cancelled" ? t("sales.print.cancelledStamp") : null,
     customerName: inv.customer_name ?? null,
+    // A4 tax-invoice parties and choices. The buyer is what the server froze
+    // at issue (or the live record for a pre-feature invoice); a registered
+    // buyer needs their VAT number on the paper to book it.
+    buyer: inv.buyer
+      ? { name: inv.buyer.name ?? null, vatNumber: inv.buyer.vatNumber ?? null, address: inv.buyer.address ?? null, phone: inv.buyer.phone ?? null, email: inv.buyer.email ?? null }
+      : null,
+    dueDate: inv.due_date ?? null,
+    a4: inv.a4Options ?? null,
   };
 }

@@ -20,6 +20,7 @@ const { standardVatRate } = require('../../lib/order-to-cash/config');
 const events = require('../../lib/order-to-cash/events');
 const { runTransition } = require('./TransitionExecutor');
 const Zatca = require('./ZatcaDocumentService');
+const invoiceIdentity = require('../../lib/invoiceIdentity');
 const CreditLimitService = require('./CreditLimitService');
 const SNAP = require('../../lib/reportSnapshot');
 
@@ -170,9 +171,15 @@ async function issue(id, ctx) {
       // back the head together with the document, and an idempotent replay
       // (which never reaches perform) cannot advance it again.
       await Zatca.advanceChain(conn, { hash: z.hash, icv: z.icv });
+      // Freeze what the printed document is made of. The seller block is
+      // the same content-addressed snapshot the POS pins at checkout; the
+      // buyer is copied from the customer row NOW. Both are best-effort:
+      // a missing settings/customers table must not fail an issue.
+      const frozen = await _freezeParties(conn, row);
       return {
         extraSets: {
           document_number: number, gl_journal_id: journalId,
+          ...frozen,
           // previousHash and the QR used to be RETURNED by the stamper and
           // dropped here — the chain link existed only as a recomputation.
           zatca_uuid: z.uuid, zatca_hash: z.hash, zatca_status: z.status,
@@ -185,6 +192,35 @@ async function issue(id, ctx) {
       };
     },
   });
+}
+
+/**
+ * The seller identity and buyer details as they stand at THIS moment,
+ * shaped as ar_documents columns. Called from issue() inside the same
+ * transaction. Never throws: the invoice must issue even on a host whose
+ * settings or customers table predates the columns — it then carries no
+ * snapshot, and the read side falls back to a live resolve exactly as
+ * pre-feature invoices do.
+ */
+async function _freezeParties(conn, row) {
+  const out = {};
+  try {
+    const { identity } = await invoiceIdentity.resolveIdentity(conn, { brandId: row.brand_id || null, branchId: row.branch_id || null });
+    out.receipt_identity_id = await invoiceIdentity.snapshotIdentity(conn, identity);
+  } catch (_) { /* no identity snapshot on this host */ }
+  if (row.customer_id) {
+    try {
+      const [c] = await conn.query('SELECT name, vat_number, address, city, phone, email FROM customers WHERE id = ? LIMIT 1', [row.customer_id]);
+      if (c.length) {
+        out.buyer_name = String(c[0].name || row.customer_name || '').slice(0, 200) || null;
+        out.buyer_vat_number = String(c[0].vat_number || '').slice(0, 30) || null;
+        out.buyer_address = [c[0].address, c[0].city].filter((v) => v && String(v).trim()).join('، ').slice(0, 400) || null;
+        out.buyer_phone = String(c[0].phone || '').slice(0, 40) || null;
+        out.buyer_email = String(c[0].email || '').slice(0, 160) || null;
+      }
+    } catch (_) { /* customers table predates the columns */ }
+  }
+  return out;
 }
 
 /** Cancel a DRAFT invoice (issued invoices are immutable — use a credit note). */
@@ -315,6 +351,11 @@ async function linkPosSale(conn, sale, opts = {}) {
     documentType: 'ar_document', documentId: id, action: 'link_pos_sale', toStatus: (opts.status || 'paid'),
     actor: opts.actor || 'backfill', glJournalId: journalId, payload: { saleId: sale.id, lines: lineCount },
   });
+  // The POS pinned its seller block at checkout (sales.receipt_identity_id);
+  // the AR document is the same invoice and must print the same block.
+  if (sale.receipt_identity_id) {
+    try { await conn.query('UPDATE ar_documents SET receipt_identity_id = ? WHERE id = ? AND receipt_identity_id IS NULL', [sale.receipt_identity_id, id]); } catch (_) { /* pre-column schema */ }
+  }
   return { id, linked: true, journalId, lines: lineCount };
 }
 

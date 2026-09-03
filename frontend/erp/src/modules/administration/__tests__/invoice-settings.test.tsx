@@ -66,7 +66,11 @@ describe("InvoiceSettingsPage", () => {
     expect(parsed.logo).toBe(true); // the untouched toggles ride along explicitly
 
     // exactly the 9 documented switches
-    expect(screen.getAllByRole("switch")).toHaveLength(9 + 1); // +1 = the auto-print toggle
+    // 9 show-field switches + the auto-print toggle + the 3 A4 design toggles
+    // (buyer block / signature lines / bank details). The A4 panel sits AFTER
+    // the print panel in the DOM, so the indexes the clicks below rely on are
+    // unchanged.
+    expect(screen.getAllByRole("switch")).toHaveLength(9 + 1 + 3);
   });
 
   it("saves the paper width and auto-print keys from the الطباعة panel", async () => {

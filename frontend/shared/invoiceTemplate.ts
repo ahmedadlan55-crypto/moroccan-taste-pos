@@ -173,6 +173,23 @@ interface DocLabels {
   ofWord: string;
   soldWord: string;
   creditGrandTotal: string;
+  /** A4 tax-invoice labels. */
+  a4Seller: string;
+  a4Buyer: string;
+  a4BuyerVat: string;
+  a4IssueDate: string;
+  a4DueDate: string;
+  a4ColNo: string;
+  a4ColUnitPrice: string;
+  a4ColDiscount: string;
+  a4ColTaxable: string;
+  a4ColVat: string;
+  a4TaxableTotal: string;
+  a4Terms: string;
+  a4Bank: string;
+  a4SignSeller: string;
+  a4SignBuyer: string;
+  a4Page: string;
 }
 
 /** Every static printed label the two builders below use, per language. */
@@ -225,6 +242,22 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     ofWord: "من",
     soldWord: "مباع",
     creditGrandTotal: "إجمالي المرتجع",
+    a4Seller: "البائع",
+    a4Buyer: "المشتري",
+    a4BuyerVat: "الرقم الضريبي للمشتري",
+    a4IssueDate: "تاريخ الإصدار",
+    a4DueDate: "تاريخ الاستحقاق",
+    a4ColNo: "#",
+    a4ColUnitPrice: "سعر الوحدة",
+    a4ColDiscount: "الخصم",
+    a4ColTaxable: "الخاضع للضريبة",
+    a4ColVat: "الضريبة",
+    a4TaxableTotal: "إجمالي الخاضع للضريبة",
+    a4Terms: "الشروط والأحكام",
+    a4Bank: "بيانات الحساب البنكي",
+    a4SignSeller: "توقيع البائع",
+    a4SignBuyer: "توقيع المستلم",
+    a4Page: "صفحة",
   },
   en: {
     pay: PAY_LABELS_EN,
@@ -274,6 +307,22 @@ const LABELS: Record<"ar" | "en", DocLabels> = {
     ofWord: "of",
     soldWord: "sold",
     creditGrandTotal: "Credit Total",
+    a4Seller: "Seller",
+    a4Buyer: "Buyer",
+    a4BuyerVat: "Buyer VAT number",
+    a4IssueDate: "Issue date",
+    a4DueDate: "Due date",
+    a4ColNo: "#",
+    a4ColUnitPrice: "Unit price",
+    a4ColDiscount: "Discount",
+    a4ColTaxable: "Taxable",
+    a4ColVat: "VAT",
+    a4TaxableTotal: "Total taxable amount",
+    a4Terms: "Terms & conditions",
+    a4Bank: "Bank details",
+    a4SignSeller: "Seller signature",
+    a4SignBuyer: "Received by",
+    a4Page: "Page",
   },
 };
 
@@ -503,6 +552,54 @@ export function baseCss(paper: PaperWidth): string {
   .settlement .tot td { padding: 1.2mm 0; }
   .qr-zone { margin-top: 6mm; }
   .closing { margin-top: 5mm; }
+  /* ── the A4 tax invoice ─────────────────────────────────────────────
+     A document, not a receipt: identity and meta side by side, seller and
+     buyer as two named parties, an item table that breaks VAT out per
+     line, totals pinned to the trailing edge, QR beside the terms, and
+     signature lines. Rules mark section boundaries; fills stay off so the
+     document survives a print dialog with background graphics disabled. */
+  .a4-head { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8mm; align-items: start;
+             padding-bottom: 5mm; border-bottom: 1px solid currentColor; margin-bottom: 5mm; }
+  .a4-head .identity { padding-bottom: 0; border-bottom: none; margin-bottom: 0; }
+  .a4-head .logo { text-align: start; margin-bottom: 2mm; }
+  .a4-head .logo img { max-width: 52mm; }
+  .a4-head h1, .a4-head .brand, .a4-head .legal, .a4-head .branch, .a4-head .sub { text-align: start; }
+  .a4-head h1 { font-size: 1.35em; margin-bottom: 1mm; }
+  .a4-meta { border: 1px solid currentColor; padding: 3mm 4mm; }
+  .a4-meta .doctype { margin: 0 0 2.5mm; padding: 0 0 2mm; border-top: none; text-align: start;
+                      font-size: 1.15em; }
+  .a4-meta .meta { margin-bottom: 0; }
+  .a4-meta .meta td { padding: 1mm 0; }
+  .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; margin-bottom: 5mm; }
+  .party { border: 1px solid currentColor; padding: 3mm 4mm; break-inside: avoid; page-break-inside: avoid; }
+  .party .sec { margin: 0 0 1.5mm; }
+  .party .name { font-weight: 700; font-size: 1.05em; }
+  .party .line { font-size: 0.92em; line-height: 1.5; }
+  .items.a4 col.no { width: 6%; }
+  .items.a4 col.item { width: 34%; }
+  .items.a4 col.qty { width: 8%; }
+  .items.a4 col.price { width: 12%; }
+  .items.a4 col.disc { width: 10%; }
+  .items.a4 col.taxable { width: 12%; }
+  .items.a4 col.vat { width: 9%; }
+  .items.a4 col.line-total { width: 12%; }
+  .items.a4 th { border-top: 1px solid currentColor; border-bottom: 1px solid currentColor; font-size: 0.86em; }
+  .items.a4 td.money, .items.a4 th.mh { width: auto; }
+  .a4-bottom { display: grid; grid-template-columns: 1fr 54%; gap: 8mm; align-items: start; margin-top: 5mm; }
+  .a4-bottom .settlement { width: auto; margin: 0; }
+  .a4-side { break-inside: avoid; page-break-inside: avoid; }
+  .a4-side .qr-zone { margin-top: 0; }
+  .a4-side .qr { text-align: start; }
+  .a4-side .qr img { margin: 0; }
+  .a4-side .qr-cap { text-align: start; }
+  .a4-block { margin-top: 4mm; font-size: 0.9em; line-height: 1.5; white-space: pre-line; }
+  .a4-block .sec { margin: 0 0 1mm; }
+  .a4-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 12mm; margin-top: 12mm; break-inside: avoid; page-break-inside: avoid; }
+  .a4-sign div { border-top: 1px solid currentColor; padding-top: 2mm; font-size: 0.9em;
+                 color: var(--mt-text-muted, GrayText); text-align: center; }
+  .a4 .closing { border-top: 1px solid currentColor; padding-top: 3mm; }
+  .a4 .closing .foot { margin-top: 0; font-size: 0.95em; }
+  @media print { .party .line, .a4-sign div, .a4-block { color: CanvasText; } }
   `
       : `@page { margin: 0; }
   @media print { body { width: ${p.width}; max-width: ${p.width}; margin: 0 auto; } }`
@@ -836,6 +933,37 @@ export interface SaleReceiptOptions {
    *  the paper and the offline flag (see docTypeLabel), which is right for every
    *  caller that exists today. */
   docTitle?: string | null;
+  /**
+   * The BUYER, for an A4 tax invoice. A registered buyer needs their name and
+   * VAT number on the document to book it; a thermal receipt prints only
+   * `customerName` and ignores this. Frozen at issue by the server.
+   */
+  buyer?: DocumentBuyer | null;
+  /** Credit terms — printed on A4 only. */
+  dueDate?: string | null;
+  /** Owner choices for the A4 layout. Absent → the defaults in a4Defaults(). */
+  a4?: A4Options | null;
+}
+
+export interface DocumentBuyer {
+  name?: string | null;
+  vatNumber?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+/** The owner's A4 layout choices (settings.InvoiceA4Options). */
+export interface A4Options {
+  showBuyer?: boolean;
+  showSignature?: boolean;
+  showBank?: boolean;
+  bankDetails?: string;
+  terms?: string;
+}
+
+export function a4Defaults(): Required<A4Options> {
+  return { showBuyer: true, showSignature: true, showBank: false, bankDetails: "", terms: "" };
 }
 
 /** The document-type band. A POS thermal sale is a ZATCA *simplified* tax
@@ -854,12 +982,15 @@ function docTypeLabel(opts: SaleReceiptOptions, lang: RenderLanguage, thermal: b
 /** Everything between `<body>` and `</body>` for one language or for compact
  *  paired-label bilingual mode. */
 function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: PaperWidth): string {
+  // A4 is a different DOCUMENT, not a wider receipt.
+  if (paper === "A4") return a4InvoiceBody(opts, lang);
   const totals = opts.totals;
   const show = opts.showFields ?? null;
   const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
   const t = labelsFor(lang);
   const idn = opts.identity ?? null;
-  const thermal = paper !== "A4";
+  // A4 returned above, so everything from here is thermal paper.
+  const thermal = true;
   // 48mm cannot carry four columns AND a readable dish name: the three numeric
   // columns eat ~110px of 175px and every name wraps twice. At 58mm the unit
   // economics move to a "2 × 68.00" line under the name — the returning-goods
@@ -979,6 +1110,157 @@ function saleReceiptBody(opts: SaleReceiptOptions, lang: RenderLanguage, paper: 
   </section>
   ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"), lang)}
   ${footerBlock(idn, lang, show)}`;
+}
+
+/** ISO date → YYYY-MM-DD (English digits), or "" for anything unparseable. */
+function fmtDateOnly(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** Multi-line owner text → escaped lines joined with <br>. */
+function escLines(text: string): string {
+  return String(text || "").split(/\r?\n/).map((l) => escFree(l)).join("<br>");
+}
+
+/**
+ * The A4 tax invoice.
+ *
+ * Hierarchy: head (identity | document meta) → parties (seller | buyer) →
+ * items with VAT broken out per line → bottom (QR + terms + bank | totals) →
+ * signatures → closing. Class names shared with the receipt (`identity`,
+ * `doctype`, `items`, `settlement`, `qr-zone`, `closing`) are kept so the
+ * print stylesheet, the tests and the PDF renderer see one document family.
+ *
+ * The per-line VAT below is DERIVED from the line gross and the rate, because
+ * DocumentLine carries no per-line VAT figure and this template must not
+ * learn tax rules beyond "gross ÷ (1 + rate)". The document totals stay the
+ * caller's recorded figures; the derived per-line values are display only
+ * and the total row uses the recorded vatTotal, never their sum.
+ */
+function a4InvoiceBody(opts: SaleReceiptOptions, lang: RenderLanguage): string {
+  const totals = opts.totals;
+  const show = opts.showFields ?? null;
+  const on = (k: keyof DocumentShowFields) => !show || show[k] !== false;
+  const t = labelsFor(lang);
+  const idn = opts.identity ?? null;
+  const a4 = { ...a4Defaults(), ...(opts.a4 ?? {}) };
+  const cur = currencyLabel(idn, lang);
+  const rate = Number.isFinite(opts.vatRate) ? Math.max(0, opts.vatRate) : 0;
+
+  const { sellerName, lines: sellerLines } = sellerBlock(idn, show, opts.fallbackSellerName, lang);
+  const docType = docTypeLabel(opts, lang, false);
+  const issued = fmtDateOnly(opts.printedAt ?? new Date());
+  const due = fmtDateOnly(opts.dueDate);
+
+  const metaRows = [
+    metaRow(t.invoiceRef, `<span class="num">${esc(opts.invoiceNumber || opts.saleId || opts.localRef || "")}</span>`),
+    metaRow(t.a4IssueDate, `<span class="num">${issued}</span>`),
+    due ? metaRow(t.a4DueDate, `<span class="num">${due}</span>`) : "",
+    on("cashier") && opts.cashierName ? metaRow(t.servedBy, `<span class="bidi">${esc(opts.cashierName)}</span>`) : "",
+  ].filter(Boolean).join("\n    ");
+
+  // Seller party: the registered identity, compact.
+  const sellerParty = `<div class="party"><div class="sec">${t.a4Seller}</div>
+    <div class="name">${escFree(sellerName)}</div>
+    ${sellerLines.map((l) => l.replace(/class="(legal|sub)"/g, 'class="line"')).join("\n    ")}
+    ${contactBlock(idn, show).replace('class="contact"', 'class="line contact"')}</div>`;
+
+  // Buyer party: only when the owner shows it AND there is a buyer to show.
+  const b = opts.buyer ?? null;
+  const buyerName = (b && b.name) || opts.customerName || "";
+  const buyerParty = a4.showBuyer && (buyerName || (b && b.vatNumber))
+    ? `<div class="party" data-section="buyer"><div class="sec">${t.a4Buyer}</div>
+    <div class="name bidi">${escFree(buyerName || "—")}</div>
+    ${b && b.vatNumber ? `<div class="line">${t.a4BuyerVat}: <span class="num">${esc(b.vatNumber)}</span></div>` : ""}
+    ${b && b.address ? `<div class="line">${escFree(b.address)}</div>` : ""}
+    ${[b && b.phone ? `<span class="num">${esc(b.phone)}</span>` : "", b && b.email ? `<span class="ltr">${esc(b.email)}</span>` : "", opts.customerPhone && !(b && b.phone) ? `<span class="num">${esc(opts.customerPhone)}</span>` : ""].filter(Boolean).length
+      ? `<div class="line">${[b && b.phone ? `<span class="num">${esc(b.phone)}</span>` : "", b && b.email ? `<span class="ltr">${esc(b.email)}</span>` : "", opts.customerPhone && !(b && b.phone) ? `<span class="num">${esc(opts.customerPhone)}</span>` : ""].filter(Boolean).join(" · ")}</div>`
+      : ""}</div>`
+    : "";
+
+  // Items: VAT broken out per line, derived from the gross (see docblock).
+  let taxableSum = 0;
+  const linesHtml = opts.lines.map((l, i) => {
+    const baseQty = Number(l.baseQty ?? l.qty);
+    const factor = Number(l.conversionFactorSnapshot) || 1;
+    const qtyLabel = factor > 1 && l.enteredUnitName ? `${fmtQty(l.qty)} ${esc(l.enteredUnitName)}` : fmtQty(l.qty);
+    const lineGross = l.lineTotalGross ?? baseQty * l.unitPrice - (l.lineDiscount || 0);
+    const unitShown = l.unitPriceGross ?? l.unitPrice;
+    const taxable = rate > 0 ? lineGross / (1 + rate / 100) : lineGross;
+    const vat = lineGross - taxable;
+    taxableSum += taxable;
+    const note = l.notes ? `<div class="line-note">${esc(l.notes)}</div>` : "";
+    return `<tr>
+      <td class="num">${i + 1}</td>
+      <td class="nm">${esc(l.name)}${note}</td>
+      ${money(qtyLabel)}
+      ${money(fmt2(unitShown))}
+      ${money(l.lineDiscount ? fmt2(l.lineDiscount) : "—")}
+      ${money(fmt2(taxable))}
+      ${money(fmt2(vat))}
+      ${money(fmt2(lineGross), "b")}
+    </tr>`;
+  }).join("");
+
+  const taxName = taxDisplayName(idn?.salesTaxName, t.vat);
+  // Recorded figures rule the totals block. The taxable total is the recorded
+  // net when the caller gave one (subtotal − vat), never the per-line sum.
+  const taxableTotal = totals.subtotal - totals.vatTotal;
+  void taxableSum;
+
+  const bank = a4.showBank && a4.bankDetails ? `<div class="a4-block" data-section="bank"><div class="sec">${t.a4Bank}</div>${escLines(a4.bankDetails)}</div>` : "";
+  const terms = a4.terms ? `<div class="a4-block" data-section="terms"><div class="sec">${t.a4Terms}</div>${escLines(a4.terms)}</div>` : "";
+  const sign = a4.showSignature
+    ? `<div class="a4-sign" data-section="signatures"><div>${t.a4SignSeller}</div><div>${t.a4SignBuyer}</div></div>`
+    : "";
+
+  return `<div class="a4">
+  <div class="a4-head">
+    <header class="identity">${logoBlock(idn, show)}<h1>${escFree(sellerName)}</h1>
+      ${branchNameBlock(idn, lang)}
+      ${sellerLines.join("\n      ")}
+    </header>
+    <div class="a4-meta">
+      ${docType ? `<div class="doctype">${docType}</div>` : ""}
+      ${opts.stamp ? `<div class="stamp">${esc(opts.stamp)}</div>` : ""}
+      <table class="meta">
+        ${metaRows}
+      </table>
+    </div>
+  </div>
+  <div class="parties">${sellerParty}${buyerParty}</div>
+  <table class="items a4" data-section="items">
+    <colgroup><col class="no"><col class="item"><col class="qty"><col class="price"><col class="disc"><col class="taxable"><col class="vat"><col class="line-total"></colgroup>
+    <thead><tr><th>${t.a4ColNo}</th><th>${t.colItem}</th><th class="mh">${t.colQty}</th><th class="mh">${t.a4ColUnitPrice}</th><th class="mh">${t.a4ColDiscount}</th><th class="mh">${t.a4ColTaxable}</th><th class="mh">${t.a4ColVat}</th><th class="mh">${t.colTotal}</th></tr></thead>
+    <tbody>${linesHtml}</tbody>
+  </table>
+  <div class="a4-bottom">
+    <div class="a4-side">
+      ${qrBlock(opts.zatcaQrDataUrl, !!opts.offlineRef, on("qr"), lang)}
+      ${terms}
+      ${bank}
+    </div>
+    <section class="settlement" data-section="settlement">
+    <table class="tot">
+      <tr><td>${t.itemsCount}</td>${money(String(opts.lines.length))}</tr>
+      <tr><td>${t.a4TaxableTotal}</td>${money(fmt2(taxableTotal))}</tr>
+      ${totals.lineDiscountTotal > 0 ? `<tr><td>${t.lineDiscounts}</td>${money(`-${fmt2(totals.lineDiscountTotal)}`)}</tr>` : ""}
+      ${totals.discountAmount > 0 ? `<tr><td>${t.discount}${opts.discountName ? ` (${esc(opts.discountName)})` : ""}</td>${money(`-${fmt2(totals.discountAmount)}`)}</tr>` : ""}
+      <tr data-row="vat"><td><span class="tax-name">${taxName}</span><span class="tax-meta"><span class="num">${fmtQty(rate)}%</span></span></td>${money(fmt2(totals.vatTotal))}</tr>
+    </table>
+    <table class="tot total-tbl">
+      <tr class="total" data-row="grand-total"><td>${t.grandTotal}</td>${money(`${fmt2(totals.total)} ${cur}`)}</tr>
+    </table>
+    ${opts.payments.length ? `<div class="sec">${t.paymentSection}</div><table class="tot">${opts.payments.map((p) => `<tr><td>${t.pay[p.method] ?? esc(p.method)}</td>${money(fmt2(p.amount))}</tr>`).join("")}</table>` : ""}
+    </section>
+  </div>
+  ${sign}
+  ${footerBlock(idn, lang, show)}
+  </div>`;
 }
 
 export function buildSaleReceiptHtml(opts: SaleReceiptOptions): string {

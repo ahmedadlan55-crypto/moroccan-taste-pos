@@ -5,7 +5,7 @@ import { apiClient } from "@/shared/api";
 import { Button, EmptyState, ErrorState, Input, LoadingState, PageHeader, PanelTitle, StatusBadge, Toggle } from "@/shared/ui";
 import { Field } from "@/shared/forms";
 import { useT, type TFunction } from "@/i18n";
-import { buildSaleReceiptHtml, type DocumentLanguage, type PaperWidth } from "../../../../../shared/invoiceTemplate";
+import { a4Defaults, buildSaleReceiptHtml, type A4Options, type DocumentLanguage, type PaperWidth } from "../../../../../shared/invoiceTemplate";
 
 // /administration/invoice-settings — every value the printed invoice carries,
 // with WHERE it comes from.
@@ -28,6 +28,7 @@ interface Identity {
   language: string; branchName: string; branchNameEn?: string; branchCompanyName: string; brandName: string;
 }
 interface ReceiptSettings { paperWidth: string; autoPrint: string }
+type A4Draft = Required<A4Options>;
 interface IdentityResponse {
   success: boolean;
   identity: Identity;
@@ -39,6 +40,7 @@ interface IdentityResponse {
   showFields: Record<string, boolean>;
   showFieldsRaw?: string | null;
   receiptSettings?: ReceiptSettings;
+  a4Options?: Partial<A4Options> | null;
 }
 
 /** Fields the owner edits HERE (settings), vs fields derived from another record.
@@ -205,6 +207,15 @@ export function InvoiceSettingsPage() {
     setDraft((d) => ({ ...d, ReceiptShowFields: JSON.stringify({ ...showFields, [key]: next }) }));
 
   const paperWidth = draft.ReceiptPaperWidth ?? data?.receiptSettings?.paperWidth ?? "80";
+  // The A4 design choices: a JSON setting, drafted as one unit.
+  const a4: A4Draft = useMemo(() => {
+    const base: A4Draft = { ...a4Defaults(), ...(data?.a4Options ?? {}) } as A4Draft;
+    if (draft.InvoiceA4Options !== undefined) {
+      try { return { ...base, ...(JSON.parse(draft.InvoiceA4Options) as Partial<A4Options>) } as A4Draft; } catch { return base; }
+    }
+    return base;
+  }, [data?.a4Options, draft.InvoiceA4Options]);
+  const patchA4 = (p: Partial<A4Options>) => setDraft((d) => ({ ...d, InvoiceA4Options: JSON.stringify({ ...a4, ...p }) }));
   const selectedPaperWidth: PaperWidth = paperWidth === "58" || paperWidth === "A4" ? paperWidth : "80";
   const autoPrint = (draft.ReceiptAutoPrint ?? data?.receiptSettings?.autoPrint ?? "1") === "1";
   const language = draft.ReceiptLanguage ?? (identity?.language || "ar");
@@ -295,6 +306,13 @@ export function InvoiceSettingsPage() {
         qr: showFields.qr !== false,
       },
       zatcaQrDataUrl: PREVIEW_QR_DATA_URL,
+      // A4 preview shows a registered buyer, so the owner sees the parties
+      // block exactly as a B2B customer will.
+      buyer: paperWidth === "A4"
+        ? { name: t("administration.invoice.preview.buyerName"), vatNumber: "300000000000003", address: t("administration.invoice.preview.buyerAddress") }
+        : null,
+      dueDate: paperWidth === "A4" ? new Date(Date.now() + 30 * 86400000).toISOString() : null,
+      a4,
     });
   };
 
@@ -567,6 +585,31 @@ export function InvoiceSettingsPage() {
               </select>
             )}
           </Field>
+        </div>
+      </section>
+
+      {/* A4 tax-invoice design. The receipt toggles above govern the thermal
+          receipt; these govern the B2B document — parties, terms, bank,
+          signatures. Saved as ONE JSON setting (InvoiceA4Options); a print
+          preference, not seller identity, so it never enters an invoice
+          snapshot. */}
+      <section className="surface">
+        <PanelTitle icon={ReceiptText} title={t("administration.invoice.a4.panelTitle")} subtitle={t("administration.invoice.a4.panelSubtitle")} />
+        <div className="grid gap-5 p-5 md:grid-cols-2">
+          <div className="grid gap-3">
+            <Toggle checked={a4.showBuyer} onChange={(next) => patchA4({ showBuyer: next })} label={t("administration.invoice.a4.showBuyer")} aria-label={t("administration.invoice.a4.showBuyer")} />
+            <Toggle checked={a4.showSignature} onChange={(next) => patchA4({ showSignature: next })} label={t("administration.invoice.a4.showSignature")} aria-label={t("administration.invoice.a4.showSignature")} />
+            <Toggle checked={a4.showBank} onChange={(next) => patchA4({ showBank: next })} label={t("administration.invoice.a4.showBank")} aria-label={t("administration.invoice.a4.showBank")} />
+            <p className="text-[11px] font-bold text-slate-400">{t("administration.invoice.a4.hint")}</p>
+          </div>
+          <div className="grid gap-3">
+            <Field label={t("administration.invoice.a4.bankDetails")} hint={t("administration.invoice.a4.bankDetailsHint")}>
+              {({ id }) => <textarea id={id} className="field min-h-24" value={a4.bankDetails} onChange={(e) => patchA4({ bankDetails: e.target.value.slice(0, 600) })} disabled={!a4.showBank} />}
+            </Field>
+            <Field label={t("administration.invoice.a4.terms")} hint={t("administration.invoice.a4.termsHint")}>
+              {({ id }) => <textarea id={id} className="field min-h-24" value={a4.terms} onChange={(e) => patchA4({ terms: e.target.value.slice(0, 600) })} />}
+            </Field>
+          </div>
         </div>
       </section>
 

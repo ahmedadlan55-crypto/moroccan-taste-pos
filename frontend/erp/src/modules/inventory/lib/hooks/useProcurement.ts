@@ -15,13 +15,14 @@ export interface ListParams {
   q?: string;
   status?: string;
   supplierId?: string;
+  branchId?: string;
+  warehouseId?: string;
   page?: number;
   pageSize?: number;
   sort?: string;
   dir?: string;
   dateFrom?: string;
   dateTo?: string;
-  warehouseId?: string;
   asOfDate?: string;
 }
 // query-key factories accept a plain record; ListParams is structurally one.

@@ -14,6 +14,7 @@ import { Button } from "@/shared/ui";
 import { LoadingState, ErrorState, EmptyState } from "@/shared/ui";
 import { formatCurrency, formatDate } from "@/shared/lib";
 import { useCan } from "@/modules/inventory/lib/permission-provider";
+import { useBranchOptions } from "@/modules/administration/users/pickers";
 import { useT } from "@/i18n";
 import { st } from "./labels";
 import { PageCounter } from "@/shared/tables";
@@ -71,6 +72,8 @@ export function ProcurementDashboard() {
   if (isError || !data) return <ErrorState error={error} onRetry={() => refetch()} />;
   const cards = [
     { label: t("purchasing.dashboard.purchaseValue"), value: formatCurrency(data.purchaseValue), icon: ShoppingBag, tone: "teal" as const },
+    // First, because it is first in the cycle: a branch is waiting on it.
+    { label: t("purchasing.dashboard.requisitionsPending"), value: String(data.requisitionsPending), icon: ClipboardList, tone: "amber" as const },
     { label: t("purchasing.dashboard.ordersPendingApproval"), value: String(data.ordersPendingApproval), icon: ClipboardList, tone: "amber" as const },
     { label: t("purchasing.dashboard.ordersOverdue"), value: String(data.ordersOverdue), icon: AlarmClock, tone: "rose" as const },
     { label: t("purchasing.dashboard.partialReceipts"), value: String(data.partialReceipts), icon: PackageCheck, tone: "blue" as const },
@@ -110,11 +113,16 @@ export function OrdersPage() {
   const [params, patch] = useListState();
   const { data, isLoading, isError, error, refetch } = useOrders(params);
   const canCreate = useCan("procurement.manage");
+  const branches = useBranchOptions(true);
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input className="field w-56" placeholder={t("purchasing.orders.searchPlaceholder")} value={params.q ?? ""} onChange={(e) => patch({ q: e.target.value, page: 1 })} />
         <StatusFilter value={params.status} onChange={(v) => patch({ status: v, page: 1 })} options={["draft", "submitted", "approved", "sent", "partially_received", "fully_received", "closed", "cancelled"]} />
+        <select className="field w-44" value={params.branchId ?? ""} onChange={(e) => patch({ branchId: e.target.value, page: 1 })} aria-label={t("purchasing.requisitions.filterBranchAria")}>
+          <option value="">{t("purchasing.requisitions.allBranches")}</option>
+          {(branches.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
         <div className="grow" />
         {canCreate && <Link to="/purchasing/orders?new=1"><Button>+ {t("purchasing.orders.addOrder")}</Button></Link>}
       </div>
@@ -123,12 +131,14 @@ export function OrdersPage() {
       ) : (
         <div className="surface overflow-hidden"><div className="overflow-x-auto">
           <table className="w-full border-collapse">
-            <thead className="bg-slate-50"><tr><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.supplier")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th className="text-end">{t("purchasing.col.total")}</Th></tr></thead>
+            <thead className="bg-slate-50"><tr><Th>{t("purchasing.col.number")}</Th><Th>{t("purchasing.col.supplier")}</Th><Th>{t("purchasing.requisitions.branch")}</Th><Th>{t("purchasing.col.date")}</Th><Th>{t("common.status")}</Th><Th className="text-end">{t("purchasing.col.total")}</Th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {data.rows.map((o) => (
                 <tr key={o.id} className="hover:bg-slate-50">
                   <Td><Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/orders?doc=${o.id}`}>{o.poNumber}</Link></Td>
-                  <Td>{o.supplierName}</Td><Td className="tabular-nums">{formatDate(o.poDate)}</Td>
+                  <Td>{o.supplierName}</Td>
+                  <Td>{o.branchName || o.warehouseName || "—"}{o.requisitionNumber ? <span className="ms-2 text-[11px] font-bold text-slate-400">{o.requisitionNumber}</span> : null}</Td>
+                  <Td className="tabular-nums">{formatDate(o.poDate)}</Td>
                   <Td><StatusBadge>{st(t, o.status)}</StatusBadge></Td>
                   <Td className="text-end font-bold tabular-nums">{formatCurrency(o.total)}</Td>
                 </tr>

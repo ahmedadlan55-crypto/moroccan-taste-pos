@@ -166,6 +166,8 @@ router.get('/', requireCapability('procurement.view'), async (req, res) => {
     const where = [], params = [];
     if (p.status) { where.push('po.status = ?'); params.push(p.status); }
     if (p.supplierId) { where.push('po.supplier_id = ?'); params.push(p.supplierId); }
+    if (req.query.branchId) { where.push('po.branch_id = ?'); params.push(String(req.query.branchId)); }
+    if (req.query.warehouseId) { where.push('po.warehouse_id = ?'); params.push(String(req.query.warehouseId)); }
     if (p.q) { where.push('(po.po_number LIKE ? OR po.supplier_name LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
     if (p.dateFrom) { where.push('po.po_date >= ?'); params.push(p.dateFrom); }
     if (p.dateTo) { where.push('po.po_date <= ?'); params.push(p.dateTo); }
@@ -176,8 +178,14 @@ router.get('/', requireCapability('procurement.view'), async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT po.id, po.po_number, po.supplier_id, po.supplier_name, po.po_date, po.expected_date,
-              po.status, po.version, po.total_after_vat, po.currency, po.created_at
-         FROM purchase_orders po ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+              po.status, po.version, po.total_after_vat, po.currency, po.created_at,
+              po.warehouse_id, po.branch_id, po.requisition_id,
+              w.name AS warehouse_name, br.name AS branch_name, pr.req_number AS requisition_number
+         FROM purchase_orders po
+         LEFT JOIN warehouses w ON w.id = po.warehouse_id
+         LEFT JOIN branches br ON br.id = po.branch_id
+         LEFT JOIN purchase_requisitions pr ON pr.id = po.requisition_id
+         ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
       params.concat([p.pageSize, p.offset]));
     const [cnt] = await db.query(`SELECT COUNT(*) AS total FROM purchase_orders po ${whereSql}`, params);
     const [tot] = await db.query(`SELECT COALESCE(SUM(po.total_after_vat),0) AS total FROM purchase_orders po ${whereSql}`, params);
@@ -199,7 +207,12 @@ router.get('/:id', requireCapability('procurement.view'), async (req, res) => {
     // و«غير موجود». الرسالة هنا مطابقة تمامًا لرسالة المعرّف المعدوم.
     const vis = _visibilityClause(req, 'po');
     const [rows] = await db.query(
-      `SELECT * FROM purchase_orders po WHERE po.id = ?${vis.sql ? ' AND ' + vis.sql : ''}`,
+      `SELECT po.*, w.name AS warehouse_name, br.name AS branch_name, pr.req_number AS requisition_number
+         FROM purchase_orders po
+         LEFT JOIN warehouses w ON w.id = po.warehouse_id
+         LEFT JOIN branches br ON br.id = po.branch_id
+         LEFT JOIN purchase_requisitions pr ON pr.id = po.requisition_id
+        WHERE po.id = ?${vis.sql ? ' AND ' + vis.sql : ''}`,
       [req.params.id, ...vis.params]);
     if (!rows.length) throw err('NOT_FOUND', 'أمر الشراء غير موجود');
     const [lines] = await db.query('SELECT * FROM po_lines WHERE po_id = ? ORDER BY id', [req.params.id]);

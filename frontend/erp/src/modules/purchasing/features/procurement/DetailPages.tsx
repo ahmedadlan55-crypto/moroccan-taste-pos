@@ -79,6 +79,14 @@ export function OrderDetailPage() {
           { label: t("purchasing.order.currency"), value: s(o.currency) }, { label: t("purchasing.field.version"), value: s(o.version) },
           { label: t("purchasing.field.net"), value: formatCurrency(n(o.total_before_vat)) }, { label: t("purchasing.field.vat"), value: formatCurrency(n(o.vat_amount)) },
           { label: t("purchasing.col.total"), value: formatCurrency(n(o.total_after_vat)) }, { label: t("purchasing.field.createdBy"), value: s(o.created_by) },
+          // Where the goods go, and what asked for them. Both were on the row
+          // and shown nowhere, so an order could not be traced back to the
+          // branch request that caused it.
+          { label: t("purchasing.requisitions.branch"), value: s(o.branch_name, s(o.branch_id)) },
+          { label: t("purchasing.requisitions.warehouse"), value: s(o.warehouse_name, s(o.warehouse_id)) },
+          { label: t("purchasing.requisitions.sourceRequisition"), value: o.requisition_id
+            ? <Link className="font-bold text-teal-700 hover:underline" to={`/purchasing/requisitions?doc=${s(o.requisition_id, "")}`}>{s(o.requisition_number, s(o.requisition_id))}</Link>
+            : "—" },
         ]} />
       </Section>
       <Section icon={FileText} title={t("purchasing.lines.title")}>

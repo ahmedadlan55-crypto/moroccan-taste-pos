@@ -36,6 +36,11 @@ async function apply(db, log = () => {}) {
   await H.addColumn(db, 'purchase_orders', 'expected_date_snapshot', 'DATE NULL', log);
   await H.addColumn(db, 'purchase_orders', 'idempotency_key', 'VARCHAR(80) NULL', log);
   await H.addColumn(db, 'purchase_orders', 'change_order_seq', 'INT NOT NULL DEFAULT 0', log);
+  // Which requisition this PO was converted from. The requisition already
+  // carried po_id, so the link existed in ONE direction only: from the PO you
+  // could not find the branch request that caused it, and the list could not
+  // show it. A one-way reference is not traceability.
+  await H.addColumn(db, 'purchase_orders', 'requisition_id', 'VARCHAR(50) NULL', log);
   await H.addColumn(db, 'purchase_orders', 'submitted_by', 'VARCHAR(100) NULL', log);
   await H.addColumn(db, 'purchase_orders', 'submitted_at', 'DATETIME NULL', log);
   await H.addColumn(db, 'purchase_orders', 'sent_by', 'VARCHAR(100) NULL', log);
@@ -50,6 +55,8 @@ async function apply(db, log = () => {}) {
     "ENUM('draft','submitted','approved','sent','partially_received','received','fully_received','closed','cancelled') NOT NULL DEFAULT 'draft'", log);
   await H.addIndex(db, 'purchase_orders', 'uq_po_idem', 'idempotency_key', { unique: true }, log);
   await H.addIndex(db, 'purchase_orders', 'idx_po_status_supplier', 'status, supplier_id, po_date', {}, log);
+  await H.addIndex(db, 'purchase_orders', 'idx_po_requisition', 'requisition_id', {}, log);
+  await H.addIndex(db, 'purchase_orders', 'idx_po_branch', 'branch_id, status', {}, log);
 
   // ─────────────────────────────────────────────────────────────────────────
   // 2. po_lines — UoM snapshot, base qty, line lifecycle, nullable vat_rate

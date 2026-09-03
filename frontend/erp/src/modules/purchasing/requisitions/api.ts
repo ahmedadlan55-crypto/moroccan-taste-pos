@@ -21,6 +21,9 @@ export interface RequisitionRow {
   req_number: string;
   branch_id: string | null;
   warehouse_id: string | null;
+  /** Resolved names — the list used to show ids, which nobody recognises. */
+  branch_name?: string | null;
+  warehouse_name?: string | null;
   requested_by: string | null;
   status: RequisitionStatus;
   version: number;
@@ -28,9 +31,18 @@ export interface RequisitionRow {
   notes: string | null;
   created_by: string | null;
   created_at: string;
+  submitted_by?: string | null;
+  submitted_at?: string | null;
   approved_by: string | null;
   approved_at: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  reject_reason?: string | null;
   po_id: string | null;
+  /** The PO's own number and state, so the row can say "PO-0042 · sent"
+   *  instead of an opaque id. */
+  po_number?: string | null;
+  po_status?: string | null;
   line_count: number;
   estimated_total: number;
 }
@@ -49,9 +61,6 @@ export interface RequisitionLine {
 export interface RequisitionDetail extends RequisitionRow {
   lines: RequisitionLine[];
   estimatedTotal: number;
-  submitted_by?: string | null;
-  rejected_by?: string | null;
-  reject_reason?: string | null;
 }
 
 export interface LineInput {
@@ -75,6 +84,9 @@ export interface RequisitionInput {
 export interface ListParams {
   status?: string;
   branchId?: string;
+  warehouseId?: string;
+  /** The requester's own view: only requests this user filed. */
+  mine?: boolean;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -86,7 +98,7 @@ interface ListResponse {
 }
 
 // The shared success envelope (lib/procurement/errors.ok / sendData / sendOk).
-interface MutationEnvelope {
+export interface MutationEnvelope {
   success: boolean;
   data?: { id?: string; poId?: string; deleted?: boolean } | null;
   documentNumber?: string | null;
@@ -103,6 +115,8 @@ export function useRequisitions(params: ListParams) {
         params: {
           status: params.status || undefined,
           branchId: params.branchId || undefined,
+          warehouseId: params.warehouseId || undefined,
+          mine: params.mine ? "1" : undefined,
           q: params.q || undefined,
           page: params.page,
           pageSize: params.pageSize,
@@ -174,14 +188,24 @@ export function useRejectRequisition() {
   });
 }
 
+/** Per-line price/VAT overrides keyed by requisition line id. The server
+ *  accepted these from day one; the screen simply never offered them. */
+export type ConvertLines = Record<string, { unitPrice?: number; vatRate?: number }>;
+
 export function useConvertRequisition() {
   const invalidate = useInvalidate();
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; supplierId: string }) =>
+    mutationFn: (v: { id: string; supplierId: string; lines?: ConvertLines }) =>
       apiClient.post<MutationEnvelope>(`/procurement/requisitions/${v.id}/convert-to-po`, {
         supplierId: v.supplierId,
+        ...(v.lines && Object.keys(v.lines).length ? { lines: v.lines } : {}),
       }),
-    onSuccess: (_r, v) => invalidate(v.id),
+    onSuccess: (_r, v) => {
+      invalidate(v.id);
+      // A new PO now exists; the orders list must not keep showing the old one.
+      qc.invalidateQueries({ queryKey: ["procurement", "orders"] });
+    },
   });
 }
 

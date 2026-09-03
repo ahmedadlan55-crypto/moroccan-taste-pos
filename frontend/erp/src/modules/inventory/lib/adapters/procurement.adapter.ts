@@ -59,6 +59,15 @@ export interface PurchaseOrder {
   version: number;
   total: number;
   currency: string;
+  /** Where the goods are going. Dropped by the old mapper, so the list could
+   *  not say which branch an order served. */
+  branchId: string;
+  branchName: string;
+  warehouseId: string;
+  warehouseName: string;
+  /** The branch request this PO was converted from, when there was one. */
+  requisitionId: string;
+  requisitionNumber: string;
 }
 export function toOrder(r: Record<string, unknown>): PurchaseOrder {
   return {
@@ -72,6 +81,12 @@ export function toOrder(r: Record<string, unknown>): PurchaseOrder {
     version: num(r.version, 1),
     total: num(r.total_after_vat),
     currency: str(r.currency, "SAR"),
+    branchId: str(r.branch_id),
+    branchName: str(r.branch_name),
+    warehouseId: str(r.warehouse_id),
+    warehouseName: str(r.warehouse_name),
+    requisitionId: str(r.requisition_id),
+    requisitionNumber: str(r.requisition_number),
   };
 }
 
@@ -186,6 +201,7 @@ export function toReturn(r: Record<string, unknown>): PurchaseReturn {
 export interface ProcurementDashboard {
   purchaseValue: number;
   ordersPendingApproval: number;
+  requisitionsPending: number;
   ordersOverdue: number;
   partialReceipts: number;
   unmatchedInvoices: number;
@@ -199,6 +215,7 @@ export function toDashboard(r: Record<string, unknown>): ProcurementDashboard {
   return {
     purchaseValue: num(r.purchaseValue),
     ordersPendingApproval: num(r.ordersPendingApproval),
+    requisitionsPending: num(r.requisitionsPending),
     ordersOverdue: num(r.ordersOverdue),
     partialReceipts: num(r.partialReceipts),
     unmatchedInvoices: num(r.unmatchedInvoices),

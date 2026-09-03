@@ -97,6 +97,32 @@ function _resolveWarehouseId(req, supplied) {
 }
 
 /**
+ * Complete the branch ⇄ warehouse pair from whichever side was given.
+ *
+ * A branch owns exactly one warehouse (branches.warehouse_id). A request
+ * filed "for the Riyadh branch" therefore already names its warehouse, and
+ * one filed against a warehouse names the branch that owns it. Leaving
+ * either half NULL was how the same request could be visible under one
+ * filter and absent under the other — same document, two answers.
+ *
+ * Only fills in what is MISSING; an explicit value is never overwritten,
+ * and a warehouse shared by several branches (or none) leaves the branch
+ * NULL rather than guessing.
+ */
+async function _completeAttribution(conn, branchId, warehouseId) {
+  let b = branchId == null || String(branchId).trim() === '' ? null : String(branchId).trim();
+  let w = warehouseId == null || String(warehouseId).trim() === '' ? null : String(warehouseId).trim();
+  if (b && !w) {
+    const [rows] = await conn.query('SELECT warehouse_id FROM branches WHERE id = ? LIMIT 1', [b]);
+    if (rows.length && rows[0].warehouse_id) w = String(rows[0].warehouse_id);
+  } else if (w && !b) {
+    const [rows] = await conn.query('SELECT id FROM branches WHERE warehouse_id = ? LIMIT 2', [w]);
+    if (rows.length === 1) b = String(rows[0].id);
+  }
+  return { branchId: b, warehouseId: w };
+}
+
+/**
  * The predicate that decides which requisitions a caller may READ.
  *
  *   warehouse_id IN (…granted…)  OR  (warehouse_id IS NULL AND created_by = me)
@@ -262,23 +288,41 @@ router.post('/', requireCapability(CAP_MANAGE), async (req, res) => {
     // rule receipts.js applies), otherwise a scoped user could file a request
     // against foreign stock — and then not be able to read it back.
     if (b.warehouseId && typeof req.guardWh === 'function' && !req.guardWh(res, b.warehouseId)) return;
-    const warehouseId = _resolveWarehouseId(req, b.warehouseId);
+    // What the caller actually NAMED — not the single-warehouse default,
+    // which is a fallback and must not outrank the branch.
+    const explicitWarehouseId = b.warehouseId == null || String(b.warehouseId).trim() === '' ? null : String(b.warehouseId).trim();
 
     const out = await db.withTransaction(async (conn) => {
+      // The branch names its warehouse and vice versa — fill the missing half
+      // so the request is found under EITHER filter. Order matters: the
+      // branch is consulted BEFORE the "caller has one warehouse" default,
+      // otherwise a single-warehouse user filing for another branch would be
+      // silently filed against their own stock instead of being refused.
+      const attr = await _completeAttribution(conn, b.branchId, explicitWarehouseId);
+      if (!attr.warehouseId) attr.warehouseId = _resolveWarehouseId(req, null);
+      // The scope guard above checked the explicit value. A DERIVED warehouse
+      // has to clear the same guard, or naming a branch becomes a way around
+      // warehouse scope.
+      if (attr.warehouseId && attr.warehouseId !== explicitWarehouseId && typeof req.guardWh === 'function' && !req.guardWh(res, attr.warehouseId)) {
+        // guardWh has already answered 403; abort the transaction without
+        // answering again.
+        const e = new Error('scope refused'); e.responded = true; throw e;
+      }
+      const warehouseId = attr.warehouseId;
       const id = genId();
       const number = await nextDocNumber(conn, 'PR');
       await conn.query(
         `INSERT INTO purchase_requisitions
           (id, req_number, branch_id, warehouse_id, requested_by, status, version, needed_date, notes, created_by)
          VALUES (?,?,?,?,?,'draft',1,?,?,?)`,
-        [id, number, b.branchId || null, warehouseId, b.requestedBy || actor || null,
+        [id, number, attr.branchId, warehouseId, b.requestedBy || actor || null,
          b.neededDate || null, b.notes || null, actor || null]);
       await _insertLines(conn, id, lines);
       return { id, number };
     });
 
     return H.sendOk(res, { data: { id: out.id }, documentNumber: out.number, status: 'draft', version: 1 }, 201);
-  } catch (e) { return H.sendErr(res, e); }
+  } catch (e) { if (e && e.responded) return; return H.sendErr(res, e); }
 });
 
 // ── GET / — paginated list (filters: status, branchId, q) ────────────────────
@@ -289,6 +333,10 @@ router.get('/', CAN_READ(), async (req, res) => {
     const where = [], params = [];
     if (p.status) { where.push('r.status = ?'); params.push(p.status); }
     if (req.query.branchId) { where.push('r.branch_id = ?'); params.push(String(req.query.branchId)); }
+    if (req.query.warehouseId) { where.push('r.warehouse_id = ?'); params.push(String(req.query.warehouseId)); }
+    // `mine=1` — the requester's own view. A branch user opening the screen
+    // wants "what did I ask for and where is it", not the company's queue.
+    if (String(req.query.mine || '') === '1') { where.push('r.created_by = ?'); params.push(H.actorOf(req) || ''); }
     if (p.q) { where.push('(r.req_number LIKE ? OR r.notes LIKE ?)'); params.push('%' + p.q + '%', '%' + p.q + '%'); }
     if (req.query.dateFrom) { where.push('r.needed_date >= ?'); params.push(String(req.query.dateFrom)); }
     if (req.query.dateTo) { where.push('r.needed_date <= ?'); params.push(String(req.query.dateTo)); }
@@ -299,10 +347,18 @@ router.get('/', CAN_READ(), async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT r.id, r.req_number, r.branch_id, r.warehouse_id, r.requested_by, r.status, r.version,
-              r.needed_date, r.notes, r.created_by, r.created_at, r.approved_by, r.approved_at, r.po_id,
+              r.needed_date, r.notes, r.created_by, r.created_at,
+              r.submitted_by, r.submitted_at, r.approved_by, r.approved_at,
+              r.rejected_by, r.rejected_at, r.reject_reason, r.po_id,
+              br.name AS branch_name, w.name AS warehouse_name,
+              po.po_number, po.status AS po_status,
               (SELECT COUNT(*) FROM purchase_requisition_lines l WHERE l.requisition_id = r.id) AS line_count,
               (SELECT COALESCE(SUM(l.quantity * l.estimated_price), 0) FROM purchase_requisition_lines l WHERE l.requisition_id = r.id) AS estimated_total
-         FROM purchase_requisitions r ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+         FROM purchase_requisitions r
+         LEFT JOIN branches br ON br.id = r.branch_id
+         LEFT JOIN warehouses w ON w.id = r.warehouse_id
+         LEFT JOIN purchase_orders po ON po.id = r.po_id
+         ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
       params.concat([p.pageSize, p.offset]));
     const [cnt] = await db.query(`SELECT COUNT(*) AS total FROM purchase_requisitions r ${whereSql}`, params);
     return H.sendData(res, rows.map((x) => Object.assign({}, x, { estimated_total: calc.money(x.estimated_total) })), {
@@ -320,7 +376,12 @@ router.get('/:id', CAN_READ(), async (req, res) => {
     await ensureReady();
     const vis = _visibilityClause(req, 'r');
     const [rows] = await db.query(
-      `SELECT r.* FROM purchase_requisitions r WHERE r.id = ?${vis.sql ? ' AND ' + vis.sql : ''}`,
+      `SELECT r.*, br.name AS branch_name, w.name AS warehouse_name, po.po_number, po.status AS po_status
+         FROM purchase_requisitions r
+         LEFT JOIN branches br ON br.id = r.branch_id
+         LEFT JOIN warehouses w ON w.id = r.warehouse_id
+         LEFT JOIN purchase_orders po ON po.id = r.po_id
+        WHERE r.id = ?${vis.sql ? ' AND ' + vis.sql : ''}`,
       [req.params.id].concat(vis.params));
     if (!rows.length) throw err('NOT_FOUND', 'طلب الشراء غير موجود');
     const [lines] = await db.query('SELECT * FROM purchase_requisition_lines WHERE requisition_id = ? ORDER BY id', [req.params.id]);
@@ -343,6 +404,14 @@ router.put('/:id', requireCapability(CAP_MANAGE), async (req, res) => {
         const lines = _normLines(b.lines || b.items);
         await conn.query('DELETE FROM purchase_requisition_lines WHERE requisition_id = ?', [req.params.id]);
         await _insertLines(conn, req.params.id, lines);
+      }
+      // Re-complete the pair from whatever the caller sent, so editing the
+      // branch alone re-derives the warehouse and vice versa.
+      if (Object.prototype.hasOwnProperty.call(b, 'branchId') || Object.prototype.hasOwnProperty.call(b, 'warehouseId')) {
+        const attr = await _completeAttribution(conn,
+          Object.prototype.hasOwnProperty.call(b, 'branchId') ? b.branchId : rows[0].branch_id,
+          Object.prototype.hasOwnProperty.call(b, 'warehouseId') ? b.warehouseId : rows[0].warehouse_id);
+        b.branchId = attr.branchId; b.warehouseId = attr.warehouseId;
       }
       const sets = [], sp = [];
       for (const [k, col] of [['branchId', 'branch_id'], ['warehouseId', 'warehouse_id'],
@@ -483,13 +552,17 @@ router.post('/:id/convert-to-po', requireCapability(CAP_APPROVE), async (req, re
         `INSERT INTO purchase_orders
           (id, po_number, supplier_id, supplier_name, supplier_name_snapshot, po_date, expected_date, expected_date_snapshot,
            warehouse_id, brand_id, branch_id, cost_center_id, currency, status, version,
-           total_before_vat, discount_amount, vat_amount, total_after_vat, notes, created_by, idempotency_key)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',1,?,?,?,?,?,?,?)`,
+           total_before_vat, discount_amount, vat_amount, total_after_vat, notes, created_by, idempotency_key,
+           requisition_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',1,?,?,?,?,?,?,?,?)`,
         [poId, poNumber, sup[0].id, sup[0].name, sup[0].name,
          today, reqRow.needed_date || null, reqRow.needed_date || null,
          reqRow.warehouse_id || null, null, reqRow.branch_id || null, null, 'SAR',
          totals.subtotal, totals.discountAmount, totals.vatAmount, totals.total,
-         `محوّل من طلب الشراء ${reqRow.req_number}`, actor, H.idemOf(req)]);
+         `محوّل من طلب الشراء ${reqRow.req_number}`, actor, H.idemOf(req),
+         // The back-reference. Notes carried the number as prose; prose is
+         // not a foreign key and cannot be filtered or joined on.
+         reqRow.id]);
       for (const l of computed) {
         await conn.query(
           `INSERT INTO po_lines

@@ -9,6 +9,7 @@ import type { EntityPage } from "@/shared/ui";
 import {
   toPaginated, toSupplier, toOrder, toReceipt, toInvoice, toPayment, toReturn, toDashboard,
   type Supplier, type PurchaseOrder, type Receipt, type SupplierInvoice, type Payment, type PurchaseReturn,
+  type ReceiptChargeInput,
 } from "@/modules/inventory/lib/adapters/procurement.adapter";
 
 export interface ListParams {
@@ -224,6 +225,21 @@ export function useCreateReceipt() {
   return useMutation<MutationResult, Error, Record<string, unknown>>({
     mutationFn: (body) => apiClient.post<MutationResult>(`${P}/receipts`, body),
     onSuccess: () => inv(queryKeys.procurement.receipts.all),
+  });
+}
+/**
+ * PUT /receipts/:id/charges — replaces the WHOLE charge set of a draft or
+ * approved receipt. A posted/reversed/cancelled receipt answers 409
+ * RECEIPT_CHARGES_LOCKED: the landed values already entered inventory and the
+ * ledger, so the server refuses and the UI shows the reason instead of the
+ * editor. Invalidates the receipt list AND the detail — the detail is where the
+ * landed figures are read back from.
+ */
+export function useUpdateReceiptCharges() {
+  const inv = useInvalidate();
+  return useMutation<MutationResult, Error, { id: string; charges: ReceiptChargeInput[] }>({
+    mutationFn: ({ id, charges }) => apiClient.put<MutationResult>(`${P}/receipts/${id}/charges`, { charges }),
+    onSuccess: (_r, v) => inv(queryKeys.procurement.receipts.all, v.id, queryKeys.procurement.receipts.detail),
   });
 }
 export function useCreateInvoice() {

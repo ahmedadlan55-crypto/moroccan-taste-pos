@@ -32,6 +32,7 @@ import {
   ReceiptText,
   ScanSearch,
   ShieldCheck,
+  Ship,
   ShoppingCart,
   Truck,
   UserRoundSearch,
@@ -49,6 +50,7 @@ export const PURCHASING_REPORT_IDS = [
   "ap-aging",
   "supplier-statement",
   "supplier-performance",
+  "landed-cost",
   "tax",
   "data-quality",
 ] as const;
@@ -372,6 +374,57 @@ export const PURCHASING_REPORTS: Record<PurchasingReportId, PurchasingReportDef>
     defaultSort: { columnKey: "otif_pct", dir: "asc" },
   },
 
+  // ─── Landed cost ─────────────────────────────────────────────────────────
+  // One row per POSTED receipt in the period: goods net, each charge type,
+  // the uplift and the accrued/invoiced split. `uplift_pct` is null when the
+  // goods value is zero — the server never fabricates a percentage of nothing
+  // — and the declared "number" format prints null as "—", never as 0.
+  // The endpoint implements ?format=csv (routes/procurement/reports.js) and
+  // its file is the authoritative sheet, exactly like ap-aging's.
+  "landed-cost": {
+    id: "landed-cost",
+    labelKey: "warehouseIntelligence.reports.landedCost.label",
+    descriptionKey: "warehouseIntelligence.reports.landedCost.description",
+    icon: Ship,
+    tone: "lime",
+    capsAny: READ_CAPS,
+    shape: "rows",
+    columns: [
+      { key: "receipt_number", labelKey: `${C}.receiptNumber`, format: "text", align: "start" },
+      { key: "receipt_date", labelKey: `${C}.receiptDate`, format: "date", align: "start" },
+      { key: "supplier_name", labelKey: `${C}.supplier`, format: "text", align: "start" },
+      { key: "warehouse_name", labelKey: `${C}.warehouse`, format: "text", align: "start" },
+      { key: "lines", labelKey: `${C}.receiptLines`, format: "number", align: "end" },
+      { key: "goods_value", labelKey: `${C}.goodsValue`, format: "money", align: "end" },
+      { key: "freight", labelKey: `${C}.freight`, format: "money", align: "end" },
+      { key: "customs", labelKey: `${C}.customs`, format: "money", align: "end" },
+      { key: "insurance", labelKey: `${C}.insurance`, format: "money", align: "end" },
+      { key: "handling", labelKey: `${C}.handling`, format: "money", align: "end" },
+      { key: "other", labelKey: `${C}.otherCharges`, format: "money", align: "end" },
+      { key: "charges_total", labelKey: `${C}.chargesTotal`, format: "money", align: "end" },
+      { key: "landed_total", labelKey: `${C}.landedTotal`, format: "money", align: "end" },
+      { key: "uplift_pct", labelKey: `${C}.upliftPct`, format: "number", align: "end" },
+      { key: "charges_accrued", labelKey: `${C}.chargesAccrued`, format: "money", align: "end" },
+      { key: "charges_invoiced", labelKey: `${C}.chargesInvoiced`, format: "money", align: "end" },
+    ],
+    // `supplier` here is OPTIONAL (no requiresSupplier): the page sends
+    // supplierId only when one is picked, and the endpoint narrows on it.
+    filters: ["supplier", "period", "warehouse"],
+    totals: [
+      { key: "receipts", from: "totals", labelKey: `${T}.receipts`, format: "number" },
+      { key: "goods_value", from: "totals", labelKey: `${T}.goodsValue`, format: "money", column: "goods_value" },
+      { key: "charges_total", from: "totals", labelKey: `${T}.chargesTotal`, format: "money", column: "charges_total" },
+      { key: "landed_total", from: "totals", labelKey: `${T}.landedTotal`, format: "money", column: "landed_total" },
+      { key: "uplift_pct", from: "totals", labelKey: `${T}.upliftPct`, format: "number", column: "uplift_pct" },
+      { key: "charges_accrued", from: "totals", labelKey: `${T}.chargesAccrued`, format: "money", column: "charges_accrued" },
+      { key: "charges_invoiced", from: "totals", labelKey: `${T}.chargesInvoiced`, format: "money", column: "charges_invoiced" },
+    ],
+    exportMode: "server-csv",
+    rowIdKeys: ["receipt_id"],
+    heading: "period",
+    defaultSort: { columnKey: "receipt_date", dir: "desc" },
+  },
+
   "data-quality": {
     id: "data-quality",
     labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label",
@@ -405,7 +458,7 @@ const G = "warehouseIntelligence.purchasingReports.groups";
 
 export const PURCHASING_REPORT_GROUPS: PurchasingReportGroup[] = [
   { id: "orders", titleKey: `${G}.orders`, icon: ShoppingCart, reports: ["open-orders", "purchase-analysis"] },
-  { id: "receiving", titleKey: `${G}.receiving`, icon: FileCheck2, reports: ["receiving-variance", "three-way-match", "price-variance"] },
+  { id: "receiving", titleKey: `${G}.receiving`, icon: FileCheck2, reports: ["receiving-variance", "three-way-match", "price-variance", "landed-cost"] },
   { id: "payables", titleKey: `${G}.payables`, icon: Wallet, reports: ["ap-aging", "supplier-statement", "supplier-performance"] },
   { id: "tax", titleKey: `${G}.tax`, icon: ReceiptText, reports: ["tax"] },
   { id: "dataQuality", titleKey: `${G}.dataQuality`, icon: ShieldCheck, reports: ["data-quality"] },

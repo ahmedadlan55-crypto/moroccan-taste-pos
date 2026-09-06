@@ -99,6 +99,11 @@ async function apply(db, log = () => {}) {
   await H.addColumn(db, 'purchase_receipts', 'reversed_at', 'DATETIME NULL', log);
   await H.addColumn(db, 'purchase_receipts', 'cancelled_by', 'VARCHAR(100) NULL', log);
   await H.addColumn(db, 'purchase_receipts', 'cancelled_at', 'DATETIME NULL', log);
+  // Landed cost (0045): Σ accrued import charges and subtotal + charges.
+  // landed_total stays NULL when the receipt carries no charges — a NULL says
+  // "not landed-costed", a zero would claim the charges came to nothing.
+  await H.addColumn(db, 'purchase_receipts', 'charges_total', 'DECIMAL(14,4) NOT NULL DEFAULT 0', log);
+  await H.addColumn(db, 'purchase_receipts', 'landed_total', 'DECIMAL(14,4) NULL', log);
   await H.modifyColumn(db, 'purchase_receipts', 'status',
     "ENUM('draft','approved','posted','reversed','cancelled') NOT NULL DEFAULT 'draft'", log);
   await H.addIndex(db, 'purchase_receipts', 'uq_grn_idem', 'idempotency_key', { unique: true }, log);
@@ -125,6 +130,10 @@ async function apply(db, log = () => {}) {
   await H.addColumn(db, 'purchase_receipt_lines', 'lot_no', 'VARCHAR(80) NULL', log);
   await H.addColumn(db, 'purchase_receipt_lines', 'expiry_date', 'DATE NULL', log);
   await H.addColumn(db, 'purchase_receipt_lines', 'purchase_lot_id', 'INT NULL', log);
+  // Landed cost (0045): the charge share allocated to this line and the unit
+  // cost that actually entered WAC/lot. Both NULL (never 0) without charges.
+  await H.addColumn(db, 'purchase_receipt_lines', 'landed_charge_amount', 'DECIMAL(14,4) NULL', log);
+  await H.addColumn(db, 'purchase_receipt_lines', 'landed_unit_cost', 'DECIMAL(14,6) NULL', log);
   await H.modifyColumn(db, 'purchase_receipt_lines', 'vat_rate', 'DECIMAL(5,2) NULL', log);
   await H.addIndex(db, 'purchase_receipt_lines', 'idx_grnl_po_line', 'po_line_id', {}, log);
 
@@ -164,6 +173,11 @@ async function apply(db, log = () => {}) {
   await H.addColumn(db, 'supplier_invoice_lines', 'tax_code', 'VARCHAR(10) NULL', log);
   await H.addColumn(db, 'supplier_invoice_lines', 'inclusive_tax', 'TINYINT(1) NOT NULL DEFAULT 0', log);
   await H.addColumn(db, 'supplier_invoice_lines', 'matched_qty', `${QTY} NOT NULL DEFAULT 0`, log);
+  // Landed cost (0045): a charge vendor's invoice line names the receipt
+  // charge it settles; approve clears GRNI for it and flips the charge to
+  // 'invoiced'.
+  await H.addColumn(db, 'supplier_invoice_lines', 'receipt_charge_id', 'VARCHAR(50) NULL', log);
+  await H.addIndex(db, 'supplier_invoice_lines', 'idx_sil_receipt_charge', 'receipt_charge_id', {}, log);
   await H.modifyColumn(db, 'supplier_invoice_lines', 'vat_pct', 'DECIMAL(5,2) NULL', log);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -295,12 +309,39 @@ async function apply(db, log = () => {}) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // 11a. NEW: purchase_receipt_charges — landed cost (0045)
+  //      Import charges accrued on a goods receipt. These rows are the SINGLE
+  //      source of truth for the allocation: POST /receipts/:id/post re-reads
+  //      them and recomputes every line's landed_* before stock moves.
+  // ─────────────────────────────────────────────────────────────────────────
+  await H.createTable(db, 'purchase_receipt_charges', `
+    CREATE TABLE purchase_receipt_charges (
+      id VARCHAR(50) NOT NULL PRIMARY KEY,
+      receipt_id VARCHAR(50) NOT NULL,
+      charge_type ENUM('freight','customs','insurance','handling','other') NOT NULL,
+      description VARCHAR(200) NULL,
+      supplier_id VARCHAR(50) NULL,
+      supplier_name_snapshot VARCHAR(200) NULL,
+      amount DECIMAL(14,4) NOT NULL,
+      vat_amount DECIMAL(14,4) NOT NULL DEFAULT 0,
+      allocation_method ENUM('value','qty') NOT NULL DEFAULT 'value',
+      status ENUM('accrued','invoiced') NOT NULL DEFAULT 'accrued',
+      supplier_invoice_id VARCHAR(50) NULL,
+      created_by VARCHAR(100) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NULL,
+      INDEX idx_prc_receipt (receipt_id),
+      INDEX idx_prc_status (status),
+      INDEX idx_prc_invoice (supplier_invoice_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, log);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // 11b. Normalize new-table collation to match the base tables
   //      (utf8mb4_unicode_ci) — MariaDB creates utf8mb4 tables as
   //      utf8mb4_general_ci by default, which breaks id JOINs against the base
   //      schema with "Illegal mix of collations". Idempotent CONVERT.
   // ─────────────────────────────────────────────────────────────────────────
-  for (const t of ['supplier_invoice_matches', 'payment_allocations', 'purchase_returns', 'purchase_return_lines', 'procurement_events']) {
+  for (const t of ['supplier_invoice_matches', 'payment_allocations', 'purchase_returns', 'purchase_return_lines', 'procurement_events', 'purchase_receipt_charges']) {
     if (await H.tableExists(db, t)) {
       await H.run(db, `ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`, log, `collation ${t}`);
     }

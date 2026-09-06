@@ -62,6 +62,38 @@ describe("purchasing report registry", () => {
     }
   });
 
+  it("declares landed-cost to the contract of GET /procurement/reports/landed-cost", () => {
+    // One row per POSTED receipt: goods net, each charge type, the uplift and
+    // the accrued/invoiced split; `totals` in the envelope; ?format=csv on the
+    // server; sorted receipt_date desc. Every money column aligns to the end
+    // edge, and uplift_pct is a "number" so a null (goods_value = 0) prints "—".
+    const landed = PURCHASING_REPORTS["landed-cost"];
+    expect(landed.shape).toBe("rows");
+    expect(landed.exportMode).toBe("server-csv");
+    expect(landed.heading).toBe("period");
+    expect(landed.requiresSupplier).toBeUndefined();
+    expect(landed.filters).toEqual(expect.arrayContaining(["period", "warehouse", "supplier"]));
+    expect(landed.filters).not.toContain("asOfDate");
+    expect(landed.rowIdKeys).toEqual(["receipt_id"]);
+    expect(landed.defaultSort).toEqual({ columnKey: "receipt_date", dir: "desc" });
+    const byKey = new Map(landed.columns.map((column) => [column.key, column]));
+    for (const key of ["goods_value", "freight", "customs", "insurance", "handling", "other", "charges_total", "landed_total", "charges_accrued", "charges_invoiced"]) {
+      expect(byKey.get(key)).toMatchObject({ format: "money", align: "end" });
+    }
+    expect(byKey.get("uplift_pct")).toMatchObject({ format: "number", align: "end" });
+    expect(byKey.get("receipt_date")).toMatchObject({ format: "date" });
+    expect(byKey.get("lines")).toMatchObject({ format: "number", align: "end" });
+    expect(landed.totals?.every((field) => field.from === "totals")).toBe(true);
+    expect(landed.totals?.map((field) => field.key)).toEqual([
+      "receipts", "goods_value", "charges_total", "landed_total", "uplift_pct", "charges_accrued", "charges_invoiced",
+    ]);
+    // Every footer figure that names a column must name a DECLARED column.
+    for (const field of landed.totals ?? []) {
+      if (field.column) expect(byKey.has(field.column)).toBe(true);
+    }
+    expect(PURCHASING_REPORT_GROUPS.find((group) => group.id === "receiving")?.reports).toContain("landed-cost");
+  });
+
   it("routes every row to its own page — never an anchor, never a duplicate", () => {
     const destinations = PURCHASING_INTELLIGENCE_REPORTS.map((report) => report.to);
     expect(new Set(destinations).size).toBe(destinations.length);

@@ -138,7 +138,7 @@ test('every declared report handler is present, and none has vanished', () => {
     '/supplier-statement', '/purchase-analysis', '/price-variance', '/tax', '/data-quality',
     // OTIF — added once the schema was checked instead of the note trusted:
     // purchase_orders.expected_date and po_lines.received_qty were always there.
-    '/supplier-performance']);
+    '/supplier-performance', '/landed-cost']);
 });
 test('supplier statement no longer redirects to an unscoped endpoint', () => {
   ok(!/res\.redirect/.test(source));

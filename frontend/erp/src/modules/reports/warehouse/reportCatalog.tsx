@@ -14,6 +14,7 @@ import {
   Scale,
   ScanSearch,
   ShieldCheck,
+  Ship,
   ShoppingCart,
   Truck,
   UserRoundSearch,
@@ -94,6 +95,10 @@ export const PURCHASING_INTELLIGENCE_REPORTS: IntelligenceReportLink[] = [
   { id: "supplier-statement", labelKey: "warehouseIntelligence.reports.supplierStatement.label", descriptionKey: "warehouseIntelligence.reports.supplierStatement.description", to: "/reports/purchasing/supplier-statement", icon: FileSearch, family: "procurement", maturity: "conditional", basis: "supplierLedger", requiresSupplier: true },
 
   { id: "supplier-performance", labelKey: "warehouseIntelligence.reports.supplierPerformance.label", descriptionKey: "warehouseIntelligence.reports.supplierPerformance.description", to: "/reports/purchasing/supplier-performance", icon: Truck, family: "procurement", maturity: "operational", basis: "p2pDocument", standard: "internalControl" },
+  // Landed cost is IAS 2 "costs of purchase" (import duties, transport,
+  // handling) on POSTED receipts only. Conditional: a receipt whose charges
+  // were never recorded shows a true 0% uplift, which is coverage, not cost.
+  { id: "landed-cost", labelKey: "warehouseIntelligence.reports.landedCost.label", descriptionKey: "warehouseIntelligence.reports.landedCost.description", to: "/reports/purchasing/landed-cost", icon: Ship, family: "productionCost", maturity: "conditional", basis: "postedReceipt", standard: "ias2" },
   { id: "tax", labelKey: "warehouseIntelligence.reports.inputTax.label", descriptionKey: "warehouseIntelligence.reports.inputTax.description", to: "/reports/purchasing/tax", icon: ReceiptText, family: "reconciliation", maturity: "conditional", basis: "supplierLedger", standard: "zatca" },
   { id: "purchase-data-quality", labelKey: "warehouseIntelligence.reports.purchaseDataQuality.label", descriptionKey: "warehouseIntelligence.reports.purchaseDataQuality.description", to: "/reports/purchasing/data-quality", icon: ScanSearch, family: "reconciliation", maturity: "operational", basis: "p2pDocument", standard: "internalControl" },
 ];

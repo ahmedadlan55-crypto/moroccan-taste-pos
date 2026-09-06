@@ -16,7 +16,7 @@ import {
 import { useT } from "@/i18n";
 import type { TFunction } from "@/i18n";
 import { BackLink, DetailHeader, Section, KV, StatusStepper, TimelinePanel, GLPanel, AttachmentsPanel, ErrorLine } from "./detail-shared";
-import { isReceivable, receivePath } from "./ReceivePages";
+import { isReceivable, receivePath, ReceiptLandedCostPanel } from "./ReceivePages";
 import { st } from "./labels";
 
 function s(v: unknown, d = "—"): string { return v == null || v === "" ? d : String(v); }
@@ -157,6 +157,8 @@ export function ReceiptDetailPage() {
           ))}
         </Table>
       </Section>
+      {/* التكلفة الواصلة — charges, totals, per-line landed unit cost; editable while draft/approved. */}
+      <ReceiptLandedCostPanel id={id} />
       <GLPanel journalId={s(o.gl_journal_id, "") || null} />
       <TimelinePanel entity="receipts" id={id} />
     </PrintDocument>

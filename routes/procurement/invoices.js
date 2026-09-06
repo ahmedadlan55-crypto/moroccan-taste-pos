@@ -4,6 +4,14 @@
  * Duplicate (supplier_id, invoice_no) blocked at submit. Approval posts:
  *   stock:    Dr GRNI + Dr Input VAT (+PPV) / Cr AP
  *   non-stock Dr Expense + Dr Input VAT       / Cr AP
+ *
+ * Landed cost: a line may carry receiptChargeId — it settles an import-charge
+ * accrual (purchase_receipt_charges) that the receipt post credited to GRNI.
+ * On approve such lines clear GRNI at the ACCRUED value (their own entry,
+ * 'تصفية مصاريف استيراد مستحقة'), the vendor's invoice/accrual difference is
+ * PPV, and the charge rows flip to 'invoiced' naming this invoice. Lines
+ * without receiptChargeId keep their existing stock / non-stock treatment, so
+ * a mixed invoice is the union of the two.
  */
 'use strict';
 
@@ -33,6 +41,72 @@ function matchId() { return 'SIM-' + Date.now() + '-' + Math.random().toString(3
 // variance thresholds (settings via env; sane defaults)
 const PRICE_VAR_PCT = Number(process.env.PROCUREMENT_PRICE_VARIANCE_PCT || 5);
 const QTY_VAR_PCT = Number(process.env.PROCUREMENT_QTY_VARIANCE_PCT || 5);
+const C = 'COLLATE utf8mb4_unicode_ci';
+
+// ── landed cost helpers ──────────────────────────────────────────────────────
+/**
+ * Lock and vet the import-charge accruals an invoice names (receiptChargeId).
+ * Each must exist, still be 'accrued', sit on a POSTED receipt (an unposted
+ * receipt has credited nothing to clear) and not be claimed by another live
+ * invoice — two invoices clearing one accrual would debit GRNI twice. The
+ * same check runs at create AND under the approve lock: the receipt can be
+ * reversed, or another invoice approved, between the two.
+ *
+ * @returns the locked charge rows in the order of `chargeIds`
+ */
+async function _lockInvoiceableCharges(conn, chargeIds, invoiceId) {
+  const ids = (chargeIds || []).map(String);
+  if (!ids.length) return [];
+  if (new Set(ids).size !== ids.length) throw err('VALIDATION_ERROR', 'مصروف الاستيراد نفسه مذكور في أكثر من سطر');
+  const marks = ids.map(() => '?').join(',');
+  const [rows] = await conn.query(
+    `SELECT c.id, c.status, c.amount, c.charge_type, c.receipt_id, pr.status AS receipt_status, pr.receipt_number
+       FROM purchase_receipt_charges c
+       JOIN purchase_receipts pr ON pr.id ${C} = c.receipt_id ${C}
+      WHERE c.id IN (${marks})
+      ORDER BY c.id
+      FOR UPDATE`, ids);
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
+  for (const id of ids) {
+    const c = byId.get(id);
+    if (!c) throw err('VALIDATION_ERROR', `مصروف الاستيراد غير موجود: ${id}`);
+    if (String(c.status) !== 'accrued') throw err('DOCUMENT_HAS_HISTORY', `مصروف الاستيراد ${id} مُفوتر مسبقًا`);
+    if (String(c.receipt_status) !== 'posted') {
+      throw err('VALIDATION_ERROR', `لا يمكن فوترة مصروف استيراد على استلام غير مُرحّل (${c.receipt_number}: ${c.receipt_status})`);
+    }
+  }
+  const [claimed] = await conn.query(
+    `SELECT sil.receipt_charge_id, si.code
+       FROM supplier_invoice_lines sil
+       JOIN supplier_invoices si ON si.id ${C} = sil.invoice_id ${C}
+      WHERE sil.receipt_charge_id IN (${marks}) AND si.status <> 'cancelled'${invoiceId ? ' AND si.id <> ?' : ''}
+      LIMIT 1`, invoiceId ? ids.concat([String(invoiceId)]) : ids);
+  if (claimed.length) {
+    throw err('DUPLICATE_SUPPLIER_INVOICE', `مصروف الاستيراد ${claimed[0].receipt_charge_id} مذكور في فاتورة أخرى (${claimed[0].code})`);
+  }
+  return ids.map((id) => byId.get(id));
+}
+
+/**
+ * Net of VAT for one stored invoice line. line_total is stored WITH VAT
+ * (calculations.computeLine: lineTotal = net + vatAmount, inclusive or not),
+ * and the discount amount is not persisted per line, so the net is derived
+ * from the total and the line's own rate rather than re-multiplied.
+ */
+function _lineNet(l) {
+  const rate = Number(l.vat_pct) || 0;
+  return calc.money(Number(l.line_total) / (1 + rate / 100));
+}
+
+/** Flip the cleared accruals to 'invoiced'; a row that moved under us is a conflict, not a silent skip. */
+async function _markChargesInvoiced(conn, chargeIds, invoiceId) {
+  if (!chargeIds.length) return;
+  const [r] = await conn.query(
+    `UPDATE purchase_receipt_charges SET status = 'invoiced', supplier_invoice_id = ?, updated_at = NOW()
+      WHERE id IN (${chargeIds.map(() => '?').join(',')}) AND status = 'accrued'`,
+    [invoiceId, ...chargeIds]);
+  if (!r || r.affectedRows !== chargeIds.length) throw err('DOCUMENT_HAS_HISTORY', 'أحد مصاريف الاستيراد فُوتر في أثناء الاعتماد');
+}
 
 // ── POST / — create draft ────────────────────────────────────────────────────
 router.post('/', requireCapability('supplier_invoices.create'), async (req, res) => {
@@ -55,6 +129,8 @@ router.post('/', requireCapability('supplier_invoices.create'), async (req, res)
         itemId: l.itemId || l.item_id || null, description: l.description || l.itemName || '',
         poLineId: l.poLineId || l.po_line_id || null, grnLineId: l.grnLineId || l.grn_line_id || null,
         accountId: l.accountId || l.account_id || null, accountCode: l.accountCode || null,
+        // Landed cost: the import-charge accrual this line settles (or null).
+        receiptChargeId: l.receiptChargeId || l.receipt_charge_id || null,
       });
     });
     const totals = calc.computeTotals(computed);
@@ -63,6 +139,10 @@ router.post('/', requireCapability('supplier_invoices.create'), async (req, res)
     const out = await db.withTransaction(async (conn) => {
       const [s] = await conn.query('SELECT id, name, vat_number, is_active FROM suppliers WHERE id = ?', [b.supplierId]);
       if (!s.length) throw err('VALIDATION_ERROR', 'المورد غير موجود');
+      // Vetted before anything is written: a charge that does not exist, is
+      // already invoiced, or sits on an unposted receipt is a 4xx here, not a
+      // surprise at approve.
+      await _lockInvoiceableCharges(conn, computed.map((l) => l.receiptChargeId).filter(Boolean), null);
       const id = genId();
       const code = await nextNumber(conn, 'supplier_invoice');
       await conn.query(
@@ -82,10 +162,11 @@ router.post('/', requireCapability('supplier_invoices.create'), async (req, res)
         await conn.query(
           `INSERT INTO supplier_invoice_lines
             (id, invoice_id, item_id, description, quantity, uom, unit_price, discount_pct, vat_pct, line_total,
-             account_id, cost_center_id, po_line_id, grn_line_id, base_qty, base_unit_price, tax_code, inclusive_tax)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             account_id, cost_center_id, po_line_id, grn_line_id, base_qty, base_unit_price, tax_code, inclusive_tax, receipt_charge_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [lineId(), id, l.itemId, l.description, l.enteredQty, null, l.unitPriceEntered, 0, l.vatRate, l.lineTotal,
-           l.accountId, b.costCenterId || null, l.poLineId, l.grnLineId, l.baseQty, l.baseUnitPrice, l.taxCode, l.inclusiveTax ? 1 : 0]);
+           l.accountId, b.costCenterId || null, l.poLineId, l.grnLineId, l.baseQty, l.baseUnitPrice, l.taxCode, l.inclusiveTax ? 1 : 0,
+           l.receiptChargeId]);
       }
       await events.recordEvent(conn, { documentType: 'supplier_invoice', documentId: id, action: 'create', toStatus: 'draft', actor });
       return { id, code };
@@ -209,6 +290,19 @@ router.post('/:id/approve', requireCapability('supplier_invoices.approve'), asyn
           const maker = row.submitted_by || row.created_by;
           if (maker && maker === actor) throw err('PERMISSION_DENIED', 'لا يمكن للمُنشئ اعتماد فاتورته (فصل المهام)');
         }
+        // Landed cost: the lines that settle an import-charge accrual clear GRNI
+        // at the ACCRUED value (what the receipt post credited); AP owes the
+        // vendor what was billed. Re-vetted under lock — the receipt may have
+        // been reversed, or the accrual invoiced elsewhere, since create.
+        const [allLines] = await conn.query('SELECT id, line_total, vat_pct, receipt_charge_id FROM supplier_invoice_lines WHERE invoice_id = ?', [row.id]);
+        const chargeLines = allLines.filter((l) => l.receipt_charge_id);
+        const chargeRows = await _lockInvoiceableCharges(conn, chargeLines.map((l) => l.receipt_charge_id), row.id);
+        const chargesClear = calc.money(chargeRows.reduce((s, c) => s + Number(c.amount), 0));
+        // A pure charge invoice's net IS the header subtotal — no per-line
+        // re-derivation that could drift from it by a rounding cent.
+        const chargesNet = !chargeLines.length ? 0
+          : (chargeLines.length === allLines.length ? calc.money(row.subtotal) : calc.money(chargeLines.reduce((s, l) => s + _lineNet(l), 0)));
+        const charges = chargeRows.length ? { clear: chargesClear, invoiceNet: chargesNet } : null;
         let journalId;
         if (row.invoice_kind === 'non_stock') {
           const [lines] = await conn.query('SELECT account_id, line_total FROM supplier_invoice_lines WHERE invoice_id = ?', [row.id]);
@@ -221,18 +315,27 @@ router.post('/:id/approve', requireCapability('supplier_invoices.approve'), asyn
             }
             byAcc[code] = calc.money((byAcc[code] || 0) + Number(l.line_total) - 0);
           }
-          // strip VAT from the expense (line_total includes VAT here) — approximate net by subtracting invoice VAT proportionally
-          journalId = await posting.postNonStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), expenseByAccount: { [require('../../lib/glPosting').CORE_ACCOUNTS.COGS.code]: calc.money(row.subtotal) }, vat: calc.money(row.vat_amount) });
+          // strip VAT from the expense (line_total includes VAT here) — approximate net by subtracting invoice VAT proportionally.
+          // The charge lines' net is NOT an expense: it clears GRNI (see `charges`).
+          journalId = await posting.postNonStockInvoice(conn, {
+            invoice: Object.assign({}, row, { approved_by: actor }),
+            expenseByAccount: { [require('../../lib/glPosting').CORE_ACCOUNTS.COGS.code]: calc.money(Number(row.subtotal) - chargesNet) },
+            vat: calc.money(row.vat_amount),
+            charges,
+          });
         } else {
           const [agg] = await conn.query('SELECT COALESCE(SUM(matched_amount),0) AS m FROM supplier_invoice_matches WHERE invoice_id = ?', [row.id]);
           let grniClear = calc.money(agg[0].m);
-          if (grniClear <= 0) grniClear = calc.money(row.subtotal); // no receipt link → clear full net (direct stock invoice)
-          journalId = await posting.postStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), grniClear, vat: calc.money(row.vat_amount) });
+          // no receipt link → clear the full GOODS net (direct stock invoice);
+          // a pure charge-vendor invoice has no goods to clear at all.
+          if (grniClear <= 0) grniClear = calc.money(Number(row.subtotal) - chargesNet);
+          journalId = await posting.postStockInvoice(conn, { invoice: Object.assign({}, row, { approved_by: actor }), grniClear, vat: calc.money(row.vat_amount), chargesClear });
           // Re-lock and consume each receipt line independently. The
           // conditional update is the final guard against legacy corruption or
           // a future mutation bypassing the match-time reservation check.
           await matching.applyApprovedReceiptQuantities(conn, row.id);
         }
+        await _markChargesInvoiced(conn, chargeRows.map((c) => c.id), row.id);
         return { extraSets: { gl_journal_id: journalId, posted_by: actor, posted_at: new Date() }, journalIds: [journalId] };
       },
     });
@@ -275,6 +378,12 @@ router.post('/:id/credit-note', requireCapability('supplier_invoices.credit'), a
         journalId = await posting.postReversal(conn, { originalJournalId: inv.gl_journal_id, referenceType: 'SupplierInvoice', referenceId: inv.id, actor, dateYMD: acctDate.journalDate(), description: 'إشعار دائن للفاتورة ' + (inv.invoice_no || inv.code) });
       }
       await matching.releaseApprovedReceiptQuantities(conn, inv.id);
+      // Landed cost: the reversal above re-credited GRNI, so the import-charge
+      // accruals this invoice had cleared are open again — release them, or
+      // they can never be invoiced and their receipt can never be reversed.
+      await conn.query(
+        "UPDATE purchase_receipt_charges SET status = 'accrued', supplier_invoice_id = NULL, updated_at = NOW() WHERE supplier_invoice_id = ? AND status = 'invoiced'",
+        [inv.id]);
       await conn.query('DELETE FROM supplier_invoice_matches WHERE invoice_id = ?', [inv.id]);
       await conn.query('UPDATE supplier_invoice_lines SET matched_qty = 0 WHERE invoice_id = ?', [inv.id]);
       await conn.query('UPDATE supplier_invoices SET status = "cancelled", version = version + 1, cancelled_by = ?, cancelled_at = NOW() WHERE id = ?', [actor, inv.id]);

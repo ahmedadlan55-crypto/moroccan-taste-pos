@@ -25,6 +25,21 @@
 
 const calc = require('../../lib/procurement/calculations');
 const { err } = require('../../lib/procurement/errors');
+const landedCost = require('../../lib/procurement/landedCost');
+
+/**
+ * Landed cost: the unit cost that enters the warehouse WAC, the lot and the
+ * item roll-up is the LANDED one when the receipt allocated import charges to
+ * the line, else the supplier's base unit cost. A NULL landed cost means "no
+ * charges on this receipt", so the goods price IS the landed price — it is
+ * never a 0 to be averaged in.
+ */
+function _stockUnitCost(ln, baseUnitCost) {
+  return ln.landed_unit_cost != null && ln.landed_unit_cost !== '' ? calc.rate(ln.landed_unit_cost) : baseUnitCost;
+}
+function _lineChargeValue(ln) {
+  return ln.landed_charge_amount != null && ln.landed_charge_amount !== '' ? calc.round(ln.landed_charge_amount, landedCost.ALLOC_DP) : 0;
+}
 
 function _genId(prefix) {
   return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
@@ -178,13 +193,20 @@ async function _recordWarehouseCostHistory(conn, {
 /**
  * Apply a goods receipt's stock effect. `lines` are receipt lines carrying:
  *   { id (receipt_line_id), item_id, item_name, po_line_id, base_qty,
- *     base_unit_cost, warehouse_id, lot_no, expiry_date }
- * Returns { movementIds, lotIds, affectedStock:[{itemId,warehouseId,qtyDelta,newQty}], netValue }.
+ *     base_unit_cost, warehouse_id, lot_no, expiry_date,
+ *     landed_charge_amount?, landed_unit_cost? }   (landed cost — NULL without charges)
+ * Returns { movementIds, lotIds, affectedStock:[{itemId,warehouseId,qtyDelta,newQty}],
+ *           netValue (goods net), chargesValue, landedValue (= net + charges),
+ *           valueByWarehouse (LANDED, sums exactly to landedValue) }.
  */
 async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods_receipt' }) {
   const movementIds = [], lotIds = [], affectedStock = [];
   let netValue = 0;
-  const valueByWarehouse = {};
+  let chargesValue = 0;
+  // Raw (4-dp) landed value per warehouse; rounded to money ONCE at the end,
+  // with the residual forced onto the largest warehouse so the GL inventory
+  // debits sum to the landed total to the cent (see landedCost.roundExactTo).
+  const landedRawByWarehouse = {};
 
   for (const ln of lines) {
     const warehouseId = ln.warehouse_id || grn.warehouse_id;
@@ -192,6 +214,7 @@ async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods
     if (baseQty <= 0) throw err('VALIDATION_ERROR', 'كمية سطر الاستلام يجب أن تكون موجبة');
     const baseUnitCost = calc.rate(ln.base_unit_cost);
     if (baseUnitCost < 0) throw err('COST_REQUIRED', 'تكلفة الوحدة مطلوبة');
+    const stockUnitCost = _stockUnitCost(ln, baseUnitCost);
 
     // 1. Over-receipt guard against the PO line (locked).
     if (ln.po_line_id) {
@@ -226,10 +249,13 @@ async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods
     const storedWarehouseCostBefore = warehouse ? _warehouseRate(warehouse.avg_cost) : 0;
     const effectiveWarehouseCostBefore = storedWarehouseCostBefore > 0
       ? storedWarehouseCostBefore
-      : _warehouseRate(item.cost || baseUnitCost);
+      : _warehouseRate(item.cost || stockUnitCost);
     const warehouseQtyAfter = calc.qty(warehouseQtyBefore + baseQty);
+    // The landed unit cost (when the receipt carries charges) is what the
+    // goods actually cost to put on the shelf — that, not the bare supplier
+    // price, is the observation the moving average absorbs.
     const warehouseCostAfter = _warehouseRate(calc.newWAC(
-      warehouseQtyBefore, effectiveWarehouseCostBefore || baseUnitCost, baseQty, baseUnitCost));
+      warehouseQtyBefore, effectiveWarehouseCostBefore || stockUnitCost, baseQty, stockUnitCost));
     const globalCostBefore = _warehouseRate(item.cost);
 
     // 4. Persist the local balance, recompute the quantity roll-up, then derive
@@ -238,7 +264,7 @@ async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods
     await _writeWarehouseStock(conn, {
       existing: warehouse, warehouseId, itemId: ln.item_id,
       newQty: warehouseQtyAfter, newAvgCost: warehouseCostAfter,
-      lastCost: baseUnitCost, actor,
+      lastCost: stockUnitCost, actor,
     });
     await _deriveAndWriteItemStock(conn, ln.item_id);
     const globalCostAfter = await _deriveAndWriteItemCost(conn, ln.item_id, globalCostBefore);
@@ -258,7 +284,7 @@ async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods
       `INSERT INTO purchase_lots
          (inv_item_id, purchase_id, received_date, qty_received, qty_remaining, unit_cost, batch_number, expiry_date, warehouse_id, received_at)
        VALUES (?,?,?,?,?,?,?,?,?,NOW())`,
-      [ln.item_id, grn.po_id || grn.id, new Date(), baseQty, baseQty, baseUnitCost, ln.lot_no || null, ln.expiry_date || null, warehouseId]);
+      [ln.item_id, grn.po_id || grn.id, new Date(), baseQty, baseQty, stockUnitCost, ln.lot_no || null, ln.expiry_date || null, warehouseId]);
     const lotId = lot.insertId;
     lotIds.push(lotId);
     if (ln.id) await conn.query('UPDATE purchase_receipt_lines SET purchase_lot_id = ? WHERE id = ?', [lotId, ln.id]);
@@ -281,12 +307,25 @@ async function applyReceiptStock(conn, { grn, lines, actor, triggerType = 'goods
     }
 
     affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: baseQty, newQty: warehouseQtyAfter });
+    // Goods value stays the supplier's (it is what the goods GRNI credit and
+    // the supplier invoice clear); the allocated charge rides on top at 4 dp
+    // so that Σ charges reproduces the charge total exactly.
     const lineValue = calc.money(baseQty * baseUnitCost);
+    const chargeValue = _lineChargeValue(ln);
     netValue += lineValue;
-    valueByWarehouse[warehouseId] = calc.money((valueByWarehouse[warehouseId] || 0) + lineValue);
+    chargesValue += chargeValue;
+    landedRawByWarehouse[warehouseId] = (landedRawByWarehouse[warehouseId] || 0) + lineValue + chargeValue;
   }
 
-  return { movementIds, lotIds, affectedStock, valueByWarehouse, netValue: calc.money(netValue) };
+  netValue = calc.money(netValue);
+  chargesValue = calc.money(chargesValue);
+  const landedValue = calc.money(netValue + chargesValue);
+  const warehouseIds = Object.keys(landedRawByWarehouse);
+  const rounded = landedCost.roundExactTo(warehouseIds.map((w) => landedRawByWarehouse[w]), landedValue, 2);
+  const valueByWarehouse = {};
+  warehouseIds.forEach((w, i) => { valueByWarehouse[w] = rounded[i]; });
+
+  return { movementIds, lotIds, affectedStock, valueByWarehouse, netValue, chargesValue, landedValue };
 }
 
 /**
@@ -303,6 +342,9 @@ async function reverseReceiptStock(conn, { grn, lines, actor, refType = 'GoodsRe
     const baseQty = calc.qty(ln.base_qty);
     if (baseQty <= 0) continue;
     const baseUnitCost = calc.rate(ln.base_unit_cost);
+    // Mirror of the receipt: what went in at the landed cost comes out at the
+    // landed cost, or the reversal leaves the charges' value stranded in stock.
+    const removalUnitCost = _stockUnitCost(ln, baseUnitCost);
 
     // exact-lot decrement
     if (ln.purchase_lot_id) {
@@ -326,11 +368,11 @@ async function reverseReceiptStock(conn, { grn, lines, actor, refType = 'GoodsRe
     const storedWarehouseCostBefore = _warehouseRate(warehouse.avg_cost);
     const effectiveWarehouseCostBefore = storedWarehouseCostBefore > 0
       ? storedWarehouseCostBefore
-      : _warehouseRate(item.cost || baseUnitCost);
+      : _warehouseRate(item.cost || removalUnitCost);
     let warehouseCostAfter;
     try {
       warehouseCostAfter = costAfterRemoval(
-        warehouseQtyBefore, effectiveWarehouseCostBefore, baseQty, baseUnitCost || effectiveWarehouseCostBefore);
+        warehouseQtyBefore, effectiveWarehouseCostBefore, baseQty, removalUnitCost || effectiveWarehouseCostBefore);
     } catch (e) {
       if (e && (e.code === 'INSUFFICIENT_STOCK' || e.code === 'INVENTORY_VALUATION_CONFLICT')) {
         throw err('DOCUMENT_HAS_HISTORY',
@@ -370,7 +412,7 @@ async function reverseReceiptStock(conn, { grn, lines, actor, refType = 'GoodsRe
       await conn.query('UPDATE po_lines SET base_received_qty = GREATEST(0, base_received_qty - ?) WHERE id = ?', [baseQty, ln.po_line_id]);
     }
     affectedStock.push({ itemId: ln.item_id, warehouseId, qtyDelta: -baseQty, newQty: warehouseQtyAfter });
-    netValue += calc.money(baseQty * baseUnitCost);
+    netValue += calc.money(baseQty * baseUnitCost) + _lineChargeValue(ln);
   }
   return { movementIds, affectedStock, netValue: calc.money(netValue) };
 }

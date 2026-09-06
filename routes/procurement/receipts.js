@@ -3,6 +3,12 @@
  * stock-writing path. Lifecycle draft → approved → posted → reversed / cancelled.
  * Post = applyReceiptStock (single writer) + GRNI journal (Dr Inventory/Cr GRNI)
  * + PO progress rollup, all in one transaction.
+ *
+ * Landed cost: a receipt may carry import charges (purchase_receipt_charges).
+ * They are allocated over the lines (lib/procurement/landedCost) at create and
+ * at PUT /:id/charges, and RECOMPUTED from the stored charge rows inside
+ * POST /:id/post before any stock moves — the charge rows are the single
+ * source of truth, the per-line landed_* columns are a persisted derivation.
  */
 'use strict';
 
@@ -20,12 +26,106 @@ const { runTransition } = require('../../services/procurement/TransitionExecutor
 const inv = require('../../services/procurement/InventoryPostingService');
 const posting = require('../../lib/procurement/posting');
 const events = require('../../lib/procurement/events');
+const landedCost = require('../../lib/procurement/landedCost');
 
 const SORTABLE = { receiptDate: 'pr.receipt_date', createdAt: 'pr.created_at', total: 'pr.total', status: 'pr.status', number: 'pr.receipt_number' };
 const LIST_STATUSES = ['draft', 'approved', 'posted', 'reversed', 'cancelled'];
+// Charges may be edited only while nothing financial has happened yet. Once
+// posted, the accrual sits in GRNI and the landed cost sits in WAC; the only
+// honest way back is a reversal, never a silent re-allocation.
+const CHARGES_EDITABLE = Object.freeze(['draft', 'approved']);
+const C = 'COLLATE utf8mb4_unicode_ci';
 
 function genId() { return 'GRN-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6); }
 function lineId() { return 'GRL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+function chargeId() { return 'GRC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+// ── landed cost helpers ──────────────────────────────────────────────────────
+/**
+ * Allocate `charges` over `lines` and stamp landed_charge_amount /
+ * landed_unit_cost onto each line object (NULL when there are no charges).
+ * Returns the allocation (chargesTotal + per-line result).
+ */
+function _allocate(lines, charges) {
+  const alloc = landedCost.allocateCharges(lines, charges);
+  for (const a of alloc.lines) {
+    lines[a.index].landed_charge_amount = a.landedChargeAmount;
+    lines[a.index].landed_unit_cost = a.landedUnitCost;
+  }
+  return alloc;
+}
+
+/** Persist the per-line landed columns of an already-inserted receipt. */
+async function _persistLineAllocation(conn, lines) {
+  for (const l of lines) {
+    await conn.query('UPDATE purchase_receipt_lines SET landed_charge_amount = ?, landed_unit_cost = ? WHERE id = ?',
+      [l.landed_charge_amount, l.landed_unit_cost, l.id]);
+  }
+}
+
+/**
+ * Insert the charge rows for a receipt. The charge vendor's name is frozen on
+ * the row (like supplier_name_snapshot on the header) so the document keeps
+ * naming the vendor it was accrued against even if the supplier is renamed.
+ */
+async function _writeCharges(conn, receiptId, charges, actor) {
+  const supplierIds = [...new Set(charges.map((c) => c.supplierId).filter(Boolean))];
+  const names = {};
+  if (supplierIds.length) {
+    const [rows] = await conn.query(
+      `SELECT id, name FROM suppliers WHERE id IN (${supplierIds.map(() => '?').join(',')})`, supplierIds);
+    for (const r of rows) names[r.id] = r.name;
+    const missing = supplierIds.find((id) => !(id in names));
+    if (missing) throw err('VALIDATION_ERROR', `مورد المصروف غير موجود: ${missing}`);
+  }
+  for (const c of charges) {
+    await conn.query(
+      `INSERT INTO purchase_receipt_charges
+         (id, receipt_id, charge_type, description, supplier_id, supplier_name_snapshot, amount, vat_amount, allocation_method, status, created_by)
+       VALUES (?,?,?,?,?,?,?,?,?,'accrued',?)`,
+      [chargeId(), receiptId, c.chargeType, c.description, c.supplierId, c.supplierId ? names[c.supplierId] : null,
+       c.amount, c.vatAmount, c.allocationMethod, actor]);
+  }
+}
+
+/** The GET /:id shape — header + lines (with landed fields) + charges + totals. */
+async function _readReceipt(executor, id) {
+  const [rows] = await executor.query('SELECT * FROM purchase_receipts WHERE id = ?', [id]);
+  if (!rows.length) throw err('NOT_FOUND', 'الاستلام غير موجود');
+  const [lines] = await executor.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ? ORDER BY id', [id]);
+  const [chargeRows] = await executor.query(
+    `SELECT c.*, COALESCE(NULLIF(c.supplier_name_snapshot, ''), s.name) AS supplier_name
+       FROM purchase_receipt_charges c
+       LEFT JOIN suppliers s ON s.id ${C} = c.supplier_id ${C}
+      WHERE c.receipt_id = ?
+      ORDER BY c.created_at, c.id`, [id]);
+  const charges = chargeRows.map((c) => ({
+    id: c.id,
+    chargeType: c.charge_type,
+    description: c.description || null,
+    supplierId: c.supplier_id || null,
+    supplierName: c.supplier_name || null,
+    amount: calc.money(c.amount),
+    vatAmount: calc.money(c.vat_amount),
+    allocationMethod: c.allocation_method,
+    status: c.status,
+    supplierInvoiceId: c.supplier_invoice_id || null,
+  }));
+  // Derived from the rows, never read back from the header column: the rows
+  // are the source of truth and the two must not be able to disagree.
+  const chargesTotal = calc.money(charges.reduce((s, c) => s + c.amount, 0));
+  const subtotal = calc.money(rows[0].subtotal);
+  return Object.assign({}, rows[0], {
+    lines: lines.map((l) => Object.assign({}, l, {
+      // null means "no charges on this receipt" — NOT 0.
+      landedChargeAmount: l.landed_charge_amount == null ? null : calc.round(l.landed_charge_amount, landedCost.ALLOC_DP),
+      landedUnitCost: l.landed_unit_cost == null ? null : calc.rate(l.landed_unit_cost),
+    })),
+    charges,
+    chargesTotal,
+    landedTotal: calc.money(subtotal + chargesTotal),
+  });
+}
 
 // ── POST / — create draft receipt (from a PO or direct) ──────────────────────
 /**
@@ -136,6 +236,8 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
         if (lw && lw !== warehouseId && !req.guardWh(res, lw)) return;
       }
     }
+    // Validated up front: a malformed charge is a 422 before anything is written.
+    const charges = landedCost.normalizeCharges(b.charges);
     const actor = H.actorOf(req);
 
     const out = await db.withTransaction(async (conn) => {
@@ -174,25 +276,30 @@ router.post('/', requireCapability('receipts.create'), async (req, res) => {
       // persist NULL until the supplier invoice supplies the tax evidence.
       await receiptTax.attachTrustedTaxSnapshots(conn, { poId: b.poId || null, lines: linesToInsert });
       subtotal = calc.money(subtotal);
+      // Landed cost: allocate the import charges over the lines now so the
+      // draft already shows what each unit will cost to land.
+      const alloc = _allocate(linesToInsert, charges);
+      const landedTotal = charges.length ? calc.money(subtotal + alloc.chargesTotal) : null;
       await conn.query(
         `INSERT INTO purchase_receipts
           (id, po_id, supplier_id, supplier_name_snapshot, receipt_number, receipt_date, warehouse_id, brand_id, branch_id, cost_center_id,
-           subtotal, vat_amount, total, status, version, created_by, idempotency_key)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',1,?,?)`,
+           subtotal, vat_amount, total, charges_total, landed_total, status, version, created_by, idempotency_key)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',1,?,?)`,
         [id, b.poId || null, b.supplierId || null, supplier ? supplier.name : null, number,
          b.receiptDate || new Date().toISOString().slice(0, 10), warehouseId, b.brandId || null, b.branchId || null, b.costCenterId || null,
-         subtotal, vatTotal, calc.money(subtotal + vatTotal), actor, H.idemOf(req)]);
+         subtotal, vatTotal, calc.money(subtotal + vatTotal), alloc.chargesTotal, landedTotal, actor, H.idemOf(req)]);
       for (const l of linesToInsert) {
         await conn.query(
           `INSERT INTO purchase_receipt_lines
             (id, receipt_id, po_line_id, item_id, item_name, quantity, unit, unit_cost, line_total,
              entered_qty, entered_unit_code, conversion_factor_snapshot, base_qty, base_unit_cost,
-             vat_rate, tax_code, warehouse_id, lot_no, expiry_date)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             vat_rate, tax_code, warehouse_id, lot_no, expiry_date, landed_charge_amount, landed_unit_cost)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [l.id, id, l.po_line_id, l.item_id, l.item_name || null, l.quantity, l.unit, l.unit_cost, l.line_total,
            l.entered_qty, l.entered_unit_code, l.conversion_factor_snapshot, l.base_qty, l.base_unit_cost,
-           l.vat_rate, l.tax_code, l.warehouse_id, l.lot_no, l.expiry_date]);
+           l.vat_rate, l.tax_code, l.warehouse_id, l.lot_no, l.expiry_date, l.landed_charge_amount, l.landed_unit_cost]);
       }
+      await _writeCharges(conn, id, charges, actor);
       await events.recordEvent(conn, { documentType: 'grn', documentId: id, action: 'create', toStatus: 'draft', actor });
       return { id, number };
     });
@@ -227,11 +334,52 @@ router.get('/', requireCapability('procurement.view'), async (req, res) => {
 
 router.get('/:id', requireCapability('procurement.view'), async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM purchase_receipts WHERE id = ?', [req.params.id]);
-    if (!rows.length) throw err('NOT_FOUND', 'الاستلام غير موجود');
-    const [lines] = await db.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ? ORDER BY id', [req.params.id]);
-    return H.sendData(res, Object.assign({}, rows[0], { lines }));
+    return H.sendData(res, await _readReceipt(db, req.params.id));
   } catch (e) { return H.sendErr(res, e); }
+});
+
+// ── PUT /:id/charges — replace the import charges of a draft/approved receipt ─
+router.put('/:id/charges', requireCapability('receipts.create'), async (req, res) => {
+  try {
+    const charges = landedCost.normalizeCharges((req.body || {}).charges);
+    const [pre] = await db.query('SELECT warehouse_id FROM purchase_receipts WHERE id = ?', [req.params.id]);
+    if (!pre.length) throw err('NOT_FOUND', 'الاستلام غير موجود');
+    // Same scope rule as create: the receipt's warehouse must be the caller's.
+    if (typeof req.guardWh === 'function' && !req.guardWh(res, pre[0].warehouse_id)) return;
+    const actor = H.actorOf(req);
+    await db.withTransaction(async (conn) => {
+      const [rows] = await conn.query('SELECT * FROM purchase_receipts WHERE id = ? FOR UPDATE', [req.params.id]);
+      if (!rows.length) throw err('NOT_FOUND', 'الاستلام غير موجود');
+      const row = rows[0];
+      if (!CHARGES_EDITABLE.includes(String(row.status))) {
+        throw err('RECEIPT_CHARGES_LOCKED', `لا يمكن تعديل مصاريف الاستيراد على استلام حالته «${row.status}» — المصاريف مُستحقة ومُرحّلة`);
+      }
+      const [lines] = await conn.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ? ORDER BY id', [req.params.id]);
+      if (!lines.length) throw err('VALIDATION_ERROR', 'لا توجد سطور للاستلام');
+      // Replace the whole set — the charge rows are the source of truth, so a
+      // partial merge would leave two versions of the truth.
+      await conn.query('DELETE FROM purchase_receipt_charges WHERE receipt_id = ?', [req.params.id]);
+      await _writeCharges(conn, req.params.id, charges, actor);
+      const alloc = _allocate(lines, charges);
+      await _persistLineAllocation(conn, lines);
+      const subtotal = calc.money(row.subtotal);
+      await conn.query(
+        'UPDATE purchase_receipts SET charges_total = ?, landed_total = ?, version = version + 1 WHERE id = ?',
+        [alloc.chargesTotal, charges.length ? calc.money(subtotal + alloc.chargesTotal) : null, req.params.id]);
+      await events.recordEvent(conn, {
+        documentType: 'grn', documentId: req.params.id, action: 'charges', fromStatus: row.status, toStatus: row.status, actor,
+        payload: { count: charges.length, chargesTotal: alloc.chargesTotal },
+      });
+    });
+    return H.sendData(res, await _readReceipt(db, req.params.id));
+  } catch (e) {
+    // The contract's code has no entry in the shared HTTP map; a locked
+    // accrual is a conflict with the document's state, not a validation slip.
+    if (e && e.rawCode === 'RECEIPT_CHARGES_LOCKED') {
+      return res.status(409).json({ success: false, code: 'RECEIPT_CHARGES_LOCKED', error: e.message });
+    }
+    return H.sendErr(res, e);
+  }
 });
 
 // ── approve (draft → approved) ───────────────────────────────────────────────
@@ -272,20 +420,34 @@ router.post('/:id/post', requireCapability('receipts.post'), async (req, res) =>
       actor, expectedVersion: H.expectedVersionOf(req), idempotencyKey: H.idemOf(req),
       actorColumns: { by: 'posted_by', at: 'posted_at' },
       perform: async (conn, row) => {
-        const [lines] = await conn.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ?', [req.params.id]);
+        const [lines] = await conn.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ? ORDER BY id', [req.params.id]);
         if (!lines.length) throw err('VALIDATION_ERROR', 'لا توجد سطور للاستلام');
+        // Landed cost is RECOMPUTED here from the stored charge rows, not
+        // trusted from the columns written at create/PUT: the rows are the
+        // single source of truth and this is the moment their value enters
+        // WAC, the lots and the GL. Locked so a concurrent PUT cannot slip a
+        // different set in between allocation and posting.
+        const [chargeRows] = await conn.query(
+          'SELECT * FROM purchase_receipt_charges WHERE receipt_id = ? ORDER BY id FOR UPDATE', [req.params.id]);
+        const charges = landedCost.normalizeCharges(chargeRows);
+        const alloc = _allocate(lines, charges);
+        await _persistLineAllocation(conn, lines);
         const stock = await inv.applyReceiptStock(conn, { grn: Object.assign({}, row, { posted_by: actor }), lines, actor });
         const journalId = await posting.postReceipt(conn, {
           grn: Object.assign({}, row, { posted_by: actor }),
           net: stock.netValue,
+          chargesTotal: alloc.chargesTotal,
           warehouseId: row.warehouse_id,
           valueByWarehouse: stock.valueByWarehouse,
         });
         await _rollupPO(conn, row.po_id, actor);
         return {
-          extraSets: { gl_journal_id: journalId, subtotal: stock.netValue, total: stock.netValue },
-          journalIds: [journalId], affectedStock: stock.affectedStock, affectedValue: stock.netValue,
-          payload: { movementIds: stock.movementIds, lotIds: stock.lotIds },
+          extraSets: {
+            gl_journal_id: journalId, subtotal: stock.netValue, total: stock.netValue,
+            charges_total: alloc.chargesTotal, landed_total: charges.length ? stock.landedValue : null,
+          },
+          journalIds: [journalId], affectedStock: stock.affectedStock, affectedValue: stock.landedValue,
+          payload: { movementIds: stock.movementIds, lotIds: stock.lotIds, chargesTotal: alloc.chargesTotal },
         };
       },
     });
@@ -308,6 +470,11 @@ router.post('/:id/reverse', requireCapability('receipts.reverse'), async (req, r
         // block reverse if any line has been invoiced
         const [inv2] = await conn.query('SELECT COALESCE(SUM(base_invoiced_qty),0) AS q FROM purchase_receipt_lines WHERE receipt_id = ?', [req.params.id]);
         if (Number(inv2[0].q) > 0) throw err('DOCUMENT_HAS_HISTORY', 'تعذّر العكس: الاستلام مرتبط بفاتورة');
+        // Same rule for the charge vendors' invoices: an accrual that has
+        // already been cleared against AP cannot be un-accrued by a reversal.
+        const [invCharges] = await conn.query(
+          "SELECT COUNT(*) AS c FROM purchase_receipt_charges WHERE receipt_id = ? AND status = 'invoiced'", [req.params.id]);
+        if (Number(invCharges[0].c) > 0) throw err('DOCUMENT_HAS_HISTORY', 'تعذّر العكس: مصاريف الاستيراد مرتبطة بفاتورة');
         const [lines] = await conn.query('SELECT * FROM purchase_receipt_lines WHERE receipt_id = ?', [req.params.id]);
         const stock = await inv.reverseReceiptStock(conn, { grn: row, lines, actor });
         let journalId = null;

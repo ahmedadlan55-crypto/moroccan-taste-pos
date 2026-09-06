@@ -17,6 +17,7 @@ const { err } = require('../../lib/procurement/errors');
 const calc = require('../../lib/procurement/calculations');
 const S = require('../../lib/procurement/reportScope');
 const openOrderValue = require('../../lib/procurement/openOrderValue');
+const landedCost = require('../../lib/procurement/landedCost');
 
 const REPORT_READ_CAPS = Object.freeze(['finance.reports.view', 'procurement.reports']);
 const DATA_QUALITY_READ_CAPS = Object.freeze(['finance.reports.view', 'procurement.data_quality']);
@@ -749,6 +750,131 @@ router.get('/supplier-performance', RPT, async (req, res) => {
         qualityRateAvailable: false,
       },
     }, reportLang(req));
+  } catch (e) { return H.sendErr(res, e); }
+});
+
+// ─── GET /landed-cost — what each POSTED receipt cost to LAND ───────────────
+//
+// One row per posted receipt in the period (pr.receipt_date). goods_value is
+// the supplier's net as posted (purchase_receipts.subtotal); the charge
+// columns are the receipt's purchase_receipt_charges rows by type, NET of VAT
+// — VAT on a freight bill is input VAT, never part of what the goods cost;
+// landed_total = goods + charges; uplift_pct = charges ÷ goods × 100.
+//
+// ─── WHY ONLY POSTED RECEIPTS ────────────────────────────────────────────────
+// Before post nothing has entered WAC or the GL — a draft's charges are an
+// intention. After post the allocation is frozen (PUT /charges answers 409),
+// so what this report shows is exactly what went into the inventory value.
+// A reversed receipt has left the books again and is excluded with the drafts.
+//
+// ─── ACCRUED vs INVOICED ─────────────────────────────────────────────────────
+// charges_accrued still sits in GRNI waiting for the charge vendor's invoice;
+// charges_invoiced has been cleared against AP. Their sum is charges_total; a
+// reconciler reading GRNI needs the split, not the total.
+//
+// ─── uplift_pct IS NULL WHEN goods_value IS 0 ───────────────────────────────
+// Free goods with a freight bill have an undefined uplift, not a 0% one.
+router.get('/landed-cost', RPT, async (req, res) => {
+  try {
+    const q = scopedParts(req, 'pr.warehouse_id', 'pr.receipt_date');
+    add(q.where, q.params, "pr.status = 'posted'");
+    if (req.query.supplierId) add(q.where, q.params, 'pr.supplier_id = ?', [String(req.query.supplierId)]);
+    // One SUM per charge type, driven by the lib's list so a type can never be
+    // silently dropped from the report while still being accepted at create.
+    const byType = landedCost.CHARGE_TYPES
+      .map((t) => `SUM(CASE WHEN charge_type = '${t}' THEN amount ELSE 0 END) AS ${t}`)
+      .join(',\n                    ');
+    const [rows] = await db.query(
+      `SELECT pr.id AS receipt_id, pr.receipt_number,
+              DATE_FORMAT(pr.receipt_date, '%Y-%m-%d') AS receipt_date,
+              pr.supplier_id,
+              COALESCE(NULLIF(pr.supplier_name_snapshot, ''), s.name, pr.supplier_id) AS supplier_name,
+              pr.warehouse_id, COALESCE(w.name, pr.warehouse_id) AS warehouse_name,
+              pr.subtotal AS goods_value,
+              (SELECT COUNT(*) FROM purchase_receipt_lines prl WHERE prl.receipt_id ${C} = pr.id ${C}) AS line_count,
+              ch.freight, ch.customs, ch.insurance, ch.handling, ch.other,
+              ch.charges_total, ch.charges_accrued, ch.charges_invoiced
+         FROM purchase_receipts pr
+         LEFT JOIN (SELECT receipt_id,
+                    ${byType},
+                    SUM(amount) AS charges_total,
+                    SUM(CASE WHEN status = 'accrued'  THEN amount ELSE 0 END) AS charges_accrued,
+                    SUM(CASE WHEN status = 'invoiced' THEN amount ELSE 0 END) AS charges_invoiced
+               FROM purchase_receipt_charges
+              GROUP BY receipt_id) ch ON ch.receipt_id ${C} = pr.id ${C}
+         LEFT JOIN suppliers s ON s.id ${C} = pr.supplier_id ${C}
+         LEFT JOIN warehouses w ON w.id ${C} = pr.warehouse_id ${C}
+         ${sqlWhere(q.where)}
+        ORDER BY pr.receipt_date DESC, pr.receipt_number DESC
+        LIMIT ${REPORT_SNAPSHOT_FETCH_LIMIT}`, q.params);
+
+    const pct2 = (charges, goods) => (goods > 0 ? Math.round((charges / goods) * 10000) / 100 : null);
+    const data = rows.map((r) => {
+      const goods = calc.money(r.goods_value);
+      const charges = calc.money(r.charges_total || 0);
+      const row = {
+        receipt_id: r.receipt_id,
+        receipt_number: r.receipt_number,
+        receipt_date: r.receipt_date,
+        supplier_id: r.supplier_id,
+        supplier_name: r.supplier_name,
+        warehouse_id: r.warehouse_id,
+        warehouse_name: r.warehouse_name,
+        goods_value: goods,
+      };
+      for (const t of landedCost.CHARGE_TYPES) row[t] = calc.money(r[t] || 0);
+      row.charges_total = charges;
+      row.landed_total = calc.money(goods + charges);
+      row.uplift_pct = pct2(charges, goods);
+      row.charges_accrued = calc.money(r.charges_accrued || 0);
+      row.charges_invoiced = calc.money(r.charges_invoiced || 0);
+      row.lines = Number(r.line_count) || 0;
+      return row;
+    });
+
+    const sum = (key) => calc.money(data.reduce((s, r) => s + r[key], 0));
+    const totals = {
+      receipts: data.length,
+      goods_value: sum('goods_value'),
+      charges_total: sum('charges_total'),
+      landed_total: sum('landed_total'),
+      charges_accrued: sum('charges_accrued'),
+      charges_invoiced: sum('charges_invoiced'),
+    };
+    // Recomputed from the sums, never averaged from the per-row percentages.
+    totals.uplift_pct = pct2(totals.charges_total, totals.goods_value);
+
+    const lang = reportLang(req);
+    if (String(req.query.format).toLowerCase() === 'csv') {
+      if (data.length > REPORT_SNAPSHOT_LIMIT) return completeSnapshot(res, data, {}, lang);
+      const labels = lang === 'en'
+        ? { receipt_number: 'Receipt', receipt_date: 'Date', supplier_name: 'Supplier', warehouse_name: 'Warehouse',
+            goods_value: 'Goods value', freight: 'Freight', customs: 'Customs', insurance: 'Insurance', handling: 'Handling', other: 'Other',
+            charges_total: 'Charges total', landed_total: 'Landed total', uplift_pct: 'Uplift %',
+            charges_accrued: 'Charges accrued', charges_invoiced: 'Charges invoiced', lines: 'Lines' }
+        : { receipt_number: 'رقم الاستلام', receipt_date: 'التاريخ', supplier_name: 'المورد', warehouse_name: 'المستودع',
+            goods_value: 'قيمة البضاعة', freight: 'شحن', customs: 'جمارك', insurance: 'تأمين', handling: 'مناولة', other: 'أخرى',
+            charges_total: 'إجمالي المصاريف', landed_total: 'التكلفة الواصلة', uplift_pct: 'نسبة الزيادة %',
+            charges_accrued: 'مصاريف مستحقة', charges_invoiced: 'مصاريف مُفوترة', lines: 'السطور' };
+      const range = `${q.filters.from || 'start'}-${q.filters.to || 'today'}`;
+      return H.sendCsv(res, `landed-cost-${range}.csv`, data,
+        Object.keys(labels).map((key) => ({ key, label: labels[key] })));
+    }
+    return completeSnapshot(res, data, {
+      filters: q.filters,
+      totals,
+      // The figures' provenance, on the wire — a report that does not say
+      // what its numbers are cannot be reconciled against the ledger.
+      basis: {
+        rows: 'posted receipts by receipt_date',
+        goods_value: 'purchase_receipts.subtotal — supplier net as posted, VAT excluded',
+        charges: 'purchase_receipt_charges.amount by charge_type — net of VAT',
+        landed_total: 'goods_value + charges_total',
+        uplift_pct: 'charges_total / goods_value × 100 (null when goods_value = 0)',
+        charges_accrued: "charges with status 'accrued' (still in GRNI)",
+        charges_invoiced: "charges with status 'invoiced' (cleared against AP)",
+      },
+    }, lang);
   } catch (e) { return H.sendErr(res, e); }
 });
 

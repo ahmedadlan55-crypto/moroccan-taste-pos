@@ -119,6 +119,221 @@ export function toReceipt(r: Record<string, unknown>): Receipt {
   };
 }
 
+// ── Landed cost — receipt charges ────────────────────────────────────────────
+// Contract (routes/procurement/receipts.js): POST /receipts and
+// PUT /receipts/:id/charges carry `charges[]`; GET /receipts/:id answers with
+// `charges`, `chargesTotal`, `landedTotal` and, per line, `landedChargeAmount`
+// + `landedUnitCost`.
+//
+// A landed figure that is null means "no charges on this receipt" — or a
+// server that predates landed cost and never sent the field. Either way the UI
+// prints "—". It is NEVER coerced to 0: a zero landed unit cost reads as a real
+// cost of nothing, and a zero charges total reads as "no charges" even when the
+// truth is "the server did not say".
+
+export const RECEIPT_CHARGE_TYPES = ["freight", "customs", "insurance", "handling", "other"] as const;
+export type ReceiptChargeType = (typeof RECEIPT_CHARGE_TYPES)[number];
+export const CHARGE_ALLOCATION_METHODS = ["value", "qty"] as const;
+export type ChargeAllocationMethod = (typeof CHARGE_ALLOCATION_METHODS)[number];
+export type ReceiptChargeStatus = "accrued" | "invoiced";
+
+export function isReceiptChargeType(v: unknown): v is ReceiptChargeType {
+  return (RECEIPT_CHARGE_TYPES as readonly string[]).includes(String(v));
+}
+
+/** What travels to the server — POST /receipts `charges[]` and PUT /receipts/:id/charges. */
+export interface ReceiptChargeInput {
+  chargeType: ReceiptChargeType;
+  description?: string;
+  supplierId?: string | null;
+  /** Net of VAT, > 0. */
+  amount: number;
+  /** >= 0, defaults to 0 server-side. */
+  vatAmount?: number;
+  /** Defaults to "value" server-side. */
+  allocationMethod?: ChargeAllocationMethod;
+}
+
+export interface ReceiptCharge {
+  id: string;
+  chargeType: ReceiptChargeType;
+  description: string;
+  supplierId: string | null;
+  supplierName: string;
+  amount: number;
+  vatAmount: number;
+  allocationMethod: ChargeAllocationMethod;
+  status: ReceiptChargeStatus;
+  supplierInvoiceId: string | null;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+// The contract is camelCase. The snake_case fallback is deliberate: a raw
+// `SELECT *` row leaking through an `any`-typed adapter has blanked a screen
+// before (lot genealogy), so the reader tolerates both — camel wins.
+function pick(r: Record<string, unknown>, camel: string, snake: string): unknown {
+  return r[camel] !== undefined ? r[camel] : r[snake];
+}
+
+export function toReceiptCharge(r: Record<string, unknown>): ReceiptCharge {
+  const type = pick(r, "chargeType", "charge_type");
+  return {
+    id: str(r.id),
+    chargeType: isReceiptChargeType(type) ? type : "other",
+    description: str(r.description),
+    supplierId: str(pick(r, "supplierId", "supplier_id")) || null,
+    supplierName: str(pick(r, "supplierName", "supplier_name")),
+    amount: num(r.amount),
+    vatAmount: num(pick(r, "vatAmount", "vat_amount")),
+    allocationMethod: pick(r, "allocationMethod", "allocation_method") === "qty" ? "qty" : "value",
+    status: r.status === "invoiced" ? "invoiced" : "accrued",
+    supplierInvoiceId: str(pick(r, "supplierInvoiceId", "supplier_invoice_id")) || null,
+  };
+}
+
+export interface ReceiptLine {
+  id: string;
+  poLineId: string;
+  itemId: string;
+  itemName: string;
+  enteredQty: number;
+  enteredUnitCode: string;
+  baseQty: number;
+  /** Goods cost per base unit — what the PO priced, before any charge. */
+  baseUnitCost: number;
+  lineTotal: number;
+  lotNo: string;
+  expiryDate: string;
+  /** This line's share of the receipt's charges. null = no charges. */
+  landedChargeAmount: number | null;
+  /** (line_total + landedChargeAmount) / base_qty. null = no charges, NOT 0. */
+  landedUnitCost: number | null;
+}
+export function toReceiptLine(r: Record<string, unknown>): ReceiptLine {
+  return {
+    id: str(r.id),
+    poLineId: str(r.po_line_id),
+    itemId: str(r.item_id),
+    itemName: str(r.item_name, str(r.item_id)),
+    enteredQty: num(r.entered_qty),
+    enteredUnitCode: str(r.entered_unit_code),
+    baseQty: num(r.base_qty),
+    baseUnitCost: num(r.base_unit_cost),
+    lineTotal: num(r.line_total),
+    lotNo: str(r.lot_no),
+    expiryDate: str(r.expiry_date),
+    landedChargeAmount: numOrNull(pick(r, "landedChargeAmount", "landed_charge_amount")),
+    landedUnitCost: numOrNull(pick(r, "landedUnitCost", "landed_unit_cost")),
+  };
+}
+
+/** GET /receipts/:id — the header row plus its lines and charges. */
+export interface PurchaseReceipt extends Receipt {
+  /** Goods value net of VAT — the base the uplift is measured against. */
+  subtotal: number;
+  vatAmount: number;
+  lines: ReceiptLine[];
+  /** null = the envelope carried no `charges` at all (a server without landed cost). */
+  charges: ReceiptCharge[] | null;
+  chargesTotal: number | null;
+  landedTotal: number | null;
+}
+export function toPurchaseReceipt(r: Record<string, unknown>): PurchaseReceipt {
+  const lines = Array.isArray(r.lines) ? (r.lines as Record<string, unknown>[]) : [];
+  const charges = Array.isArray(r.charges) ? (r.charges as Record<string, unknown>[]).map(toReceiptCharge) : null;
+  return {
+    ...toReceipt(r),
+    subtotal: num(r.subtotal),
+    vatAmount: num(r.vat_amount),
+    lines: lines.map(toReceiptLine),
+    charges,
+    chargesTotal: numOrNull(pick(r, "chargesTotal", "charges_total")),
+    landedTotal: numOrNull(pick(r, "landedTotal", "landed_total")),
+  };
+}
+
+// ── Allocation — the SAME rule the server posts with ─────────────────────────
+// by "value" = share of line_total; by "qty" = share of base_qty; 4-dp rounding
+// with the rounding residual placed on the largest line, so the allocated
+// amounts sum EXACTLY to the charge. The form previews with this so what the
+// user sees before submitting is what the warehouse WAC will receive.
+
+/** Trim binary-float noise to 4 dp without lying about precision. */
+export function round4(x: number): number {
+  return Math.round(x * 1e4) / 1e4;
+}
+
+export interface AllocatableLine {
+  key: string;
+  lineTotal: number;
+  baseQty: number;
+}
+export interface ChargeAllocationInput {
+  amount: number;
+  allocationMethod: ChargeAllocationMethod;
+}
+export interface AllocatedLine {
+  landedChargeAmount: number | null;
+  landedUnitCost: number | null;
+}
+export interface ReceiptChargeAllocation {
+  byKey: Record<string, AllocatedLine>;
+  goodsTotal: number;
+  chargesTotal: number;
+  landedTotal: number;
+}
+
+/**
+ * One charge over the lines, in line order. Returns null when there is nothing
+ * to share on (no lines, or every weight is zero) — an allocation that cannot
+ * be made is not an allocation of zero.
+ */
+export function allocateCharge(amount: number, method: ChargeAllocationMethod, lines: AllocatableLine[]): number[] | null {
+  const weights = lines.map((l) => Math.max(0, method === "qty" ? num(l.baseQty) : num(l.lineTotal)));
+  const basis = weights.reduce((a, b) => a + b, 0);
+  if (lines.length === 0 || !(basis > 0)) return null;
+  const shares = weights.map((w) => round4((amount * w) / basis));
+  const residual = round4(amount - shares.reduce((a, b) => a + b, 0));
+  if (residual !== 0) {
+    // Largest weight takes the residual; the first of equals wins so the
+    // result is deterministic for the server to reproduce.
+    let largest = 0;
+    weights.forEach((w, i) => { if (w > weights[largest]) largest = i; });
+    shares[largest] = round4(shares[largest] + residual);
+  }
+  return shares;
+}
+
+/**
+ * Every charge over every line. A line's landed figures are null when the
+ * receipt has no charges, or when none of them could be allocated (see
+ * allocateCharge); landedUnitCost is also null for a line with no base qty.
+ */
+export function allocateReceiptCharges(lines: AllocatableLine[], charges: ChargeAllocationInput[]): ReceiptChargeAllocation {
+  const goodsTotal = round4(lines.reduce((s, l) => s + num(l.lineTotal), 0));
+  const chargesTotal = round4(charges.reduce((s, c) => s + num(c.amount), 0));
+  const perLine: Array<number | null> = lines.map(() => null);
+  for (const c of charges) {
+    const shares = allocateCharge(num(c.amount), c.allocationMethod, lines);
+    if (!shares) continue;
+    shares.forEach((share, i) => { perLine[i] = round4((perLine[i] ?? 0) + share); });
+  }
+  const byKey: Record<string, AllocatedLine> = {};
+  lines.forEach((l, i) => {
+    const charge = perLine[i];
+    const baseQty = num(l.baseQty);
+    byKey[l.key] = {
+      landedChargeAmount: charge,
+      landedUnitCost: charge == null || !(baseQty > 0) ? null : round4((num(l.lineTotal) + charge) / baseQty),
+    };
+  });
+  return { byKey, goodsTotal, chargesTotal, landedTotal: round4(goodsTotal + chargesTotal) };
+}
+
 export interface SupplierInvoice {
   id: string;
   code: string;

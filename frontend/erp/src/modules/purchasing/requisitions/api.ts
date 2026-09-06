@@ -254,3 +254,180 @@ export const supplierFetcher: EntityFetcher<SupplierHit> = ({ q, page, signal })
       const nextPage = pg && pg.page < pg.totalPages ? pg.page + 1 : null;
       return { items: data, nextPage, total: pg?.total ?? data.length };
     });
+
+// ── Branch shortage requests — the cashier's «طلبات النواقص» ────────────────
+// A SEPARATE subsystem from purchase requisitions: routes/inventory.js
+// /shortage-requests over table shortage_requests, filed from the POS
+// (RequisitionsDialog). Its lifecycle is pending → approved → converted →
+// partially/fully received → closed, or rejected. Until these hooks existed no
+// back-office screen read that table: a manager could not see, approve or
+// convert what a branch asked for. Paths and params mirror that router; its
+// mutations answer HTTP 200 with { success:false, error } on refusal, so every
+// mutation here turns that into a thrown error instead of a silent "done".
+export type BranchRequestStatus =
+  | "pending" | "approved" | "converted" | "rejected" | "partially_received" | "fully_received" | "closed";
+
+export interface BranchRequestRow {
+  id: string;
+  requestNumber: string;
+  requestDate: string;
+  username: string;
+  notes: string | null;
+  status: BranchRequestStatus;
+  supplyMode: string | null;
+  totalItems: number;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  poId: string | null;
+  poNumber: string | null;
+  brandId: string;
+  brandName: string;
+  branchId: string;
+  branchName: string;
+  warehouseId: string;
+  warehouseName: string;
+}
+export interface BranchRequestItem {
+  id: string;
+  invItemId: string;
+  invItemName: string;
+  unit: string;
+  currentQty: number;
+  minQty: number;
+  requestedQty: number;
+  unitPrice: number;
+}
+export interface BranchRequestDetail extends BranchRequestRow {
+  items: BranchRequestItem[];
+}
+
+const BR_KEY = ["inventory", "shortage-requests"] as const;
+const brNum = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const brStr = (v: unknown): string => (v == null ? "" : String(v));
+
+export function toBranchRequestRow(r: Record<string, unknown>): BranchRequestRow {
+  return {
+    id: brStr(r.id),
+    requestNumber: brStr(r.requestNumber),
+    requestDate: brStr(r.requestDate),
+    username: brStr(r.username),
+    notes: r.notes == null ? null : String(r.notes),
+    status: (brStr(r.status) || "pending") as BranchRequestStatus,
+    supplyMode: r.supplyMode == null ? null : String(r.supplyMode),
+    totalItems: brNum(r.totalItems),
+    approvedBy: r.approvedBy ? String(r.approvedBy) : null,
+    approvedAt: r.approvedAt ? String(r.approvedAt) : null,
+    poId: r.poId ? String(r.poId) : null,
+    poNumber: r.poNumber ? String(r.poNumber) : null,
+    brandId: brStr(r.brandId),
+    brandName: brStr(r.brandName),
+    branchId: brStr(r.branchId),
+    branchName: brStr(r.branchName),
+    warehouseId: brStr(r.warehouseId),
+    warehouseName: brStr(r.warehouseName),
+  };
+}
+export function toBranchRequestDetail(r: Record<string, unknown>): BranchRequestDetail {
+  const items = Array.isArray(r.items) ? (r.items as Record<string, unknown>[]) : [];
+  return {
+    ...toBranchRequestRow(r),
+    items: items.map((i) => ({
+      id: brStr(i.id),
+      invItemId: brStr(i.invItemId),
+      invItemName: brStr(i.invItemName),
+      unit: brStr(i.unit),
+      currentQty: brNum(i.currentQty),
+      minQty: brNum(i.minQty),
+      requestedQty: brNum(i.requestedQty),
+      unitPrice: brNum(i.unitPrice),
+    })),
+  };
+}
+
+/** The router's refusal shape is HTTP 200 + { success:false, error }. */
+function brAssertOk<T extends { success?: boolean; error?: string; code?: string }>(r: T): T {
+  if (r && r.success === false) {
+    const e = new Error(r.error || r.code || "request failed") as Error & { code?: string };
+    e.code = r.code;
+    throw e;
+  }
+  return r;
+}
+
+export function useBranchRequests(params: { status?: string; branchId?: string }) {
+  return useQuery({
+    queryKey: [...BR_KEY, "list", params],
+    queryFn: () =>
+      apiClient
+        .get<Record<string, unknown>[]>("/inventory/shortage-requests", {
+          params: { status: params.status || undefined, branchId: params.branchId || undefined },
+        })
+        .then((rows) => (Array.isArray(rows) ? rows : []).map(toBranchRequestRow)),
+  });
+}
+
+export function useBranchRequest(id: string | null) {
+  return useQuery({
+    queryKey: [...BR_KEY, "detail", id],
+    enabled: !!id,
+    queryFn: () =>
+      apiClient
+        .get<Record<string, unknown> & { error?: string }>(`/inventory/shortage-requests/${encodeURIComponent(id as string)}`)
+        .then((r) => {
+          // Not-found / denied come back as HTTP 200 + { error } here.
+          if (!r || r.error) throw new Error(r?.error || "not found");
+          return toBranchRequestDetail(r);
+        }),
+  });
+}
+
+function useInvalidateBranchRequests() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: [...BR_KEY] });
+    // Approve/convert change what the purchasing dashboard and the orders list show.
+    void qc.invalidateQueries({ queryKey: ["procurement"] });
+  };
+}
+
+export function useApproveBranchRequest() {
+  const invalidate = useInvalidateBranchRequests();
+  return useMutation({
+    mutationFn: (v: { id: string; supplyMode?: string }) =>
+      apiClient
+        .post<{ success: boolean; error?: string }>(
+          `/inventory/shortage-requests/${encodeURIComponent(v.id)}/approve`,
+          v.supplyMode ? { supplyMode: v.supplyMode } : {},
+        )
+        .then(brAssertOk),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export function useRejectBranchRequest() {
+  const invalidate = useInvalidateBranchRequests();
+  return useMutation({
+    mutationFn: (v: { id: string; reason: string }) =>
+      apiClient
+        .post<{ success: boolean; error?: string }>(`/inventory/shortage-requests/${encodeURIComponent(v.id)}/reject`, { reason: v.reason })
+        .then(brAssertOk),
+    onSuccess: () => invalidate(),
+  });
+}
+
+export interface ConvertBranchRequestResult { success: boolean; poId?: string; poNumber?: string; error?: string; code?: string }
+export function useConvertBranchRequest() {
+  const invalidate = useInvalidateBranchRequests();
+  return useMutation({
+    mutationFn: (v: { id: string; supplierId: string; supplierName: string; warehouseId?: string }) =>
+      apiClient
+        .post<ConvertBranchRequestResult>(`/inventory/shortage-requests/${encodeURIComponent(v.id)}/convert-to-po`, {
+          supplierId: v.supplierId,
+          supplierName: v.supplierName,
+          ...(v.warehouseId ? { warehouseId: v.warehouseId } : {}),
+        })
+        .then(brAssertOk),
+    onSuccess: () => invalidate(),
+  });
+}
+

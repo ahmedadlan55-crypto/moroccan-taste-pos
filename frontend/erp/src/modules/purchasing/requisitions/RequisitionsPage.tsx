@@ -63,6 +63,7 @@ import {
   warehouseForBranch,
   type ConvertLineOverride,
 } from "./lib";
+import { BranchRequestsPanel } from "./BranchRequestsPanel";
 
 // ── labels ────────────────────────────────────────────────────────────────
 // The requisition lifecycle statuses (rendered via t("purchasing.status.*")).
@@ -105,8 +106,17 @@ export function RequisitionsPage() {
   const access = useAccessScope();
 
   // Deep link: the PO detail points back at its source requisition.
-  const [detailId, setDetailId] = useState<string | null>(sp.get("doc"));
-  useEffect(() => { const d = sp.get("doc"); if (d) setDetailId(d); }, [sp]);
+  // `?source=branch` shows the cashier's shortage requests (a different table
+  // with its own ids); the purchase-requisition drawer must not be fed those.
+  const source: "purchase" | "branch" = sp.get("source") === "branch" ? "branch" : "purchase";
+  const setSource = (next: "purchase" | "branch") => {
+    const sp2 = new URLSearchParams(sp);
+    sp2.delete("doc");
+    if (next === "branch") sp2.set("source", "branch"); else sp2.delete("source");
+    setSp(sp2, { replace: true });
+  };
+  const [detailId, setDetailId] = useState<string | null>(source === "branch" ? null : sp.get("doc"));
+  useEffect(() => { const d = sp.get("doc"); if (d && sp.get("source") !== "branch") setDetailId(d); }, [sp]);
   const closeDetail = () => {
     setDetailId(null);
     if (sp.get("doc")) { const next = new URLSearchParams(sp); next.delete("doc"); setSp(next, { replace: true }); }
@@ -151,6 +161,24 @@ export function RequisitionsPage() {
 
   return (
     <div>
+      {/* Two queues, one screen: what a branch keyed into the ERP, and what the
+          cashier asked for from the POS. The second had NO back-office screen. */}
+      <div className="mb-4 flex w-fit items-center gap-1 rounded-xl bg-slate-100 p-1" role="tablist" aria-label={t("purchasing.branchRequests.sourceAria")}>
+        {(["purchase", "branch"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={source === k}
+            className={`min-h-10 rounded-lg px-4 text-sm font-extrabold transition ${source === k ? "bg-white text-teal-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+            onClick={() => setSource(k)}
+          >
+            {t(k === "purchase" ? "purchasing.branchRequests.sourcePurchase" : "purchasing.branchRequests.sourceBranch")}
+          </button>
+        ))}
+      </div>
+
+      {source === "branch" ? <BranchRequestsPanel /> : (<>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           className="field w-44"
@@ -216,6 +244,7 @@ export function RequisitionsPage() {
           }}
         />
       )}
+      </>)}
     </div>
   );
 }

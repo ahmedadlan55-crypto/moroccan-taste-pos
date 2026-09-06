@@ -417,6 +417,8 @@ export interface ProcurementDashboard {
   purchaseValue: number;
   ordersPendingApproval: number;
   requisitionsPending: number;
+  /** The cashier's shortage requests (shortage_requests) still waiting for an approver. */
+  branchRequestsPending: number;
   ordersOverdue: number;
   partialReceipts: number;
   unmatchedInvoices: number;
@@ -431,6 +433,7 @@ export function toDashboard(r: Record<string, unknown>): ProcurementDashboard {
     purchaseValue: num(r.purchaseValue),
     ordersPendingApproval: num(r.ordersPendingApproval),
     requisitionsPending: num(r.requisitionsPending),
+    branchRequestsPending: num(r.branchRequestsPending),
     ordersOverdue: num(r.ordersOverdue),
     partialReceipts: num(r.partialReceipts),
     unmatchedInvoices: num(r.unmatchedInvoices),

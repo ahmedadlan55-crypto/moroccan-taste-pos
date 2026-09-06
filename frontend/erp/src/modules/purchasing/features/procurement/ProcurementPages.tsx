@@ -74,6 +74,9 @@ export function ProcurementDashboard() {
     { label: t("purchasing.dashboard.purchaseValue"), value: formatCurrency(data.purchaseValue), icon: ShoppingBag, tone: "teal" as const },
     // First, because it is first in the cycle: a branch is waiting on it.
     { label: t("purchasing.dashboard.requisitionsPending"), value: String(data.requisitionsPending), icon: ClipboardList, tone: "amber" as const },
+    // The cashier's own queue (shortage_requests) — a different table from the
+    // requisitions above, and until now counted nowhere in the back office.
+    { label: t("purchasing.dashboard.branchRequestsPending"), value: String(data.branchRequestsPending), icon: ClipboardList, tone: "amber" as const },
     { label: t("purchasing.dashboard.ordersPendingApproval"), value: String(data.ordersPendingApproval), icon: ClipboardList, tone: "amber" as const },
     { label: t("purchasing.dashboard.ordersOverdue"), value: String(data.ordersOverdue), icon: AlarmClock, tone: "rose" as const },
     { label: t("purchasing.dashboard.partialReceipts"), value: String(data.partialReceipts), icon: PackageCheck, tone: "blue" as const },

@@ -18,6 +18,10 @@ router.get('/dashboard', requireCapability('procurement.dashboard'), async (req,
     // Branch requests waiting for an approver. This was the one queue the
     // dashboard did not count, and it is the one a branch is waiting on.
     const [[requisitionsPending]] = await db.query("SELECT COUNT(*) c FROM purchase_requisitions WHERE status='submitted'").catch(() => [[{ c: 0 }]]);
+    // The cashier's shortage requests (shortage_requests, filed from the POS) are
+    // a SEPARATE queue from purchase requisitions — and the one the branch is
+    // actually waiting on. Counted here so the manager sees it on the dashboard.
+    const [[branchRequestsPending]] = await db.query("SELECT COUNT(*) c FROM shortage_requests WHERE status='pending'").catch(() => [[{ c: 0 }]]);
     const [[ordersOverdue]] = await db.query("SELECT COUNT(*) c FROM purchase_orders WHERE status IN ('approved','sent','partially_received') AND expected_date IS NOT NULL AND expected_date < ?", [today]);
     const [[partialReceipts]] = await db.query("SELECT COUNT(*) c FROM purchase_orders WHERE status='partially_received'");
     const [[unmatchedInvoices]] = await db.query("SELECT COUNT(*) c FROM supplier_invoices WHERE matching_status IN ('unmatched','partial') AND status NOT IN ('cancelled','draft','paid','closed')");
@@ -34,6 +38,7 @@ router.get('/dashboard', requireCapability('procurement.dashboard'), async (req,
       purchaseValue: calc.money(purchaseValue.v),
       ordersPendingApproval: Number(ordersPending.c),
       requisitionsPending: Number(requisitionsPending.c),
+      branchRequestsPending: Number(branchRequestsPending.c),
       ordersOverdue: Number(ordersOverdue.c),
       partialReceipts: Number(partialReceipts.c),
       unmatchedInvoices: Number(unmatchedInvoices.c),

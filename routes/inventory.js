@@ -4632,10 +4632,12 @@ router.post('/shortage-requests', requireCapability('inventory.requisition.creat
 router.get('/shortage-requests', async (req, res) => {
   try {
     const { brandId, status, branchId, startDate, endDate } = req.query;
-    let sql = `SELECT r.*, b.name AS brand_name, br.name AS branch_name
+    let sql = `SELECT r.*, b.name AS brand_name, br.name AS branch_name, w.name AS warehouse_name, po.po_number
                FROM shortage_requests r
                LEFT JOIN brands b ON b.id = r.brand_id
                LEFT JOIN branches br ON br.id = r.branch_id
+               LEFT JOIN warehouses w ON w.id = r.warehouse_id
+               LEFT JOIN purchase_orders po ON po.id = r.po_id
                WHERE 1=1`;
     const params = [];
     if (brandId)   { sql += ' AND r.brand_id = ?';            params.push(brandId); }
@@ -4658,7 +4660,8 @@ router.get('/shortage-requests', async (req, res) => {
       supplyMode: r.supply_mode, totalItems: r.total_items,
       approvedBy: r.approved_by, approvedAt: r.approved_at, poId: r.po_id,
       brandId: r.brand_id || '', brand_id: r.brand_id || '', brandName: r.brand_name || '',
-      branchId: r.branch_id || '', branchName: r.branch_name || ''
+      branchId: r.branch_id || '', branchName: r.branch_name || '',
+      warehouseId: r.warehouse_id || '', warehouseName: r.warehouse_name || '', poNumber: r.po_number || null
     })));
   } catch (e) {
     // G-INV M3 — a DB failure is a 500, not a silent empty shortage list.
@@ -4670,7 +4673,13 @@ router.get('/shortage-requests', async (req, res) => {
 // Get single shortage request with items
 router.get('/shortage-requests/:id', async (req, res) => {
   try {
-    const [reqs] = await db.query('SELECT * FROM shortage_requests WHERE id = ?', [req.params.id]);
+    const [reqs] = await db.query(
+      `SELECT r.*, br.name AS branch_name, w.name AS warehouse_name, po.po_number
+         FROM shortage_requests r
+         LEFT JOIN branches br ON br.id = r.branch_id
+         LEFT JOIN warehouses w ON w.id = r.warehouse_id
+         LEFT JOIN purchase_orders po ON po.id = r.po_id
+        WHERE r.id = ?`, [req.params.id]);
     if (!reqs.length) return res.json({ error: 'Not found' });
     const r = reqs[0];
     if (!req.guardWh(res, r.warehouse_id)) return;
@@ -4683,7 +4692,9 @@ router.get('/shortage-requests/:id', async (req, res) => {
       id: r.id, requestNumber: r.request_number, requestDate: r.request_date,
       username: r.username, notes: r.notes, status: r.status,
       supplyMode: r.supply_mode, totalItems: r.total_items,
-      approvedBy: r.approved_by, poId: r.po_id,
+      approvedBy: r.approved_by, approvedAt: r.approved_at, poId: r.po_id, poNumber: r.po_number || null,
+      brandId: r.brand_id || '', branchId: r.branch_id || '', branchName: r.branch_name || '',
+      warehouseId: r.warehouse_id || '', warehouseName: r.warehouse_name || '',
       items: items.map(i => ({
         id: i.id, invItemId: i.inv_item_id, invItemName: i.inv_item_name,
         unit: i.unit, currentQty: Number(i.current_qty), minQty: Number(i.min_qty),
@@ -4818,7 +4829,14 @@ router.post('/shortage-requests/:id/convert-to-po', requireCapability('purchasin
       return { itemId: i.inv_item_id, itemName: i.inv_item_name, unit: i.unit, qty, unitPrice: price, total: lineTotal };
     });
 
-    const vatAmount = totalBeforeVat * 0.15;
+    // VAT from settings — never a hardcoded 15 (owner rule; the register and every
+    // report read the same setting). No setting ⇒ refuse, do not guess a rate.
+    const [vatRows] = await db.query("SELECT setting_value FROM settings WHERE setting_key='VATRate' LIMIT 1");
+    const vatPct = vatRows.length ? Number(vatRows[0].setting_value) : NaN;
+    if (!Number.isFinite(vatPct) || vatPct < 0) {
+      return res.status(422).json({ success: false, code: 'VAT_RATE_MISSING', error: 'إعداد نسبة ضريبة القيمة المضافة (VATRate) غير موجود' });
+    }
+    const vatAmount = totalBeforeVat * (vatPct / 100);
     const totalAfterVat = totalBeforeVat + vatAmount;
 
     // Try inserting with brand_id/branch_id (V3); fall back to legacy columns if those
@@ -4844,7 +4862,7 @@ router.post('/shortage-requests/:id/convert-to-po', requireCapability('purchasin
       const lineId = 'POL-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
       await db.query(
         'INSERT INTO po_lines (id, po_id, item_id, item_name, unit, qty, unit_price, vat_rate, vat_amount, total) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [lineId, poId, line.itemId, line.itemName, line.unit, line.qty, line.unitPrice, 15, line.total * 0.15, line.total * 1.15]
+        [lineId, poId, line.itemId, line.itemName, line.unit, line.qty, line.unitPrice, vatPct, line.total * (vatPct / 100), line.total * (1 + vatPct / 100)]
       );
     }
 

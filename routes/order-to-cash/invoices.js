@@ -80,6 +80,14 @@ router.get('/:id', requireCapability('invoices.view'), async (req, res) => {
           if (c.length) out.buyer = { name: c[0].name || out.customer_name, vatNumber: c[0].vat_number || null, address: [c[0].address, c[0].city].filter(Boolean).join('، ') || null, phone: c[0].phone || null, email: c[0].email || null, source: 'live' };
         } catch (_) { /* customers table predates the columns */ }
       }
+      // A walk-in / POS invoice has no customer row at all. The key is still
+      // present and says what it rests on: the name typed on the document, or
+      // null — an ABSENT key read as "the server forgot" on the first prod smoke.
+      if (!out.buyer) {
+        out.buyer = out.customer_name
+          ? { name: out.customer_name, vatNumber: null, address: null, phone: null, email: null, source: 'document' }
+          : null;
+      }
       out.a4Options = await invoiceIdentity.loadA4Options(db);
     }
     return H.sendData(res, out);

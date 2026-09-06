@@ -156,6 +156,17 @@ async function main() {
       eq(r.json.data.buyer.name, 'شركة المشتري بعد التغيير', 'the CURRENT record, and labelled as such');
     });
 
+    await test('an invoice whose customer row is gone still carries a buyer key, labelled document', async () => {
+      // The first production smoke read a POS invoice with no customer row and
+      // found NO buyer key at all — indistinguishable from a server that forgot.
+      await db.query('DELETE FROM customers WHERE id=?', [CUST]);
+      const r = await call('GET', `/api/order-to-cash/invoices/${id}`);
+      ok(Object.prototype.hasOwnProperty.call(r.json.data, 'buyer'), 'buyer key present');
+      eq(r.json.data.buyer.source, 'document');
+      eq(r.json.data.buyer.name, 'شركة المشتري الأولى', 'the name typed on the document');
+      eq(r.json.data.buyer.vatNumber, null);
+    });
+
     console.log('\n4. layout choices are a preference, not part of the document');
     await test('A4 options come from settings at read time', async () => {
       await setSetting('InvoiceA4Options', JSON.stringify({ showBuyer: true, showSignature: false, showBank: true, bankDetails: 'IBAN SA00', terms: 'الدفع خلال 30 يومًا' }));

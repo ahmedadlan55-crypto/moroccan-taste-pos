@@ -210,7 +210,7 @@ export interface InvoiceBuyer {
   address?: string | null;
   phone?: string | null;
   email?: string | null;
-  source?: "snapshot" | "live";
+  source?: "snapshot" | "live" | "document";
 }
 
 /** lib/invoiceIdentity emptyIdentity() shape (all strings; vatRate a number). */

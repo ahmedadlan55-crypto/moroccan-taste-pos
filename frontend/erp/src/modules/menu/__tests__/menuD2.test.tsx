@@ -64,6 +64,10 @@ vi.mock("@/shared/api", async (importOriginal) => {
         if (path.includes("/menu/list")) return { data: [LIST_ROW], pagination: { page: 1, pageSize: 25, total: 1 }, vatRate: 15 };
         if (path.includes("/menu/categories")) return [{ categoryAr: "ساندويتش", categoryEn: "Sandwich", itemCount: 1 }];
         if (path.match(/\/menu\/MENU-2\/recipe-bom/)) return RECIPE_BOM;
+        // menu-hardening: the product page hydrates from GET /menu/:id (the one
+        // read that still carries imageData), no longer from the /menu/all list.
+        if (path.match(/\/menu\/MENU-1$/)) return MANUAL_ITEM;
+        if (path.match(/\/menu\/MENU-2$/)) return RECIPE_ITEM;
         if (path.includes("/menu/all")) return [MANUAL_ITEM, RECIPE_ITEM];
         if (path.includes("/sales-channels")) return [];
         if (path.includes("/settings")) return { VATRate: "15" };

@@ -10,7 +10,7 @@
 // modules/people/payroll/api.ts (ensureOk) and modules/banking/api.ts (queryKeys).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiClient } from "@/shared/api";
+import { apiClient, ApiError } from "@/shared/api";
 import type { EntityFetcher, EntityPage } from "@/shared/ui";
 import { translateApiError, type TFunction } from "@/i18n";
 
@@ -111,10 +111,17 @@ export interface MenuItem {
    *  for legacy rows never stamped with a provenance. */
   taxCategory?: TaxCategory;
   costSource?: CostSource | null;
+  /** menu-hardening — image presence + 8-char content hash, on EVERY read
+   *  (/menu, /menu/all AND /menu/:id — the same IMAGE_META_SQL expression as
+   *  /menu/list). The list reads ship NO bytes any more; thumbnails fetch them
+   *  per item, with auth, through useItemImage(id, imageVer, hasImage). A
+   *  replace/delete changes imageVer, which is what busts the thumbnail cache. */
+  hasImage: boolean;
+  imageVer: string | null;
   /** close/d-images — stored product image as a base64 data URL (null = none).
-   *  _mapMenu (routes/menu.js) has always shipped it on /menu/all; typed
-   *  optional so older payload mocks stay valid. The POS catalog never carries
-   *  it — cards fetch bytes from /api/pos/v2/item-image/:id instead. */
+   *  ONLY the single-item read (GET /menu/:id → useMenuItemDetail) carries it;
+   *  on the list reads the key is ABSENT (not null), so `imageData == null`
+   *  must never be read as "no image" — that is what `hasImage` is for. */
   imageData?: string | null;
   /** close/d-images bulk manager (ImageManager) — FORWARD-LOOKING optional
    *  fields for an image review/audit workflow. NEITHER /menu/all NOR the
@@ -486,9 +493,10 @@ export interface BulkImageUploadResponse extends MutationAck {
 // ── bilingual-i18n-images — category translations (CategoryTranslations) ───
 // GET/PUT /api/menu/categories* — routes/menu.js, backed by
 // db/migrations/0013_bilingual_catalog.sql (menu_category_i18n: category_ar
-// PK + category_en). GET is public (no auth), same as the rest of the
-// catalog-shaped reads in this file; PUT is MGR-gated (admin/developer/
-// manager), matching capability "menu.catalog.manage" below.
+// PK + category_en). GET rides the global /api JWT gate like every other
+// /menu read (menu-hardening removed the old public exemption — apiClient
+// attaches the Bearer token); PUT is MGR-gated (admin/developer/manager),
+// matching capability "menu.catalog.manage" below.
 export interface CategoryTranslation {
   /** The Arabic category name as stored on `menu.category` — the stable key
    *  (GROUP BY m.category server-side), NOT a synthetic id. */
@@ -555,19 +563,53 @@ export function useMenuList(params: MenuListParams = {}, options: { enabled?: bo
   });
 }
 
-/** Single-item detail the full-page editor hydrates from. There is no dedicated
- *  GET /menu/:id; the "detail read" is the shared _mapMenu on GET /menu/all,
- *  which D3 extended to expose tax_category + cost_source (plus the full
- *  editable field set: unit/bigUnit/convRate/imageData/stock/pricing/…). We
- *  select the one item out of the (cached, shared) admin list. `type:"all"` so
- *  an inactive item still resolves. */
+/** Single-item detail the full-page editor hydrates from: GET /menu/:id
+ *  (routes/menu.js, declared last so no fixed route is shadowed). It is the
+ *  ONE read that still carries imageData — the list reads stopped shipping
+ *  bytes (menu-hardening), and this used to pull the whole /menu/all list
+ *  (every image in the catalog) to find one row. Inactive items resolve;
+ *  soft-deleted ones 404 → null, which the page renders as its not-found card
+ *  rather than an error state. Keyed on qk.detail(id), which every item
+ *  mutation (update/delete/price/recipe) already invalidates. */
 export function useMenuItemDetail(id: string | null) {
   return useQuery({
-    queryKey: qk.items({ brandId: "", type: "all" }),
+    queryKey: qk.detail(id ?? ""),
     enabled: !!id,
-    queryFn: ({ signal }) =>
-      apiClient.get<MenuItem[]>("/menu/all", { signal, params: { type: "all" } }),
-    select: (rows): MenuItem | null => rows.find((r) => r.id === id) ?? null,
+    queryFn: async ({ signal }): Promise<MenuItem | null> => {
+      try {
+        return await apiClient.get<MenuItem>(`/menu/${encodeURIComponent(id!)}`, { signal });
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+  });
+}
+
+/** settings.NewProductsTaxInclusive — whether a NEW item's stored price is
+ *  gross (VAT included) or net. This is the exact setting routes/menu.js POST /
+ *  reads (through lib/settingsKeys isTruthy) when the body omits taxInclusive;
+ *  the product page reads it the same way so the price it stores and the flag
+ *  the row gets can never disagree. Lives on GET /settings/all (the public
+ *  GET /settings allowlist does not carry it), sharing the ["settings","all"]
+ *  cache with the administration Settings screen. `undefined` while loading
+ *  or when the caller may not read settings — the page then falls back to
+ *  net storage (the server's own default when the row is absent) AND sends
+ *  the flag explicitly, so the pair stays self-consistent either way. */
+export function useNewProductsTaxInclusive(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["settings", "all"],
+    staleTime: 300_000,
+    enabled: options.enabled ?? true,
+    queryFn: ({ signal }) => apiClient.get<Record<string, unknown>>("/settings/all", { signal }),
+    select: (s): boolean => {
+      // Mirrors lib/settingsKeys.isTruthy: '1' / 'true' / 'on' / 'yes' (any
+      // case) or a real boolean; anything else — including '' / null — false.
+      const raw = s?.NewProductsTaxInclusive;
+      if (typeof raw === "boolean") return raw;
+      const v = String(raw ?? "").trim().toLowerCase();
+      return v === "1" || v === "true" || v === "on" || v === "yes";
+    },
   });
 }
 
@@ -643,8 +685,8 @@ export function useImageList(filters: ImageListFilters = {}) {
 }
 
 /** GET /menu/categories — every distinct category in use, its English label
- *  (if translated) and how many items sit in it. Public read (no auth), so
- *  this is safe to call from any screen with menu.view. */
+ *  (if translated) and how many items sit in it. An authenticated read (the
+ *  token rides on apiClient), safe to call from any screen with menu.view. */
 export function useCategoryList() {
   return useQuery({
     queryKey: qk.categories(),

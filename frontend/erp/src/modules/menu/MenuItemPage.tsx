@@ -39,13 +39,14 @@ import {
   useMenuList,
   useRecipeBom,
   useVatRate,
+  useNewProductsTaxInclusive,
   useCreateMenuItem,
   useUpdateMenuItem,
   type MenuItemInput,
   type TaxCategory,
   type CostSource,
 } from "./api";
-import { useBrandScope, pickName, MoneyI18n } from "./lib";
+import { useBrandScope, pickName, MoneyI18n, priceBreakdown, storedPriceFromCustomerPrice } from "./lib";
 import { ItemImageEditor } from "./ItemImageEditor";
 import { PriceEditDialog, PriceHistoryDrawer, toPriceTarget } from "./PriceDialogs";
 import { MenuItemThumb, useItemImage } from "./MenuItemThumb";
@@ -142,6 +143,9 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
   const brandsQ = useBrands();
   const vatRateQ = useVatRate();
   const vatRate = vatRateQ.data ?? 15;
+  // How a NEW row will be stored (settings.NewProductsTaxInclusive — the same
+  // setting the server's POST / reads). An existing row already knows.
+  const newTaxInclQ = useNewProductsTaxInclusive({ enabled: mode === "new" });
 
   const detailQ = useMenuItemDetail(id ?? null);
   const base = detailQ.data ?? null;
@@ -172,7 +176,11 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
       descEn: "",
       category: base.category ?? "عام",
       brandId: base.brandId ?? "",
-      price: base.price ?? 0,
+      // The field is what the CUSTOMER PAYS (gross), not the stored column —
+      // the same number the price dialog and the cashier card show. A net-
+      // stored row at 21.7391 therefore loads as 25, and saving 25 back stores
+      // 21.7391 again (storedPriceFromCustomerPrice) instead of 25 net → 29.
+      price: priceBreakdown(base.price ?? 0, base.taxCategory, base.isTaxInclusive, vatRate).gross,
       cost: base.cost ?? 0,
       unit: base.unit ?? "",
       multiUnit: !!(base.bigUnit && base.convRate && base.convRate !== 1),
@@ -183,7 +191,10 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
     });
     setImageData(undefined);
     setCostUnlocked(false);
-  }, [mode, base]);
+    // vatRate is a dependency on purpose: the gross shown for a net-stored row
+    // is derived from it, so a rate that arrives after the item must re-derive
+    // the field (a primitive — the effect re-runs only when the value changes).
+  }, [mode, base, vatRate]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((p) => ({ ...p, [key]: value }));
 
@@ -191,12 +202,22 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
   const costLocked = costSource === "recipe" && !costUnlocked;
   const computedCost = base?.computedCost ?? 0;
 
-  // Live instant margin (mirrors the server formula: strip VAT only when the
-  // stored price is tax-inclusive AND standard-rated).
-  const isTaxInclusive = base?.isTaxInclusive ?? true;
+  // Storage mode of the row this form writes: an existing row carries its own
+  // flag; a new row gets the settings default the server would apply — and the
+  // create sends it explicitly (taxInclusive) so the stored price and the flag
+  // are decided ONCE, here, and can never disagree. While the setting is still
+  // loading (or unreadable for this role) the fallback is net storage — the
+  // server's own default when the row is absent — and the pair stays
+  // self-consistent because the flag travels with the price.
+  const isTaxInclusive: boolean = mode === "new" ? (newTaxInclQ.data ?? false) : (base?.isTaxInclusive ?? true);
+  // The tax category is create-only; on edit the stored one is authoritative.
+  const effectiveTaxCategory: TaxCategory = mode === "new" ? form.taxCategory : ((base?.taxCategory as TaxCategory) ?? form.taxCategory);
+  // The field holds the GROSS (what the customer pays). What will actually be
+  // written is derived from it, and the ex-VAT metric is read off that.
   const priceNum = Number(form.price) || 0;
+  const storedPrice = storedPriceFromCustomerPrice(priceNum, effectiveTaxCategory, isTaxInclusive, vatRate);
   const costNum = costLocked ? (base?.cost ?? 0) : Number(form.cost) || 0;
-  const preTaxPrice = isTaxInclusive && form.taxCategory === "S" ? priceNum / (1 + vatRate / 100) : priceNum;
+  const preTaxPrice = priceBreakdown(storedPrice, effectiveTaxCategory, isTaxInclusive, vatRate).net;
   const marginValue = Math.round((preTaxPrice - costNum) * 10000) / 10000;
   const marginPctLive = preTaxPrice > 0 ? Math.round((marginValue / preTaxPrice) * 10000) / 100 : 0;
 
@@ -224,7 +245,10 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
         descEn: form.descEn.trim() || undefined,
         category: form.category.trim(),
         brandId: form.brandId || null,
-        price: Number(form.price) || 0,
+        // Typed = customer price; stored = net or gross per the row's storage
+        // mode, sent TOGETHER with that mode so the server never has to guess.
+        price: storedPrice,
+        taxInclusive: isTaxInclusive,
         cost: Number(form.cost) || 0,
         unit: form.unit.trim() || null,
         bigUnit: form.multiUnit ? form.bigUnit.trim() || null : null,
@@ -255,7 +279,9 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
       descEn: form.descEn.trim() || undefined,
       category: form.category.trim(),
       brandId: form.brandId || null,
-      price: Number(form.price) || 0,
+      // Typed = customer price; the row's own storage mode (untouched by this
+      // PUT) decides whether the net or the gross is written.
+      price: storedPrice,
       cost: costLocked ? (base?.cost ?? 0) : Number(form.cost) || 0,
       unit: form.unit.trim() || null,
       bigUnit: form.multiUnit ? form.bigUnit.trim() || null : null,
@@ -392,7 +418,7 @@ export function MenuItemPage({ mode, id }: { mode: MenuItemPageMode; id?: string
 
           <Section icon={Tags} title={t("menu.page.secPricing")}>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={t("menu.page.price")} required error={errors.price}>
+              <Field label={t("menu.page.price")} required error={errors.price} hint={t("menu.page.priceHint")}>
                 {({ id: fid }) => <CurrencyInput id={fid} value={form.price} onChange={(v) => set("price", v)} min={0} disabled={readOnly} />}
               </Field>
               <Field label={t("menu.tax.category")} hint={mode === "new" ? undefined : t("menu.tax.createOnly")}>

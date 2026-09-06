@@ -10,7 +10,7 @@
  *      the round trip that killed the "type 35, get 40" trap.
  */
 import { describe, expect, it } from "vitest";
-import { priceBreakdown, netForGross } from "../lib";
+import { priceBreakdown, netForGross, storedPriceFromCustomerPrice } from "../lib";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -114,6 +114,50 @@ describe("agreement with the register", () => {
     ];
     for (const [price, cat, incl, pct] of cases) {
       expect(priceBreakdown(price, cat, incl, pct).gross).toBe(registerGross(price, cat, incl, pct));
+    }
+  });
+});
+
+describe("storedPriceFromCustomerPrice — the product form's price field", () => {
+  // The form field is WHAT THE CUSTOMER PAYS (the same number the price dialog
+  // and the cashier card show). MenuItemPage used to send the typed figure
+  // untouched, so on a net-stored row "25" became 25 NET and the customer paid
+  // 29.00 (menu-price-semantics fallout, MenuItemPage.tsx:227,258).
+  it("tax-inclusive row: the gross itself is stored (25 → 25)", () => {
+    expect(storedPriceFromCustomerPrice(25, "S", true, 15)).toBe(25);
+  });
+
+  it("net-stored standard-rated row: gross ÷ (1 + rate) at 4 decimals (25 @ 15% → 21.7391)", () => {
+    expect(storedPriceFromCustomerPrice(25, "S", false, 15)).toBe(21.7391);
+  });
+
+  it("zero-rated row carries no VAT, so net = gross whichever way it is stored (25 → 25)", () => {
+    expect(storedPriceFromCustomerPrice(25, "Z", false, 15)).toBe(25);
+    expect(storedPriceFromCustomerPrice(25, "Z", true, 15)).toBe(25);
+  });
+
+  it("exempt / out-of-scope behave like zero-rated", () => {
+    expect(storedPriceFromCustomerPrice(25, "E", false, 15)).toBe(25);
+    expect(storedPriceFromCustomerPrice(25, "O", false, 15)).toBe(25);
+  });
+
+  it("follows the settings rate, never a hardcoded 15", () => {
+    expect(storedPriceFromCustomerPrice(105, "S", false, 5)).toBe(100);
+    expect(storedPriceFromCustomerPrice(25, "S", false, 0)).toBe(25);
+  });
+
+  it("round-trips: what it stores reproduces the typed customer price on the till", () => {
+    for (const incl of [true, false]) {
+      for (const typed of [1, 11, 25, 29, 34.99, 99, 250]) {
+        const stored = storedPriceFromCustomerPrice(typed, "S", incl, 15);
+        expect(priceBreakdown(stored, "S", incl, 15).gross).toBe(typed);
+      }
+    }
+  });
+
+  it("is the price dialog's arithmetic, not a second copy (one formula for one meaning)", () => {
+    for (const typed of [11, 25, 35, 99]) {
+      expect(storedPriceFromCustomerPrice(typed, "S", false, 15)).toBe(netForGross(typed, "S", false, 15));
     }
   });
 });

@@ -174,7 +174,22 @@ app.use('/api/', async function(req, res, next) {
   // routes/settings.js, whose writes ALL re-verify the token inline and require
   // admin/manager (verified: no legitimate anonymous write exists there).
   if (p.startsWith('/settings') && req.method === 'GET') return next();
-  if (p.startsWith('/menu')) return next();            // menu
+  // menu-hardening SECURITY — /menu is NO LONGER public. The blanket exemption
+  // served GET /api/menu and /api/menu/all — every item's cost, margin inputs
+  // (cost_source, computed_cost, markup), tax flags AND the base64 product
+  // image bytes (~66 MB) — to any anonymous caller. Verified before removing:
+  //   · public/ (only public/shared/dynamic-i18n.js) references no /api/menu path;
+  //   · the POS (frontend/pos/src) never reads /api/menu root — its catalog
+  //     comes from /api/auth/init and /api/pos/v2/*; its ONE /api/menu call,
+  //     GET /api/menu/availability/bulk, runs after login through lib/api.ts
+  //     request(), which attaches "Authorization: Bearer" to every call;
+  //   · the employee portal (frontend/portal/src) calls nothing under /api/menu;
+  //   · every ERP consumer (modules/menu/api.ts, modules/sales/pricing/api.ts,
+  //     BrandWizard) goes through @/shared/api apiClient, which attaches the
+  //     Bearer token to every request.
+  // Cashier tokens keep their catalog reads: middleware/posPortalScope.js
+  // already allows GET /menu(/.*)? and is NOT widened here. routes/menu.js
+  // still re-verifies the token inline on writes (defense-in-depth).
   // v7.5 (H1 SECURITY) — /hr/my-* is NO LONGER public. It now passes through the
   // JWT gate below so the employee is identified from their token, never from a
   // spoofable ?username=. The employee portal already sends "Authorization: Bearer".

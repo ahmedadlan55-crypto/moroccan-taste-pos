@@ -1,13 +1,17 @@
 const router = require('express').Router();
 const db = require('../db/connection');
 const { isTruthy } = require('../lib/settingsKeys');
-// v7.1 SECURITY — the global /api guard (server.js) blanket-exempts /menu so the
-// POS can READ the menu without a token. That left every menu WRITE (create/edit/
-// delete/price/import/recipes) fully public. Re-verify the JWT on writes only;
-// GET routes stay public so the cashier/login flow is unaffected.
+// v7.1 SECURITY — the global /api guard (server.js) used to blanket-exempt /menu
+// so the POS could READ the menu without a token. That left every menu WRITE
+// (create/edit/delete/price/import/recipes) fully public, so writes re-verify
+// the JWT inline.
+// menu-hardening — the /menu exemption is GONE from server.js: every /api/menu
+// request now passes the global JWT gate (the reads served cost/margin data and
+// product images to anyone). The inline verifyToken on writes is kept as
+// defense-in-depth, exactly like routes/settings.js.
 const verifyToken = require('./authMiddleware');
 // v7.4 — menu writes are pricing/tax-sensitive → managers/admins only (chained
-// AFTER verifyToken, which sets req.user since the global /api gate skips /menu).
+// AFTER verifyToken, which sets req.user).
 const MGR = verifyToken.requireRole('admin', 'manager');
 // Sprint 3 D3 — menu PRICING writes accept `accountant` too. This reconciles a
 // frontend↔backend RBAC mismatch: the ERP UI grants `menu.pricing.manage` to
@@ -71,6 +75,34 @@ function _triBool(v) {
 // instead of a second, potentially-drifting copy. Pure move, zero behavior change.
 const { IMAGE_MAX_BYTES, IMAGE_DATA_URL_RE, imageDataError } = require('../lib/imageValidation');
 
+// ─── The "66MB rule" for list reads ─────────────────────────────────────────
+// menu.image_data is a base64 data-URL per item (~66 MB across the table in
+// prod). GET / and GET /all used to `SELECT m.*` and ship every one of those
+// blobs on every catalog load — the paginated GET /list never did. The list
+// reads now select ONLY the columns _mapMenu reads, minus image_data, so the
+// bytes never leave MySQL; the row carries hasImage + an 8-char content hash
+// (imageVer) instead and the client fetches the bytes per item, with auth,
+// from GET /api/pos/v2/item-image/:id (see frontend MenuItemThumb).
+//
+// Every column below is guaranteed at boot by server.js addColumnIfMissing
+// ('menu', …), so an explicit list cannot 500 on a deployment that `m.*`
+// would have tolerated.
+const MENU_ROW_COLUMNS = [
+  'id', 'name', 'name_en', 'price', 'category', 'cost', 'stock', 'min_stock', 'active',
+  'brand_id', 'computed_cost', 'pricing_mode', 'markup_pct',
+  'is_semi_finished', 'production_unit', 'consumes_semi_id', 'consumes_semi_qty',
+  'production_warehouse_id', 'sales_warehouse_id',
+  'bom_id', 'production_method', 'deduct_strategy', 'allow_negative_stock', 'min_stock_alert',
+  'unit', 'big_unit', 'conv_rate', 'yield_quantity', 'yield_unit',
+  'is_tax_inclusive', 'is_combo', 'tax_category', 'cost_source'
+].map((c) => 'm.' + c).join(', ');
+// ONE expression for image presence + version, shared by GET /, GET /all,
+// GET /list and GET /:id — so a thumbnail cached under one route's imageVer is
+// never invalidated (or wrongly kept) by another route computing it differently.
+const IMAGE_META_SQL =
+  "CASE WHEN m.image_data IS NULL OR m.image_data='' THEN 0 ELSE 1 END AS has_image, " +
+  "CASE WHEN m.image_data IS NULL OR m.image_data='' THEN NULL ELSE SUBSTRING(SHA2(m.image_data,256),1,8) END AS image_ver";
+
 // ─── Helper: map a menu row to API response (includes semi-finished fields) ───
 function _mapMenu(m) {
   return {
@@ -100,8 +132,15 @@ function _mapMenu(m) {
     convRate: Number(m.conv_rate) || 1,
     yieldQuantity: Number(m.yield_quantity) || 1,
     yieldUnit: m.yield_unit || null,
-    // v5.12.7 — optional product image (base64 data URL)
-    imageData: m.image_data || null,
+    // v5.12.7 — optional product image (base64 data URL). menu-hardening: only
+    // the single-item read (GET /:id) selects image_data; the list reads do
+    // not carry the column at all, and then the key is ABSENT — not null —
+    // so a client can tell "no image" (hasImage=false) from "bytes not
+    // shipped on this route" (no imageData key).
+    ...(Object.prototype.hasOwnProperty.call(m, 'image_data') ? { imageData: m.image_data || null } : {}),
+    // Image presence + 8-char content hash (IMAGE_META_SQL), on every read.
+    hasImage: !!Number(m.has_image),
+    imageVer: m.image_ver || null,
     // v6.20.0 — is the stored `price` already tax-inclusive (legacy/default)
     // or net of tax (new owner preference)?  The frontend uses this to
     // decide whether to display the price as-is or multiply by (1+VAT).
@@ -143,7 +182,8 @@ const HIDE_INCOMPLETE_FRAGMENT = ' AND (m.is_semi_finished IS NULL OR m.is_semi_
 router.get('/', async (req, res) => {
   try {
     const { brandId, type, includeSemi } = req.query;
-    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1 AND COALESCE(m.is_deleted,0) = 0';
+    // No image_data here — see the "66MB rule" at MENU_ROW_COLUMNS.
+    let sql = `SELECT ${MENU_ROW_COLUMNS}, b.name AS brand_name, ${IMAGE_META_SQL} FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE m.active = 1 AND COALESCE(m.is_deleted,0) = 0`;
     const params = [];
     if (brandId) { sql += ' AND m.brand_id = ?'; params.push(brandId); }
     if (type === 'semi') {
@@ -157,7 +197,13 @@ router.get('/', async (req, res) => {
     sql += ' ORDER BY m.category, m.name';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // Fail CLOSED. This used to answer `[]` with 200, so a broken query looked
+    // exactly like a restaurant with no menu — and stayed invisible. The
+    // client gets a code, never e.message (it names columns/tables).
+    console.error('[menu] GET / failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, code: 'MENU_LIST_FAILED', error: 'تعذّر تحميل قائمة الأصناف' });
+  }
 });
 router.HIDE_INCOMPLETE_FRAGMENT = HIDE_INCOMPLETE_FRAGMENT;
 
@@ -167,7 +213,8 @@ router.HIDE_INCOMPLETE_FRAGMENT = HIDE_INCOMPLETE_FRAGMENT;
 router.get('/all', async (req, res) => {
   try {
     const { brandId, type, includeSemi, includeDeleted } = req.query;
-    let sql = 'SELECT m.*, b.name AS brand_name FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE 1=1';
+    // No image_data here — see the "66MB rule" at MENU_ROW_COLUMNS.
+    let sql = `SELECT ${MENU_ROW_COLUMNS}, b.name AS brand_name, ${IMAGE_META_SQL} FROM menu m LEFT JOIN brands b ON b.id = m.brand_id WHERE 1=1`;
     const params = [];
     // v7.4 — soft-deleted rows (is_deleted=1) must NOT resurface in the admin
     // list. Without this, deleting a product showed "تم الحذف" but the row came
@@ -185,7 +232,12 @@ router.get('/all', async (req, res) => {
     sql += ' ORDER BY m.category, m.name';
     const [rows] = await db.query(sql, params);
     res.json(rows.map(_mapMenu));
-  } catch (e) { res.json([]); }
+  } catch (e) {
+    // Fail CLOSED (same reasoning as GET / above): an error must not be
+    // indistinguishable from an empty admin catalog.
+    console.error('[menu] GET /all failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, code: 'MENU_LIST_FAILED', error: 'تعذّر تحميل قائمة الأصناف' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -193,11 +245,11 @@ router.get('/all', async (req, res) => {
 // GET /api/menu/list?page&pageSize&q&brandId&category&channel&status
 //                    &hasRecipe&hasImage&missingNameEn&negativeMargin&sort&dir
 //
-// EXCLUDES image_data bytes (ships only hasImage + an 8-char SHA1 imageVer,
-// exactly like the POS catalog route) — this is the fix for the full-base64
-// payload that GET /api/menu/all still ships. AUTH: requires a valid token
-// (the global /api gate blanket-exempts /menu for the public POS read, so this
-// route re-verifies inline) because it returns cost/margin data.
+// EXCLUDES image_data bytes (ships only hasImage + an 8-char SHA2 imageVer,
+// exactly like the POS catalog route). GET / and GET /all now follow the same
+// rule (MENU_ROW_COLUMNS + IMAGE_META_SQL above). AUTH: re-verifies the token
+// inline as defense-in-depth on top of the global /api gate (the old /menu
+// exemption is gone) because it returns cost/margin data.
 //
 // Derived per row: branchCount + channelCount aggregated from
 // channel_menu_items (COUNT DISTINCT branch_id / channel_id where
@@ -267,8 +319,7 @@ router.get('/list', verifyToken, async (req, res) => {
       `SELECT m.id, m.name, m.name_en, m.category, m.brand_id, b.name AS brand_name,
               m.price, m.cost, m.cost_source, m.computed_cost, m.tax_category, m.active,
               m.is_tax_inclusive, m.bom_id,
-              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN 0 ELSE 1 END AS has_image,
-              CASE WHEN m.image_data IS NULL OR m.image_data='' THEN NULL ELSE SUBSTRING(SHA2(m.image_data,256),1,8) END AS image_ver,
+              ${IMAGE_META_SQL},
               (SELECT COUNT(DISTINCT cmi.channel_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS channel_count,
               (SELECT COUNT(DISTINCT cmi.branch_id) FROM channel_menu_items cmi WHERE cmi.menu_item_id = m.id AND cmi.is_available = 1) AS branch_count
          FROM menu m LEFT JOIN brands b ON b.id = m.brand_id
@@ -1593,6 +1644,37 @@ router.post('/combos/convert/:id', verifyToken, MGR, async (req, res) => {
     await _writeComboGroups(id, b.groups);
     res.json({ success: true, id, cost, converted: true });
   } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// GET /api/menu/:id — ONE item in the full _mapMenu shape, INCLUDING imageData.
+//
+// This is the only read that still carries the image bytes: the product page
+// (frontend MenuItemPage → useMenuItemDetail) hydrates its editor from it. It
+// used to pull the whole /menu/all list — every image in the catalog — to
+// find one row; the list reads no longer ship bytes (MENU_ROW_COLUMNS), so
+// the detail read lives here instead. Soft-deleted rows are 404, matching the
+// list's default filter.
+//
+// Declared LAST, on purpose: Express matches in declaration order, so every
+// fixed single-segment GET above (/list, /semi-finished, /categories,
+// /recipes, /name-en-coverage, /combos) is tried before this catch-all and
+// can never be shadowed by it.
+// ═══════════════════════════════════════════════════════════════════
+router.get('/:id', async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT m.*, b.name AS brand_name, ${IMAGE_META_SQL}
+         FROM menu m LEFT JOIN brands b ON b.id = m.brand_id
+        WHERE m.id = ? AND COALESCE(m.is_deleted,0) = 0
+        LIMIT 1`,
+      [String(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ success: false, code: 'MENU_ITEM_NOT_FOUND', error: 'المنتج غير موجود' });
+    res.json(_mapMenu(rows[0]));
+  } catch (e) {
+    console.error('[menu] GET /:id failed:', e && (e.code || e.message));
+    res.status(500).json({ success: false, code: 'MENU_ITEM_FAILED', error: 'تعذّر تحميل بيانات المنتج' });
+  }
 });
 
 module.exports = router;

@@ -138,7 +138,10 @@ export const menu = {
     bigUnit: "Large unit",
     convRate: "Conversion factor",
     convRateHint: "Base units per large unit (e.g. 12)",
-    price: "Sale price",
+    // The field is what the customer pays at the register — not the stored
+    // figure. The pre-VAT price is derived and shown in the metric below.
+    price: "Selling price (VAT incl.)",
+    priceHint: "What the customer pays at the register; the price before VAT is worked out automatically",
     active: "Active product",
     availableLabel: "Available for sale",
     save: "Save changes",

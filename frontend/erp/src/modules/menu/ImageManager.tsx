@@ -4,16 +4,17 @@
  * modeled structurally on PriceLists.tsx (PageHeader + filter Card + DataTable
  * with selectable/bulkActions).
  *
- * DATA SOURCE NOTE (2026-07-20, verified against the actual router source in
- * this worktree — routes/product-images.js exists but is not yet mounted in
- * server.js): the table below sources rows from the EXISTING, working
- * useMenuItems (/menu/all), which already carries imageData per item — NOT
- * from the new useImageList(). This is deliberate, not just a standalone
- * stopgap: routes/product-images.js's list query never selects image_data
- * ("the 66MB rule" — see its own comment), shipping only an id/name/category/
- * imageVer(hash)/imageBytes row with no brandName, no thumbnail bytes. It can
- * never power this table's thumbnail column, so /menu/all remains the right
- * source even after the router is mounted.
+ * DATA SOURCE NOTE: the table sources rows from useMenuItems (/menu/all) for
+ * brandName + the full item shape the image-only PUT must carry through.
+ * menu-hardening: /menu/all no longer ships image bytes at all ("the 66MB
+ * rule" — every list read now carries only hasImage + an 8-char imageVer
+ * content hash, the same expression as /menu/list). So the thumbnail column,
+ * the has/missing filter and the row actions all read hasImage/imageVer, and
+ * the bytes come per item — with the token — through MenuItemThumb /
+ * useItemImage (GET /api/pos/v2/item-image/:id?v=imageVer). A replace or
+ * delete goes through useUpdateMenuItem, whose onSuccess invalidates the
+ * items query; the refetched row carries a NEW imageVer, which is exactly
+ * what busts the thumbnail cache (keyed on id + imageVer).
  *
  * There is also no review-workflow (pending/approved/rejected) anywhere in
  * the backend today — imageReviewStatus/imageUpdatedAt/imageUpdatedBy on
@@ -36,7 +37,7 @@
  * needed.
  */
 import { useMemo, useRef, useState } from "react";
-import { ImagePlus, ImageOff, Trash2, UploadCloud } from "lucide-react";
+import { ImagePlus, Trash2, UploadCloud } from "lucide-react";
 import {
   PageHeader,
   Card,
@@ -58,6 +59,7 @@ import { useBrands, useMenuItems, useUpdateMenuItem, menuErrorText, type MenuIte
 import { useBrandScope, BrandSelect } from "./lib";
 import { downscaleImageFile, imagePrepMessage } from "./imageCompression";
 import { ImageManagerBulkUpload } from "./ImageManagerBulkUpload";
+import { MenuItemThumb } from "./MenuItemThumb";
 
 type ImageFilter = "all" | "has" | "missing";
 type ReviewFilter = "" | "pending" | "approved" | "rejected";
@@ -65,7 +67,8 @@ type ReviewFilter = "" | "pending" | "approved" | "rejected";
 /** Image presence + (forward-looking) review-status label, localized via t. The
  *  review states reuse the shared status.* codes; presence is menuRest-owned. */
 function imageStatus(item: MenuItem, t: TFunction): { label: string; tone: StatusTone } {
-  if (!item.imageData) return { label: t("menuRest.imageManager.noImage"), tone: "neutral" };
+  // hasImage, never imageData: the list rows carry no bytes (see header note).
+  if (!item.hasImage) return { label: t("menuRest.imageManager.noImage"), tone: "neutral" };
   if (item.imageReviewStatus === "approved") return { label: t("status.approved"), tone: "success" };
   if (item.imageReviewStatus === "pending") return { label: t("status.underReview"), tone: "warning" };
   if (item.imageReviewStatus === "rejected") return { label: t("status.rejected"), tone: "danger" };
@@ -158,8 +161,8 @@ function ImageManagerScreen() {
     () =>
       rows.filter((r) => {
         if (category && r.category !== category) return false;
-        if (imageFilter === "has" && !r.imageData) return false;
-        if (imageFilter === "missing" && r.imageData) return false;
+        if (imageFilter === "has" && !r.hasImage) return false;
+        if (imageFilter === "missing" && r.hasImage) return false;
         if (reviewFilter && r.imageReviewStatus !== reviewFilter) return false;
         return true;
       }),
@@ -209,15 +212,9 @@ function ImageManagerScreen() {
         header: t("menuRest.imageManager.imageCol"),
         hideable: false,
         sortable: false,
-        cell: (r) => (
-          <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-            {r.imageData ? (
-              <img src={r.imageData} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <ImageOff className="h-4 w-4 text-slate-300" aria-hidden />
-            )}
-          </div>
-        ),
+        // Bytes are fetched per item with the token (useItemImage) and keyed on
+        // imageVer — no data URL rides on the list row any more.
+        cell: (r) => <MenuItemThumb id={r.id} imageVer={r.imageVer} hasImage={r.hasImage} alt="" className="h-10 w-10 rounded-lg" />,
       },
       {
         id: "name",
@@ -345,13 +342,13 @@ function ImageManagerScreen() {
               />
               <IconButton
                 size="sm"
-                aria-label={t(r.imageData ? "menuRest.imageManager.changeImageAria" : "menuRest.imageManager.addImageAria", { name: r.name })}
+                aria-label={t(r.hasImage ? "menuRest.imageManager.changeImageAria" : "menuRest.imageManager.addImageAria", { name: r.name })}
                 disabled={busyRowId === r.id}
                 onClick={() => fileInputs.current.get(r.id)?.click()}
               >
                 <ImagePlus className="h-4 w-4" />
               </IconButton>
-              {r.imageData && (
+              {r.hasImage && (
                 <IconButton
                   size="sm"
                   variant="danger"

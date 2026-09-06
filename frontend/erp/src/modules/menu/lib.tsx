@@ -115,6 +115,27 @@ export function netForGross(
   return round4(g / (1 + rate));
 }
 
+/** The price to STORE for a product whose owner typed what the CUSTOMER PAYS.
+ *
+ *  The product form (MenuItemPage) means the same thing the price dialog
+ *  means: the number on the cashier card. What goes into `menu.price` depends
+ *  on how the row is stored —
+ *    · tax-inclusive row  → the gross itself (rounded to halalas);
+ *    · net-stored row     → gross ÷ (1 + rate) at 4 decimals, so the till
+ *      reproduces the typed gross EXACTLY (see netForGross for why 4 decimals);
+ *    · Z / E / O rows     → carry no VAT, so net = gross whichever way stored.
+ *  Before this existed the form sent the typed figure untouched; on a net row
+ *  "25" was stored as 25 NET, the server tuned the gross to a whole riyal, and
+ *  the customer paid 29.00. One arithmetic (netForGross), named for the form. */
+export function storedPriceFromCustomerPrice(
+  gross: number,
+  taxCategory: string | null | undefined,
+  isTaxInclusive: boolean | null | undefined,
+  vatRatePct: number,
+): number {
+  return netForGross(gross, taxCategory, isTaxInclusive, vatRatePct);
+}
+
 // ── Bilingual helpers (Sprint 3 · D2) ────────────────────────────────────────
 
 /** Business-data name policy: render the English name when the UI language is

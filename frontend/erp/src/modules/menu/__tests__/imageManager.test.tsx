@@ -64,8 +64,14 @@ const BASE_ITEM = {
   isTaxInclusive: true,
 };
 
-const ITEM_WITH_IMAGE = { ...BASE_ITEM, id: "MENU-1", name: "شاورما دجاج", nameEn: "Chicken Shawarma", category: "ساندويتش", imageData: TINY_PNG };
-const ITEM_WITHOUT_IMAGE = { ...BASE_ITEM, id: "MENU-2", name: "برجر لحم", nameEn: "Beef Burger", category: "برجر", imageData: null };
+// menu-hardening: /menu/all rows carry hasImage + an 8-char imageVer and NO
+// imageData key — the bytes are fetched per item by MenuItemThumb. The old
+// fixture shipped TINY_PNG on the row; that shape no longer exists on the wire.
+const ITEM_WITH_IMAGE = { ...BASE_ITEM, id: "MENU-1", name: "شاورما دجاج", nameEn: "Chicken Shawarma", category: "ساندويتش", hasImage: true, imageVer: "a1b2c3d4" };
+const ITEM_WITHOUT_IMAGE = { ...BASE_ITEM, id: "MENU-2", name: "برجر لحم", nameEn: "Beef Burger", category: "برجر", hasImage: false, imageVer: null };
+// A row that still carried bytes but says hasImage:false must be treated as
+// image-less — hasImage is the contract, imageData is not on list rows.
+const ITEM_STALE_BYTES = { ...ITEM_WITHOUT_IMAGE, id: "MENU-3", name: "سلطة", nameEn: "Salad", imageData: TINY_PNG };
 
 vi.mock("@/shared/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/shared/api")>();
@@ -75,7 +81,7 @@ vi.mock("@/shared/api", async (importOriginal) => {
       ...actual.apiClient,
       get: vi.fn(async (p: string) => {
         if (p.includes("/erp/brands")) return [{ id: "B1", name: "براند تجريبي", code: "BR", logo: null, isActive: true }];
-        if (p.includes("/menu/all")) return [ITEM_WITH_IMAGE, ITEM_WITHOUT_IMAGE];
+        if (p.includes("/menu/all")) return [ITEM_WITH_IMAGE, ITEM_WITHOUT_IMAGE, ITEM_STALE_BYTES];
         return [];
       }),
     },
@@ -127,6 +133,28 @@ describe("ImageManager — render + filters", () => {
 
     await waitFor(() => expect(screen.queryByText("برجر لحم")).not.toBeInTheDocument());
     expect(screen.getAllByText("شاورما دجاج").length).toBeGreaterThan(0);
+    // hasImage:false wins over a stray imageData on the row — the filter reads
+    // the contract field, never the bytes.
+    expect(screen.queryByText("سلطة")).not.toBeInTheDocument();
+  });
+
+  it("the thumbnail column reads hasImage/imageVer, never a data URL on the row", async () => {
+    capAllowed.mockReturnValue(true);
+    renderManager();
+    await screen.findAllByText("شاورما دجاج");
+    // No row ships bytes any more, so no <img src="data:…"> can exist — even for
+    // the fixture that (wrongly) still carries imageData. jsdom has no
+    // URL.createObjectURL, so useItemImage degrades to the placeholder for the
+    // item WITH an image as well; what matters is that nothing renders the
+    // list-row bytes directly.
+    const dataImgs = Array.from(document.querySelectorAll("img")).filter((el) => (el.getAttribute("src") || "").startsWith("data:"));
+    expect(dataImgs).toHaveLength(0);
+    // The status column is driven by hasImage: exactly one «له صورة» badge row
+    // (MENU-1); the stale-bytes row shows «بلا صورة».
+    const rowWithImage = screen.getAllByText("شاورما دجاج")[0].closest("tr");
+    expect(rowWithImage?.textContent).toContain("له صورة");
+    const staleRow = screen.getAllByText("سلطة")[0].closest("tr");
+    expect(staleRow?.textContent).toContain("بلا صورة");
   });
 
   it("renders the permission-denied panel without menu.view", async () => {

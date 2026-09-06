@@ -52,6 +52,14 @@ export const operationalReports = {
       label: "Inventory value roll-forward",
       description: "Opening + in − out = closing per item, from the immutable value ledger.",
     },
+    inventoryNrv: {
+      label: "Net realizable value (NRV)",
+      description: "Per stocked item: its cost against the net selling price of the product whose active recipe consumes it, VAT and costs to sell stripped, and the proposed write-down where cost exceeds that value. An item with no selling basis is counted, not valued.",
+    },
+    productsBelowCost: {
+      label: "Products priced below cost",
+      description: "Products whose net selling price, VAT stripped, is under their recipe or bill-of-materials cost, with the shortfall per unit, the margin, the units sold in the chosen window and the resulting exposure. A dash means this server has no sales source.",
+    },
       productionYield: { label: "Production yield and WIP", description: "Planned against produced and scrapped per order, with the cost still in progress." },
       recipeVariance: { label: "Recipe standard vs actual", description: "Quantity and cost variance per component between the recipe standard and actual consumption." },
     payrollRegister: {
@@ -100,6 +108,12 @@ export const operationalReports = {
     status: "Status",
     payrollRun: "Payroll run",
     employmentStatus: "Employment status",
+    warehouse: "Warehouse",
+    allWarehouses: "All warehouses (item average cost)",
+    salesWindow: "Sales window",
+    last30Days: "Last 30 days",
+    last60Days: "Last 60 days",
+    last90Days: "Last 90 days",
     invalidRange: "The start date must not be after the end date.",
   },
 
@@ -108,6 +122,14 @@ export const operationalReports = {
     gross: "Total gross",
     deductions: "Total deductions",
     net: "Total net",
+    itemsWithBasis: "Items with a selling basis",
+    noBasisCount: "Items with no selling basis",
+    impairedItems: "Impaired items",
+    vatRatePct: "VAT rate stripped %",
+    sellingCostPct: "Estimated costs to sell %",
+    products: "Products below cost",
+    noCostCount: "Products with no known cost",
+    salesWindowDays: "Sales window (days)",
   },
 
   col: {
@@ -119,6 +141,21 @@ export const operationalReports = {
     closingQuantity: "Closing quantity",
     closingValue: "Closing value",
     unknownCostRows: "Unknown-cost movements",
+    quantity: "Quantity",
+    unitCost: "Unit cost",
+    costBasis: "Cost basis",
+    inventoryValue: "Inventory value",
+    basisProduct: "Selling basis (product)",
+    netSellingPrice: "Net selling price",
+    nrvUnit: "NRV per unit",
+    writeDownUnit: "Proposed write-down per unit",
+    writeDown: "Proposed write-down",
+    costSource: "Cost source",
+    shortfallUnit: "Shortfall per unit",
+    marginPct: "Margin %",
+    soldQty: "Units sold",
+    exposure: "Exposure",
+    salesSource: "Sales source",
       orderNumber: "Order no.",
       product: "Product",
       component: "Component",
@@ -223,5 +260,27 @@ export const operationalReports = {
     high: "High",
     medium: "Medium",
     low: "Low",
+  },
+
+  // NRV report statuses (lib/nrv.js): "no selling basis" means no active
+  // recipe consumes the item — it is not valued, and not called sound either.
+  nrvStatus: {
+    ok: "Recoverable",
+    impaired: "Impaired",
+    noBasis: "No selling basis",
+  },
+
+  costBasis: {
+    warehouseWac: "Warehouse weighted average",
+    itemWac: "Item weighted average",
+  },
+
+  productCostSource: {
+    recipe: "Recipe engine",
+    bom: "Active bill of materials",
+  },
+
+  salesSource: {
+    analytics_daily_item: "Daily sales fact (analytics_daily_item)",
   },
 } as const;

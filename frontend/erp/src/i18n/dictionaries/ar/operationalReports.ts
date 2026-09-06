@@ -52,6 +52,14 @@ export const operationalReports = {
       label: "حركة قيمة المخزون",
       description: "افتتاحي + وارد − منصرف = ختامي لكل صنف، من دفتر القيمة غير القابل للتعديل.",
     },
+    inventoryNrv: {
+      label: "صافي القيمة القابلة للتحقق (NRV)",
+      description: "لكل صنف مخزون: تكلفته مقابل صافي سعر بيع المنتج الذي تستهلكه وصفته الفعّالة بعد تجريد الضريبة وتكاليف البيع، والانخفاض المقترح حيث تتجاوز التكلفة تلك القيمة. الصنف بلا أساس بيعي يُعدّ ولا يُقيَّم.",
+    },
+    productsBelowCost: {
+      label: "منتجات تُباع دون التكلفة",
+      description: "المنتجات التي يقل صافي سعر بيعها بعد تجريد الضريبة عن تكلفة وصفتها أو قائمة موادها، مع العجز في الوحدة وهامشها والكمية المباعة في النافذة المختارة والتعرّض الناتج. الشرطة تعني عدم توفر مصدر مبيعات على هذا الخادم.",
+    },
       productionYield: { label: "مردود الإنتاج وتحت التشغيل", description: "المخطط مقابل المنتَج والهالك لكل أمر إنتاج، مع تكلفة ما زال تحت التشغيل." },
       recipeVariance: { label: "الوصفة المعيارية مقابل الفعلي", description: "فرق الكمية والتكلفة لكل مكوّن بين معيار الوصفة والاستهلاك الفعلي." },
     payrollRegister: {
@@ -100,6 +108,12 @@ export const operationalReports = {
     status: "الحالة",
     payrollRun: "مسيّر الرواتب",
     employmentStatus: "حالة الموظف",
+    warehouse: "المستودع",
+    allWarehouses: "كل المستودعات (متوسط تكلفة الصنف)",
+    salesWindow: "نافذة المبيعات",
+    last30Days: "آخر 30 يومًا",
+    last60Days: "آخر 60 يومًا",
+    last90Days: "آخر 90 يومًا",
     invalidRange: "تاريخ البداية يجب ألا يكون بعد تاريخ النهاية.",
   },
 
@@ -108,6 +122,14 @@ export const operationalReports = {
     gross: "إجمالي الاستحقاق",
     deductions: "إجمالي الخصومات",
     net: "صافي المستحق",
+    itemsWithBasis: "أصناف لها أساس بيعي",
+    noBasisCount: "أصناف بلا أساس بيعي",
+    impairedItems: "أصناف منخفضة القيمة",
+    vatRatePct: "نسبة الضريبة المجرَّدة %",
+    sellingCostPct: "نسبة تكاليف البيع المقدَّرة %",
+    products: "منتجات دون التكلفة",
+    noCostCount: "منتجات بلا تكلفة معروفة",
+    salesWindowDays: "نافذة المبيعات (يوم)",
   },
 
   col: {
@@ -119,6 +141,21 @@ export const operationalReports = {
     closingQuantity: "الكمية الختامية",
     closingValue: "القيمة الختامية",
     unknownCostRows: "حركات بتكلفة غير معروفة",
+    quantity: "الكمية",
+    unitCost: "تكلفة الوحدة",
+    costBasis: "أساس التكلفة",
+    inventoryValue: "قيمة المخزون",
+    basisProduct: "المنتج الأساس للبيع",
+    netSellingPrice: "صافي سعر البيع",
+    nrvUnit: "صافي القيمة القابلة للتحقق للوحدة",
+    writeDownUnit: "الانخفاض المقترح للوحدة",
+    writeDown: "الانخفاض المقترح",
+    costSource: "مصدر التكلفة",
+    shortfallUnit: "العجز في الوحدة",
+    marginPct: "الهامش %",
+    soldQty: "الكمية المباعة",
+    exposure: "التعرّض",
+    salesSource: "مصدر المبيعات",
       orderNumber: "رقم الأمر",
       product: "المنتج",
       component: "المكوّن",
@@ -223,5 +260,27 @@ export const operationalReports = {
     high: "عالية",
     medium: "متوسطة",
     low: "منخفضة",
+  },
+
+  // حالات تقرير صافي القيمة القابلة للتحقق (lib/nrv.js): «لا أساس بيعي» تعني
+  // أن لا وصفة فعّالة تستهلك الصنف — فلا يُقيَّم ولا يُقال إنه سليم.
+  nrvStatus: {
+    ok: "سليم",
+    impaired: "منخفض القيمة",
+    noBasis: "لا أساس بيعي",
+  },
+
+  costBasis: {
+    warehouseWac: "متوسط مرجّح للمستودع",
+    itemWac: "متوسط مرجّح للصنف",
+  },
+
+  productCostSource: {
+    recipe: "محرّك الوصفات",
+    bom: "قائمة المواد الفعّالة",
+  },
+
+  salesSource: {
+    analytics_daily_item: "حقيقة المبيعات اليومية (analytics_daily_item)",
   },
 } as const;

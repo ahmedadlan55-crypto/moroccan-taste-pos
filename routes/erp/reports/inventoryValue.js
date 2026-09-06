@@ -3,6 +3,8 @@
  *
  *   GET /reports/inventory-value/stock-card    — one item's valued movements
  *   GET /reports/inventory-value/roll-forward  — opening + in − out = closing
+ *   GET /reports/inventory-value/nrv           — lower of cost and NRV, per item
+ *   GET /reports/inventory-value/products-below-cost — products priced under cost
  *
  * ─── WHY THESE COULD NOT EXIST BEFORE ───────────────────────────────────────
  * Both need the cost of a movement AS IT STOOD WHEN THE MOVEMENT HAPPENED.
@@ -329,6 +331,259 @@ router.get('/reports/inventory-value/roll-forward', READ, async (req, res) => {
     });
   } catch (e) {
     return RE.sendReportError(res, e, 'erp/reports/inventory-value/roll-forward', req);
+  }
+});
+
+// ── Net realizable value ────────────────────────────────────────────────────
+//
+// IAS 2 carries inventory at the LOWER of cost and NRV. A raw material has no
+// price of its own, so its selling basis is a menu product whose ACTIVE recipe
+// consumes it through exactly one BOM line. All arithmetic lives in
+// lib/nrv.js; this handler only fetches the rows and refuses what it cannot
+// honestly compute.
+
+const NRV = require('../../../lib/nrv');
+
+/**
+ * The two settings NRV depends on. The VAT rate is NEVER defaulted: a report
+ * that quietly assumed 15% would strip the wrong tax the day the rate changes
+ * and still print a confident number. Absent ⇒ 422 VAT_RATE_MISSING.
+ */
+async function readNrvSettings() {
+  const [rows] = await pool.query(
+    "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('VATRate', 'NrvSellingCostPct')",
+  );
+  const byKey = new Map(rows.map((r) => [r.setting_key, r.setting_value]));
+  const vatRatePct = NRV.parseVatRate(byKey.get('VATRate'));
+  if (vatRatePct == null) {
+    throw badRequest('VAT_RATE_MISSING', 'إعداد نسبة ضريبة القيمة المضافة (VATRate) غير موجود؛ لا يمكن تجريد الضريبة من سعر البيع.');
+  }
+  const sellingCostPct = NRV.parseSellingCostPct(byKey.get('NrvSellingCostPct'));
+  if (sellingCostPct == null) {
+    throw badRequest('NRV_SELLING_COST_INVALID', 'إعداد نسبة تكاليف البيع (NrvSellingCostPct) غير صالح؛ يجب أن يكون رقمًا بين 0 و100.');
+  }
+  return { vatRatePct, sellingCostPct };
+}
+
+/** An unknown warehouse must be refused: an empty report for it would read as an empty warehouse. */
+async function requireWarehouse(raw) {
+  const warehouseId = String(raw || '').trim();
+  if (!warehouseId) return '';
+  const [rows] = await pool.query('SELECT id FROM warehouses WHERE id = ? LIMIT 1', [warehouseId]);
+  if (!rows.length) throw badRequest('WAREHOUSE_NOT_FOUND', 'المستودع غير موجود: ' + warehouseId);
+  return warehouseId;
+}
+
+router.get('/reports/inventory-value/nrv', READ, async (req, res) => {
+  try {
+    const settings = await readNrvSettings();
+    const warehouseId = await requireWarehouse(req.query.warehouseId);
+
+    // Items with stock on hand. With a warehouse, quantity and cost are that
+    // warehouse's (uq_wh_item makes the MAX a plain read of the single row);
+    // without one, quantity is the sum over warehouses and cost is the item's
+    // own weighted average — one basis per request, named below.
+    const stockScope = warehouseId ? ' AND ws.warehouse_id = ?' : '';
+    const [itemRows] = await pool.query(
+      `SELECT i.id, i.name, i.name_en, i.unit, i.cost AS item_cost,
+              SUM(ws.qty) AS quantity,
+              MAX(ws.avg_cost) AS warehouse_avg_cost
+         FROM inv_items i
+         JOIN warehouse_stock ws ON ws.item_id = i.id${stockScope}
+        WHERE COALESCE(i.active, 1) = 1
+          AND i.deleted_at IS NULL
+          AND COALESCE(i.is_inventoried, 1) = 1
+        GROUP BY i.id, i.name, i.name_en, i.unit, i.cost
+       HAVING SUM(ws.qty) > 0`,
+      warehouseId ? [warehouseId] : [],
+    );
+
+    // Every (item, product) pair whose ACTIVE recipe consumes the item through
+    // exactly ONE line. product_source is checked because a NULL there means
+    // 'inv' everywhere else in this codebase (routes/erp-core.js) — a
+    // semi-finished item's BOM is not a selling basis. HAVING COUNT(*) = 1 is
+    // the "exactly one line" rule: a recipe listing the same item twice
+    // cannot say how much of it one sale consumes.
+    const [candidateRows] = await pool.query(
+      `SELECT bl.component_item_id AS item_id,
+              m.id AS menu_id, m.name AS product_name, m.name_en AS product_name_en,
+              m.price, m.is_tax_inclusive, m.tax_category,
+              b.yield_quantity,
+              MIN(bl.quantity) AS line_quantity,
+              MIN(bl.base_quantity) AS base_quantity
+         FROM bom b
+         JOIN menu m ON m.id = b.product_id
+         JOIN bom_lines bl ON bl.bom_id = b.id
+        WHERE b.product_source = 'menu'
+          AND (b.is_active = 1 OR b.status = 'active')
+          AND COALESCE(m.active, 1) = 1
+          AND m.is_deleted = 0
+          AND COALESCE(m.is_combo, 0) = 0
+        GROUP BY b.id, bl.component_item_id, m.id, m.name, m.name_en,
+                 m.price, m.is_tax_inclusive, m.tax_category, b.yield_quantity
+       HAVING COUNT(*) = 1`,
+    );
+
+    const stocked = new Set(itemRows.map((r) => r.id));
+    const { rows, totals } = NRV.buildNrvRows({
+      vatRatePct: settings.vatRatePct,
+      sellingCostPct: settings.sellingCostPct,
+      items: itemRows.map((r) => ({
+        itemId: r.id,
+        itemName: r.name,
+        itemNameEn: r.name_en,
+        unit: r.unit,
+        quantity: r.quantity,
+        unitCost: warehouseId ? r.warehouse_avg_cost : r.item_cost,
+      })),
+      candidates: candidateRows
+        .filter((c) => stocked.has(c.item_id))
+        .map((c) => ({
+          itemId: c.item_id,
+          menuId: c.menu_id,
+          productName: c.product_name,
+          productNameEn: c.product_name_en,
+          price: c.price,
+          isTaxInclusive: c.is_tax_inclusive,
+          taxCategory: c.tax_category,
+          quantity: c.line_quantity,
+          baseQuantity: c.base_quantity,
+          yieldQuantity: c.yield_quantity,
+        })),
+    });
+
+    // The item universe is bounded (stocked items), so the whole set is always
+    // computed; a snapshot only adds the overflow refusal.
+    const wantsAll = SNAP.wantsSnapshot(req.query);
+    if (wantsAll && rows.length > SNAP.REPORT_SNAPSHOT_LIMIT) return SNAP.tooLarge(res, rows.length);
+
+    return res.json({
+      success: true,
+      data: rows,
+      totals,
+      basis: {
+        vatRatePct: settings.vatRatePct,
+        sellingCostPct: settings.sellingCostPct,
+        costSource: warehouseId ? 'warehouse-wac' : 'item-wac',
+        warehouseId: warehouseId || null,
+        asOf: new Date().toISOString(),
+      },
+      meta: SNAP.meta(rows.length),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return RE.sendReportError(res, e, 'erp/reports/inventory-value/nrv', req);
+  }
+});
+
+// ── Products sold below cost ────────────────────────────────────────────────
+//
+// The mirror question: not "is the material worth less than we paid" but "is
+// the product priced under what it costs to make". Cost precedence and the
+// no-cost rule live in lib/nrv.js; the sales window comes from the analytics
+// daily item fact and is NAMED in `basis.salesSource` — or null, with null
+// quantities, on a server that has no such table.
+
+const SALES_SOURCE_TABLE = 'analytics_daily_item';
+const SALES_SOURCE_COLUMNS = ['business_day', 'menu_id', 'qty_sold', 'qty_returned'];
+
+/** True only when the analytics fact exists with every column the query reads. */
+async function salesSourceAvailable() {
+  const [cols] = await pool.query(
+    `SELECT COLUMN_NAME
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+        AND COLUMN_NAME IN (${SALES_SOURCE_COLUMNS.map(() => '?').join(',')})`,
+    [SALES_SOURCE_TABLE, ...SALES_SOURCE_COLUMNS],
+  );
+  return cols.length === SALES_SOURCE_COLUMNS.length;
+}
+
+router.get('/reports/inventory-value/products-below-cost', READ, async (req, res) => {
+  try {
+    const settings = await readNrvSettings();
+    const rawDays = req.query.days == null || String(req.query.days).trim() === '' ? '30' : String(req.query.days).trim();
+    const days = Number(rawDays);
+    if (!Number.isInteger(days) || days < 1 || days > 366) {
+      throw badRequest('VALIDATION_ERROR', 'days يجب أن يكون عددًا صحيحًا بين 1 و366');
+    }
+
+    // One active BOM per product. Should a product carry several, the HIGHEST
+    // cost is the prudent one to measure against.
+    const [productRows] = await pool.query(
+      `SELECT m.id AS menu_id, m.name, m.name_en, m.price, m.is_tax_inclusive, m.tax_category,
+              m.cost AS menu_cost, m.cost_source AS menu_cost_source,
+              ab.cost_per_unit AS bom_cost_per_unit
+         FROM menu m
+         LEFT JOIN (
+                SELECT product_id, MAX(cost_per_unit) AS cost_per_unit
+                  FROM bom
+                 WHERE product_source = 'menu' AND (is_active = 1 OR status = 'active')
+                 GROUP BY product_id
+              ) ab ON ab.product_id = m.id
+        WHERE COALESCE(m.active, 1) = 1
+          AND m.is_deleted = 0
+          AND COALESCE(m.is_combo, 0) = 0`,
+    );
+
+    // Units sold = the hub's `qty_net` (sold − returned): a returned unit was
+    // not realised, so it carries no exposure. The window is `days` calendar
+    // days ending on the DB session's today (Riyadh), the same clock that
+    // stamps business_day.
+    let sold = null;
+    let salesFrom = null;
+    if (await salesSourceAvailable()) {
+      const [[win]] = await pool.query(
+        "SELECT DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? DAY), '%Y-%m-%d') AS from_day",
+        [days - 1],
+      );
+      salesFrom = win.from_day;
+      const [soldRows] = await pool.query(
+        `SELECT menu_id, SUM(qty_sold) - SUM(qty_returned) AS qty_net
+           FROM ${SALES_SOURCE_TABLE}
+          WHERE business_day >= ?
+          GROUP BY menu_id`,
+        [salesFrom],
+      );
+      sold = new Map(soldRows.map((r) => [r.menu_id, Number(r.qty_net)]));
+    }
+
+    const { rows, totals } = NRV.buildBelowCostRows({
+      vatRatePct: settings.vatRatePct,
+      sold,
+      products: productRows.map((p) => ({
+        menuId: p.menu_id,
+        productName: p.name,
+        productNameEn: p.name_en,
+        price: p.price,
+        isTaxInclusive: p.is_tax_inclusive,
+        taxCategory: p.tax_category,
+        menuCost: p.menu_cost,
+        menuCostSource: p.menu_cost_source,
+        bomCostPerUnit: p.bom_cost_per_unit,
+      })),
+    });
+
+    const wantsAll = SNAP.wantsSnapshot(req.query);
+    if (wantsAll && rows.length > SNAP.REPORT_SNAPSHOT_LIMIT) return SNAP.tooLarge(res, rows.length);
+
+    return res.json({
+      success: true,
+      data: rows,
+      totals,
+      basis: {
+        vatRatePct: settings.vatRatePct,
+        days,
+        salesSource: sold ? SALES_SOURCE_TABLE : null,
+        salesMeasure: sold ? 'qty_sold - qty_returned' : null,
+        salesFrom,
+        asOf: new Date().toISOString(),
+      },
+      meta: SNAP.meta(rows.length),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return RE.sendReportError(res, e, 'erp/reports/inventory-value/products-below-cost', req);
   }
 });
 

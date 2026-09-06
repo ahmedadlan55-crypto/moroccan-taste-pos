@@ -28,9 +28,11 @@
 //   `administration.audit` — the capability on the screen that reads this very
 //   endpoint — which is STRICTER than the `workflow.audit.view` the deleted
 //   action-log card carried; nothing was widened.
-import { Clock, Factory, GitCompareArrows, Layers, ScrollText, Workflow } from "lucide-react";
+import { Clock, Factory, GitCompareArrows, Layers, Scale, ScrollText, TrendingDown, Workflow } from "lucide-react";
 import { apiClient } from "@/shared/api";
-import { asRows, num, str, type ReportResult, type ReportSectionDef } from "../engine";
+import { operationalReports as arOperationalReports } from "@/i18n/dictionaries/ar/operationalReports";
+import { operationalReports as enOperationalReports } from "@/i18n/dictionaries/en/operationalReports";
+import { asRows, num, str, type ReportOption, type ReportResult, type ReportSectionDef, type ReportTotal } from "../engine";
 
 /**
  * The inventory value roll-forward: opening + in − out = closing, per item.
@@ -75,6 +77,197 @@ async function loadInventoryValueRollForward(
       { labelKey: "operationalReports.col.inValue", value: num(t.inValue), format: "money" },
       { labelKey: "operationalReports.col.outValue", value: num(t.outValue), format: "money" },
       { labelKey: "operationalReports.col.closingValue", value: num(t.closingValue), format: "money" },
+    ],
+  };
+}
+
+// ── net realizable value ────────────────────────────────────────────────────
+// IAS 2 carries inventory at the LOWER of cost and net realizable value. Both
+// endpoints below live in routes/erp/reports/inventoryValue.js and do their
+// arithmetic in lib/nrv.js; these loaders only carry the wire shape onto the
+// sheet — and refuse to improve on it. Two things the shapes insist on:
+//
+//   · A NULL IS NOT A ZERO. An item no active recipe consumes has no selling
+//     basis, so its NRV and write-down are null and the row says so. The
+//     engine's `num` would print that as 0.00 — "fully recoverable", the one
+//     claim an unpriced item cannot make — so nullable figures go through
+//     `maybeNum` and reach the sheet as "—".
+//   · THE BASIS IS PRINTED. The VAT rate stripped, the costs-to-sell percent,
+//     which average cost was used and where the units sold came from are all
+//     part of the answer. `ReportResult` has no basis slot, so the numeric
+//     ones ride as labelled totals and the named ones as a per-row column —
+//     never dropped.
+
+/**
+ * A figure the server may legitimately not have. `num` turns null into 0,
+ * which is right for a ledger column (no movement = 0) and wrong for a
+ * measurement (no basis ≠ a write-down of nothing). Null stays null.
+ */
+function maybeNum(value: unknown): number | null {
+  return value == null || value === "" ? null : num(value);
+}
+
+interface ReportEnvelope {
+  success?: unknown;
+  error?: unknown;
+  data?: unknown;
+  totals?: Record<string, unknown>;
+  basis?: Record<string, unknown>;
+}
+
+/**
+ * Rows out of a `{ success, data, totals, basis }` envelope. `asRows` only
+ * judges what it is handed: given the `data` of an HTTP-200
+ * `{ success:false, error }` answer it sees undefined and returns [] — a
+ * REFUSED valuation rendered as an empty one, every total at 0. So the
+ * envelope is judged first, and a refusal is thrown for <ErrorState>.
+ */
+function envelopeRows(body: ReportEnvelope | null | undefined): Record<string, unknown>[] {
+  if (body && typeof body === "object" && body.success === false) throw new Error(String(body.error ?? ""));
+  return asRows(body?.data);
+}
+
+/**
+ * A server figure as a printed total — or nothing, when the server had none.
+ * A 0 standing in for "not measured" is the lie this catalogue exists to remove.
+ */
+function optionalTotal(labelKey: string, value: unknown, format: ReportTotal["format"]): ReportTotal[] {
+  const n = maybeNum(value);
+  return n == null ? [] : [{ labelKey, value: n, format }];
+}
+
+/**
+ * The warehouse picker's "every warehouse" choice. Deliberately not "": the
+ * engine runs a report only once its remote filter holds a truthy value, and
+ * an empty string would leave the page loading forever.
+ */
+const ALL_WAREHOUSES = "*";
+
+async function loadWarehouseOptions(signal?: AbortSignal): Promise<ReportOption[]> {
+  const body = await apiClient.get<ReportEnvelope>("/inventory/v2/warehouses", { signal });
+  // Remote-picker labels are display text, not keys, and a loader has no hook
+  // to translate with. The language is read the way shared/lib/formatters.ts
+  // reads it: the provider stamps <html lang> on every switch, so this cannot
+  // drift from what the page around it shows.
+  const english = typeof document !== "undefined" && document.documentElement.lang === "en";
+  const dictionary = english ? enOperationalReports : arOperationalReports;
+  return [
+    { value: ALL_WAREHOUSES, label: dictionary.filter.allWarehouses },
+    ...envelopeRows(body).map((warehouse) => ({
+      value: str(warehouse.id),
+      label:
+        (english ? str(warehouse.nameEn) || str(warehouse.name) : str(warehouse.name) || str(warehouse.nameEn)) ||
+        str(warehouse.code) ||
+        str(warehouse.id),
+    })),
+  ];
+}
+
+const NRV_STATUS = {
+  ok: "operationalReports.nrvStatus.ok",
+  impaired: "operationalReports.nrvStatus.impaired",
+  "no-basis": "operationalReports.nrvStatus.noBasis",
+} as const;
+
+/** `basis.costSource` — which weighted average the unit cost is. */
+const NRV_COST_BASIS = {
+  "warehouse-wac": "operationalReports.costBasis.warehouseWac",
+  "item-wac": "operationalReports.costBasis.itemWac",
+} as const;
+
+/** A product's cost, by where it came from (lib/nrv.js resolveProductCost). */
+const PRODUCT_COST_SOURCE = {
+  recipe: "operationalReports.productCostSource.recipe",
+  bom: "operationalReports.productCostSource.bom",
+} as const;
+
+/** `basis.salesSource` — the table the units sold were read from. */
+const SALES_SOURCE = {
+  analytics_daily_item: "operationalReports.salesSource.analytics_daily_item",
+} as const;
+
+async function loadInventoryNrv(
+  filters: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+): Promise<ReportResult> {
+  const body = await apiClient.get<ReportEnvelope>(
+    "/erp/reports/inventory-value/nrv",
+    // "*" is the picker's own choice, not a warehouse: it sends nothing, and
+    // the server answers over every warehouse at the item's own average.
+    { params: { warehouseId: filters.warehouse === ALL_WAREHOUSES ? "" : str(filters.warehouse) }, signal },
+  );
+  const rows = envelopeRows(body);
+  const t = body?.totals ?? {};
+  const basis = body?.basis ?? {};
+  // One cost basis per request (the endpoint names it once); printed on every
+  // row so a sheet filtered to a warehouse cannot be read as item averages.
+  const costBasis = str(basis.costSource);
+  const itemsWithBasis = num(t.itemsWithBasis);
+  return {
+    rows: rows.map((r) => ({
+      id: str(r.itemId),
+      itemName: str(r.itemName) || str(r.itemId),
+      quantity: num(r.quantity),
+      unitCost: num(r.unitCost),
+      costBasis,
+      inventoryValue: num(r.inventoryValue),
+      basisProductName: r.basisProductName == null ? null : str(r.basisProductName),
+      netSellingPrice: maybeNum(r.netSellingPrice),
+      nrvUnit: maybeNum(r.nrvUnit),
+      writeDownUnit: maybeNum(r.writeDownUnit),
+      writeDown: maybeNum(r.writeDown),
+      status: str(r.status),
+    })),
+    totals: [
+      { labelKey: "operationalReports.col.inventoryValue", value: num(t.inventoryValue), format: "money" },
+      // The server sums the write-down over rows WITH a basis only. When no
+      // row has one that sum is 0 over an empty set — not "nothing impaired" —
+      // so the figure is withheld and the counts beside it say why.
+      ...(itemsWithBasis > 0 ? optionalTotal("operationalReports.col.writeDown", t.writeDown, "money") : []),
+      { labelKey: "operationalReports.total.itemsWithBasis", value: itemsWithBasis, format: "count" },
+      { labelKey: "operationalReports.total.noBasisCount", value: num(t.noBasisCount), format: "count" },
+      { labelKey: "operationalReports.total.impairedItems", value: num(t.impairedItems), format: "count" },
+      ...optionalTotal("operationalReports.total.vatRatePct", basis.vatRatePct, "count"),
+      ...optionalTotal("operationalReports.total.sellingCostPct", basis.sellingCostPct, "count"),
+    ],
+  };
+}
+
+async function loadProductsBelowCost(
+  filters: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+): Promise<ReportResult> {
+  const body = await apiClient.get<ReportEnvelope>(
+    "/erp/reports/inventory-value/products-below-cost",
+    { params: { days: filters.days }, signal },
+  );
+  const rows = envelopeRows(body);
+  const t = body?.totals ?? {};
+  const basis = body?.basis ?? {};
+  // Null on a server with no sales fact table: then units sold and exposure
+  // are null on every row (an absent table is not "nothing sold"), the
+  // exposure total is withheld, and this column prints "—" to say why.
+  const salesSource = basis.salesSource == null ? null : str(basis.salesSource);
+  return {
+    rows: rows.map((r) => ({
+      id: str(r.menuId),
+      productName: str(r.productName) || str(r.menuId),
+      netSellingPrice: num(r.netSellingPrice),
+      unitCost: num(r.unitCost),
+      costSource: str(r.costSource),
+      shortfallUnit: num(r.shortfallUnit),
+      // Margin on a zero price is undefined — null, never 0%.
+      marginPct: maybeNum(r.marginPct),
+      soldQty: maybeNum(r.soldQty),
+      exposure: maybeNum(r.exposure),
+      salesSource,
+    })),
+    totals: [
+      { labelKey: "operationalReports.total.products", value: num(t.products), format: "count" },
+      { labelKey: "operationalReports.total.noCostCount", value: num(t.noCostCount), format: "count" },
+      ...optionalTotal("operationalReports.col.exposure", t.exposure, "money"),
+      ...optionalTotal("operationalReports.total.salesWindowDays", basis.days, "count"),
+      ...optionalTotal("operationalReports.total.vatRatePct", basis.vatRatePct, "count"),
     ],
   };
 }
@@ -350,6 +543,86 @@ export const OPERATIONS_REPORTS_SECTION: ReportSectionDef = {
         { key: "unknownCostRows", labelKey: "operationalReports.col.unknownCostRows", format: "count" },
       ],
       load: loadInventoryValueRollForward,
+    },
+    {
+      id: "inventory-nrv",
+      groupId: "inventoryValue",
+      labelKey: "operationalReports.reports.inventoryNrv.label",
+      descriptionKey: "operationalReports.reports.inventoryNrv.description",
+      icon: Scale,
+      tone: "teal",
+      // Inventory VALUE, like the roll-forward beside it. Nothing is widened.
+      cap: "finance.reports.view",
+      csvName: "inventory-nrv",
+      filters: [
+        {
+          id: "warehouse",
+          labelKey: "operationalReports.filter.warehouse",
+          kind: "remote",
+          loadOptions: loadWarehouseOptions,
+          optionsKey: ["reports", "operations", "warehouses"],
+          // Opens answered — over every warehouse — instead of waiting on the
+          // picker; a chosen warehouse switches cost to that warehouse's WAC.
+          defaultValue: ALL_WAREHOUSES,
+        },
+      ],
+      columns: [
+        { key: "itemName", labelKey: "operationalReports.col.item" },
+        { key: "quantity", labelKey: "operationalReports.col.quantity", format: "count" },
+        { key: "unitCost", labelKey: "operationalReports.col.unitCost", format: "money" },
+        { key: "costBasis", labelKey: "operationalReports.col.costBasis", format: "status", labels: NRV_COST_BASIS },
+        { key: "inventoryValue", labelKey: "operationalReports.col.inventoryValue", format: "money" },
+        { key: "basisProductName", labelKey: "operationalReports.col.basisProduct" },
+        { key: "netSellingPrice", labelKey: "operationalReports.col.netSellingPrice", format: "money" },
+        { key: "nrvUnit", labelKey: "operationalReports.col.nrvUnit", format: "money" },
+        { key: "writeDownUnit", labelKey: "operationalReports.col.writeDownUnit", format: "money" },
+        { key: "writeDown", labelKey: "operationalReports.col.writeDown", format: "money" },
+        { key: "status", labelKey: "operationalReports.col.status", format: "status", labels: NRV_STATUS },
+      ],
+      load: loadInventoryNrv,
+    },
+    {
+      id: "products-below-cost",
+      groupId: "inventoryValue",
+      labelKey: "operationalReports.reports.productsBelowCost.label",
+      descriptionKey: "operationalReports.reports.productsBelowCost.description",
+      icon: TrendingDown,
+      tone: "rose",
+      cap: "finance.reports.view",
+      csvName: "products-below-cost",
+      filters: [
+        {
+          id: "days",
+          labelKey: "operationalReports.filter.salesWindow",
+          kind: "select",
+          options: [
+            { value: "30", labelKey: "operationalReports.filter.last30Days" },
+            { value: "60", labelKey: "operationalReports.filter.last60Days" },
+            { value: "90", labelKey: "operationalReports.filter.last90Days" },
+          ],
+        },
+      ],
+      columns: [
+        { key: "productName", labelKey: "operationalReports.col.product" },
+        { key: "netSellingPrice", labelKey: "operationalReports.col.netSellingPrice", format: "money" },
+        { key: "unitCost", labelKey: "operationalReports.col.unitCost", format: "money" },
+        { key: "costSource", labelKey: "operationalReports.col.costSource", format: "status", labels: PRODUCT_COST_SOURCE },
+        { key: "shortfallUnit", labelKey: "operationalReports.col.shortfallUnit", format: "money" },
+        // The engine has no percent format, and its `count` cell prints a
+        // null as 0 (Number(null ?? 0)). `money` renders through Num: LTR
+        // digits, a dash for null and a numeric sort — what a signed, nullable
+        // percentage needs. A zero cannot occur on this sheet (cost is strictly
+        // above price on every row), so Num's zero-dash never fires here.
+        { key: "marginPct", labelKey: "operationalReports.col.marginPct", format: "money" },
+        // Units sold: null when the server has no sales source, and 0 is a real
+        // answer that must stay visible. `count` would print the null as 0;
+        // `code` prints a null as "—", a zero as "0", and keeps the digits LTR
+        // — at the cost of the monospace face.
+        { key: "soldQty", labelKey: "operationalReports.col.soldQty", format: "code" },
+        { key: "exposure", labelKey: "operationalReports.col.exposure", format: "money" },
+        { key: "salesSource", labelKey: "operationalReports.col.salesSource", format: "status", labels: SALES_SOURCE },
+      ],
+      load: loadProductsBelowCost,
     },
     {
       id: "recipe-variance",
